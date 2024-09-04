@@ -6,6 +6,7 @@ export const useAccountingSettingsStore = defineStore('settings/accounting', () 
 
   const pnlCsvHaveSummary = useComputedRef(settings, 'pnlCsvHaveSummary');
   const pnlCsvWithFormulas = useComputedRef(settings, 'pnlCsvWithFormulas');
+  const csvExportDelimiter = useComputedRef(settings, 'csvExportDelimiter');
   const includeCrypto2crypto = useComputedRef(settings, 'includeCrypto2crypto');
   const includeFeesInCostBasis = useComputedRef(settings, 'includeFeesInCostBasis');
   const includeGasCosts = useComputedRef(settings, 'includeGasCosts');
@@ -25,6 +26,7 @@ export const useAccountingSettingsStore = defineStore('settings/accounting', () 
   return {
     pnlCsvHaveSummary,
     pnlCsvWithFormulas,
+    csvExportDelimiter,
     includeCrypto2crypto,
     includeGasCosts,
     taxfreeAfterPeriod,

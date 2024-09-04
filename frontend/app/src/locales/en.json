@@ -98,7 +98,8 @@
     "csv_export_settings": {
       "labels": {
         "export_csv_formulas": "Should formulas be exported as part of the PnL CSV?",
-        "have_csv_summary": "Should a summary of all events be included in the all events CSV export?"
+        "have_csv_summary": "Should a summary of all events be included in the all events CSV export?",
+        "csv_export_delimiter": "CSV file delimiter"
       },
       "title": "CSV Export Settings"
     },
@@ -2664,6 +2665,12 @@
       },
       "title": "Amounts Settings"
     },
+    "csv_export_delimiter": {
+      "validation": {
+        "empty": "The CSV file delimiter cannot be empty",
+        "single_character": "The CSV file delimiter must be only one character"
+      }
+    },
     "date_display": {
       "validation": {
         "empty": "The date display format cannot be empty",
@@ -2789,6 +2796,10 @@
       "btc_derivation_gap": {
         "error": "Error setting the BTC derivation gap limit",
         "success": "The BTC derivation gap limit was successfully changed to {limit}"
+      },
+      "csv_export_delimiter": {
+        "error": "Error setting CSV file delimiter",
+        "success": "CSV file delimiter set to {csvDelimiter}"
       },
       "currency": {
         "error": "Error setting the main currency",
