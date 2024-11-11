@@ -2,6 +2,7 @@
 Changelog
 =========
 
+* :feature:`8618` rotki will now support Morpho vaults on Ethereum and Base, with related historical events properly decoded and correct prices shown for vault tokens.
 * :feature:`8602` rotki will now properly decode Basenames transactions and add calendar reminders for name expiry.
 
 * :release:`1.36.0 <2024-11-06>`
