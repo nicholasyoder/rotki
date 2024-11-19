@@ -222,6 +222,7 @@ def get_underlying_asset_price(token: EvmToken) -> tuple[Price | None, CurrentPr
             inquirer=Inquirer(),  # Initialize here to avoid a circular import
             evm_inquirer=Inquirer.get_evm_manager(chain_id=token.chain_id).node_inquirer,
         )
+        log.debug(f'MORPHO_DEBUG: price {price}')
 
     if token == A_FARM_DAI:
         price, oracle, _ = Inquirer.find_usd_price_and_oracle(A_DAI)

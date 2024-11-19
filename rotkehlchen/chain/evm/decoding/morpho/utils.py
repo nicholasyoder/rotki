@@ -150,6 +150,7 @@ def get_morpho_vault_token_price(
     except RemoteError as e:
         log.error(f'Failed to get price per share for Morpho vault {vault_token} on {evm_inquirer.chain_id.label()}: {e}')  # noqa: E501
         return ZERO_PRICE
+    log.debug(f'MORPHO_DEBUG: price_per_share: {price_per_share}')
 
     if (
         len(vault_token.underlying_tokens) == 0 or
@@ -160,9 +161,11 @@ def get_morpho_vault_token_price(
     ):
         log.error(f'Failed to get underlying token for Morpho vault {vault_token} on {evm_inquirer.chain_id.label()}')  # noqa: E501
         return ZERO_PRICE
+    log.debug(f'MORPHO_DEBUG: underlying_token: {underlying_token}')
 
     formatted_pps = token_normalized_value(
         token_amount=price_per_share,
         token=underlying_token,
     )
+    log.debug(f'MORPHO_DEBUG: formatted_pps: {formatted_pps}')
     return Price(inquirer.find_usd_price(asset=underlying_token) * formatted_pps)
