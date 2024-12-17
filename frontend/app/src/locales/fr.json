@@ -90,7 +90,6 @@
       "title": "Paramètres d'exportation CSV"
     },
     "messages": {
-      "account_for_assets_movements": "Erreur lors du paramétrage du compte pour les mouvements d'actifs : {message}",
       "cost_basis": {
         "disabled": "Calcul du coût de base passé désactivé avec succès",
         "enabled": "Calcul du coût de base passé activé avec succès",
@@ -123,7 +122,6 @@
     }
   },
   "account_settings_display": {
-    "account_asset_movement": "Les frais de mouvement des actifs du compte ont été pris en compte :",
     "cost_basis_fees": "Les frais de coût de base ont été pris en compte :",
     "cost_basis_method": "Méthode de coût de base :",
     "crypto2crypto": "Les échanges crypto à crypto ont été pris en compte :",
@@ -187,7 +185,6 @@
     },
     "trade": {
       "labels": {
-        "account_for_assets_movements": "Prendre en compte les frais de mouvements d'actifs",
         "calculate_past_cost_basis": "Calculer le coût de base passé lors de la création du rapport",
         "include_fees_in_cost_basis": "Prendre en compte les frais dans le coût de base",
         "cost_basis_method": "Méthode de coût de base",
@@ -209,16 +206,6 @@
       "task": {
         "description": "Ajout d'un validateur de staking ETH",
         "title": "Ajout du validateur : {id}"
-      }
-    },
-    "asset_movements": {
-      "error": {
-        "description": "Échec de la requête pour {exchange} : {error}",
-        "title": "Dépôts & retraits pour {exchange}"
-      },
-      "task": {
-        "description": "Récupération des dépôts & retraits pour {exchange}",
-        "title": "Dépôts & retraits de l'échange"
       }
     },
     "assets": {
@@ -2000,28 +1987,6 @@
         "used_default": "Utiliser les paramètres par défaut"
       }
     }
-  },
-  "deposit_withdrawals": {
-    "filter": {
-      "action": "filtrer par l'action",
-      "asset": "filtrer par l'actif",
-      "location": "filtrer par l'emplacement"
-    }
-  },
-  "deposits_withdrawals": {
-    "details": {
-      "no_details": "Aucun détail trouvé.",
-      "title": "Détails"
-    },
-    "headers": {
-      "action": "Action",
-      "fee": "Frais"
-    },
-    "label": "mouvements d'actifs",
-    "loading": "Patientez s'il vous plaît pendant que vos mouvements d'actifs se chargent...",
-    "refresh_tooltip": " Rafraîchir les dépôts et les retraits",
-    "selected": "{count} élément(s) sélectionné(s)",
-    "title": "Dépôts et retraits Exchange"
   },
   "docker_warning": {
     "action": "Oui, je comprends",

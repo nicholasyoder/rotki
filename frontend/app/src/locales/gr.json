@@ -84,7 +84,6 @@
       "title": "Ρυθμίσεις εξαγωγής CSV"
     },
     "messages": {
-      "account_for_assets_movements": "Error setting account for assets movements: {message}",
       "cost_basis": {
         "disabled": "Successfully disabled past cost basis calculation",
         "enabled": "Successfully enabled past cost basis calculation",
@@ -112,7 +111,6 @@
     }
   },
   "account_settings_display": {
-    "account_asset_movement": "Account asset movement fees were taken into account:",
     "cost_basis_fees": "Cost basis fees were taken into account:",
     "cost_basis_method": "Cost basis method:",
     "crypto2crypto": "Crypto to crypto trades were taken into account:",
@@ -128,7 +126,6 @@
   "accounting_settings": {
     "trade": {
       "labels": {
-        "account_for_assets_movements": "Take into account assets movements fees",
         "calculate_past_cost_basis": "Calculate past cost basis when creating the report",
         "include_fees_in_cost_basis": "Take into account cost basis fees",
         "cost_basis_method": "Cost basis method",
@@ -150,16 +147,6 @@
       "task": {
         "description": "Adding ETH staking validator",
         "title": "Adding validator: {id}"
-      }
-    },
-    "asset_movements": {
-      "error": {
-        "description": "Failed query for {exchange}: {error}",
-        "title": "Deposits & withdrawals for {exchange}"
-      },
-      "task": {
-        "description": "Retrieving deposits & withdrawals for {exchange}",
-        "title": "Καταθέσεις & Αναλήψεις Ανταλλακτηρίων"
       }
     },
     "assets": {
@@ -1803,28 +1790,6 @@
         "used_default": "Use Default"
       }
     }
-  },
-  "deposit_withdrawals": {
-    "filter": {
-      "action": "filter by the action",
-      "asset": "filter by the asset",
-      "location": "filter by the location"
-    }
-  },
-  "deposits_withdrawals": {
-    "details": {
-      "no_details": "No details found.",
-      "title": "Details"
-    },
-    "headers": {
-      "action": "Action",
-      "fee": "Fee"
-    },
-    "label": "asset movements",
-    "loading": "Please wait while your asset movements are getting loaded...",
-    "refresh_tooltip": "Refresh deposits & withdrawals",
-    "selected": "{count} item(s) selected",
-    "title": "Καταθέσεις & Αναλήψεις Ανταλλακτηρίων"
   },
   "ens_names": {
     "task": {
