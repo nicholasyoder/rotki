@@ -108,6 +108,7 @@ class Etherscan(ExternalServiceWithApiKey, ABC):
     ) -> None:
         super().__init__(database=database, service_name=service)
         self.msg_aggregator = msg_aggregator
+        self.original_service = service
         self.chain = chain
         self.prefix_url = 'api.' if chain in (
             SupportedBlockchain.ETHEREUM,
@@ -238,7 +239,15 @@ class Etherscan(ExternalServiceWithApiKey, ABC):
         an unexpected response is returned. Also in the case of exhausting the backoff time.
         """
         result = None
-        query_str = f'https://{self.prefix_url}{self.base_url}/api?module={module}&action={action}'
+        cached_settings = CachedSettings()
+        if cached_settings.get_settings().use_unified_etherscan_api:
+            self.service_name = ExternalService.ETHERSCAN
+            query_str = f'https://api.etherscan.io/v2/api?chainid={self.chain.to_chain_id().serialize()}&'
+        else:
+            self.service_name = self.original_service
+            query_str = f'https://{self.prefix_url}{self.base_url}/api?'
+
+        query_str += f'module={module}&action={action}'
         if options:
             for name, value in options.items():
                 query_str += f'&{name}={value}'
@@ -260,7 +269,6 @@ class Etherscan(ExternalServiceWithApiKey, ABC):
 
         query_str += f'&apikey={api_key}'
         backoff = 1
-        cached_settings = CachedSettings()
         timeout = timeout or cached_settings.get_timeout_tuple()
         backoff_limit = cached_settings.get_query_retry_limit()  # max time spent trying to get a response from etherscan in case of rate limits  # noqa: E501
         while backoff < backoff_limit:

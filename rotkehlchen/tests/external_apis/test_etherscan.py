@@ -244,3 +244,34 @@ def test_has_activity(temp_etherscan):
     assert temp_etherscan.has_activity('0x3C69Bc9B9681683890ad82953Fe67d13Cd91D5EE') == HasChainActivity.BALANCE  # noqa: E501
     assert temp_etherscan.has_activity('0x014cd0535b2Ea668150a681524392B7633c8681c') == HasChainActivity.TOKENS  # noqa: E501
     assert temp_etherscan.has_activity('0x6c66149E65c517605e0a2e4F707550ca342f9c1B') == HasChainActivity.NONE  # noqa: E501
+
+
+#@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', [
+    {'use_unified_etherscan_api': True},
+    {'use_unified_etherscan_api': False},
+])
+def test_etherscan_unified_api_setting(
+        temp_etherscan: EthereumEtherscan,
+        database: 'DBHandler',
+        db_settings: dict[str, bool],
+) -> None:
+    """Test that the correct api version is used depending on the setting."""
+    original_request = temp_etherscan.session.get
+    request_count = 0
+
+    def mock_request(url: str, timeout: int):
+        if db_settings['use_unified_etherscan_api'] is True:
+            assert url.startswith('https://api.etherscan.io/v2/api?chainid=1&module=')
+        else:
+            assert url.startswith('https://api.etherscan.io/api?module=')
+
+        nonlocal original_request, request_count
+        request_count += 1
+        return original_request(url=url, timeout=timeout)
+
+    with patch.object(temp_etherscan.session, 'get', wraps=mock_request):
+        assert temp_etherscan.has_activity(
+            account=string_to_evm_address('0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5'),
+        ) == HasChainActivity.TRANSACTIONS
+        assert request_count != 0  # confirm the asserts in mock_request were hit
