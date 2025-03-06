@@ -683,7 +683,7 @@ class Inquirer:
 
     @staticmethod
     def _preprocess_assets_to_query(
-            from_assets: list[Asset],
+            from_assets: Sequence[Asset],
             to_asset: Asset,
             ignore_cache: bool = False,
     ) -> tuple[dict[Asset, tuple[Price, CurrentPriceOracle]], dict[Asset, Asset], list[Asset]]:
@@ -719,7 +719,7 @@ class Inquirer:
 
     @staticmethod
     def _find_prices(
-            from_assets: list[Asset],
+            from_assets: Sequence[Asset],
             to_asset: Asset,
             ignore_cache: bool = False,
             skip_onchain: bool = False,
@@ -797,7 +797,7 @@ class Inquirer:
 
     @staticmethod
     def find_prices(
-            from_assets: list[Asset],
+            from_assets: Sequence[Asset],
             to_asset: Asset,
             ignore_cache: bool = False,
             skip_onchain: bool = False,
@@ -815,7 +815,7 @@ class Inquirer:
 
     @staticmethod
     def find_prices_and_oracles(
-            from_assets: list[Asset],
+            from_assets: Sequence[Asset],
             to_asset: Asset,
             ignore_cache: bool = False,
             skip_onchain: bool = False,

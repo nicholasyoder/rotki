@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     ('BTC', 'USD'): (FVal('33183.98'), CurrentPriceOracle.BLOCKCHAIN),
     ('GBP', 'USD'): (FVal('1.367'), CurrentPriceOracle.FIAT),
 }])
+@pytest.mark.parametrize('ignore_mocked_prices_for', [['USD']])
 def test_get_current_assets_price_in_usd(rotkehlchen_api_server: 'APIServer') -> None:
     async_query = random.choice([False, True])
     response = requests.post(
@@ -54,7 +55,7 @@ def test_get_current_assets_price_in_usd(rotkehlchen_api_server: 'APIServer') ->
     assert len(result) == 3
     assert result['assets']['BTC'] == ['33183.98', CurrentPriceOracle.BLOCKCHAIN.value]
     assert result['assets']['GBP'] == ['1.367', CurrentPriceOracle.FIAT.value]
-    assert result['assets']['USD'] == ['1', CurrentPriceOracle.BLOCKCHAIN.value]
+    assert result['assets']['USD'] == ['1', CurrentPriceOracle.MANUALCURRENT.value]
     assert result['target_asset'] == 'USD'
     assert result['oracles'] == {str(oracle): oracle.value for oracle in CurrentPriceOracle}
 
@@ -63,6 +64,7 @@ def test_get_current_assets_price_in_usd(rotkehlchen_api_server: 'APIServer') ->
     ('USD', 'BTC'): (FVal('0.00003013502298398202988309419184'), CurrentPriceOracle.COINGECKO),
     ('GBP', 'BTC'): (FVal('0.00004119457641910343485018976024'), CurrentPriceOracle.COINGECKO),
 }])
+@pytest.mark.parametrize('ignore_mocked_prices_for', [['BTC']])
 def test_get_current_assets_price_in_btc(rotkehlchen_api_server: 'APIServer') -> None:
 
     async_query = random.choice([False, True])
@@ -84,7 +86,7 @@ def test_get_current_assets_price_in_btc(rotkehlchen_api_server: 'APIServer') ->
     )
 
     assert len(result) == 3
-    assert result['assets']['BTC'] == ['1', CurrentPriceOracle.BLOCKCHAIN.value]
+    assert result['assets']['BTC'] == ['1', CurrentPriceOracle.MANUALCURRENT.value]
     assert result['assets']['GBP'] == ['0.00004119457641910343485018976024', CurrentPriceOracle.COINGECKO.value]  # noqa: E501
     assert result['assets']['USD'] == ['0.00003013502298398202988309419184', CurrentPriceOracle.COINGECKO.value]  # noqa: E501
     assert result['target_asset'] == 'BTC'
