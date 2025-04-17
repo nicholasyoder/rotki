@@ -212,18 +212,22 @@ def deserialize_evm_tx_hash(val: Web3HexBytes | (bytearray | (bytes | str))) -> 
 T_BTCAddress = str
 BTCAddress = NewType('BTCAddress', T_BTCAddress)
 
+T_NanoAddress = str
+NanoAddress = NewType('NanoAddress', T_NanoAddress)
+
 T_Eth2PubKey = str
 Eth2PubKey = NewType('Eth2PubKey', T_Eth2PubKey)
 
-BlockchainAddress = BTCAddress | ChecksumEvmAddress | SubstrateAddress
+BlockchainAddress = BTCAddress | ChecksumEvmAddress | NanoAddress | SubstrateAddress
 AnyBlockchainAddress = TypeVar(
     'AnyBlockchainAddress',
     BTCAddress,
     ChecksumEvmAddress,
+    NanoAddress,
     SubstrateAddress,
 )
-ListOfBlockchainAddresses = list[BTCAddress] | list[ChecksumEvmAddress] | list[SubstrateAddress]
-TuplesOfBlockchainAddresses = tuple[BTCAddress, ...] | tuple[ChecksumEvmAddress, ...] | tuple[SubstrateAddress, ...]  # noqa: E501
+ListOfBlockchainAddresses = list[BTCAddress] | list[ChecksumEvmAddress] | list[NanoAddress] | list[SubstrateAddress]  # noqa: E501
+TuplesOfBlockchainAddresses = tuple[BTCAddress, ...] | tuple[ChecksumEvmAddress, ...] | tuple[NanoAddress, ...] | tuple[SubstrateAddress, ...]  # noqa: E501
 
 
 T_Fee = FVal
@@ -493,6 +497,7 @@ class SupportedBlockchain(SerializableEnumValueMixin):
     SCROLL = 'SCROLL'
     BINANCE_SC = 'BINANCE_SC'
     ZKSYNC_LITE = 'ZKSYNC_LITE'
+    NANO = 'NANO'
 
     def __str__(self) -> str:
         return SUPPORTED_BLOCKCHAIN_NAMES_MAPPING.get(self, super().__str__())
@@ -620,6 +625,7 @@ SUPPORTED_BLOCKCHAIN_IMAGE_NAME_MAPPING = {
     SupportedBlockchain.SCROLL: 'scroll.svg',
     SupportedBlockchain.ZKSYNC_LITE: 'zksync_lite.svg',
     SupportedBlockchain.BINANCE_SC: 'binance_sc.svg',
+    SupportedBlockchain.NANO: 'nano.svg',
 }
 
 EVM_CHAINS_WITH_TRANSACTIONS_TYPE = Literal[
@@ -678,7 +684,7 @@ SUPPORTED_EVMLIKE_CHAINS: tuple[SUPPORTED_EVMLIKE_CHAINS_TYPE, ...] = typing.get
 SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE = SUPPORTED_EVM_CHAINS_TYPE | SUPPORTED_EVMLIKE_CHAINS_TYPE
 SUPPORTED_EVM_EVMLIKE_CHAINS: tuple[SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE, ...] = SUPPORTED_EVM_CHAINS + SUPPORTED_EVMLIKE_CHAINS  # noqa: E501
 
-SUPPORTED_NON_BITCOIN_CHAINS = Literal[
+SUPPORTED_CHAINS_WITH_TOKENS = Literal[
     SupportedBlockchain.ETHEREUM,
     SupportedBlockchain.ETHEREUM_BEACONCHAIN,
     SupportedBlockchain.KUSAMA,
@@ -825,6 +831,7 @@ class Location(DBCharEnumMixIn):
     KUSAMA = 52
     COINBASEPRIME = 53
     BINANCE_SC = 54  # on-chain Binance Smart Chain events
+    NANO = 55
 
     @staticmethod
     def from_chain_id(chain_id: EVM_CHAIN_IDS_WITH_TRANSACTIONS_TYPE) -> 'EVM_LOCATIONS_TYPE':

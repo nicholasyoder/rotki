@@ -75,7 +75,7 @@ from rotkehlchen.chain.optimism.modules.walletconnect.balances import Walletconn
 from rotkehlchen.chain.substrate.manager import wait_until_a_node_is_available
 from rotkehlchen.chain.substrate.utils import SUBSTRATE_NODE_CONNECTION_TIMEOUT
 from rotkehlchen.constants import ONE, ZERO
-from rotkehlchen.constants.assets import A_AVAX, A_BCH, A_BTC, A_DAI, A_DOT, A_ETH, A_ETH2, A_KSM
+from rotkehlchen.constants.assets import A_AVAX, A_BCH, A_BTC, A_DAI, A_DOT, A_ETH, A_ETH2, A_KSM, A_NANO
 from rotkehlchen.db.cache import DBCacheStatic
 from rotkehlchen.db.eth2 import DBEth2
 from rotkehlchen.db.filtering import Eth2DailyStatsFilterQuery
@@ -121,6 +121,7 @@ from rotkehlchen.utils.mixins.lockable import LockableQueryMixIn, protect_with_l
 
 from .balances import BlockchainBalances, BlockchainBalancesUpdate
 from .ethereum.modules.curve.crvusd.balances import CurveCrvusdBalances
+from .nano.utils import get_nano_addresses_balances
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.arbitrum_one.manager import ArbitrumOneManager
@@ -339,6 +340,7 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
         self.scroll_lock = Semaphore()
         self.binance_sc_lock = Semaphore()
         self.zksync_lite_lock = Semaphore()
+        self.nano_lock = Semaphore()
 
         # Per account balances
         self.balances = BlockchainBalances(db=database)
@@ -573,21 +575,15 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
         - EthSyncError if querying the token balances through a provided ethereum
         client and the chain is not synced
         """
-        xpub_manager = XpubManager(chains_aggregator=self)
-        if blockchain is not None:
-            query_method = f'query_{blockchain.get_key()}_balances'
-            getattr(self, query_method)(ignore_cache=ignore_cache)
-            if ignore_cache is True and blockchain.is_bitcoin():
-                xpub_manager.check_for_new_xpub_addresses(blockchain=blockchain)  # type: ignore # is checked in the if
-        else:  # all chains
-            for chain in SupportedBlockchain:
-                if chain.is_evm() and len(self.accounts.get(chain)) == 0:  # don't check eth2 and bitcoin since we might need to query new addresses  # noqa: E501
-                    continue
+        for chain in [blockchain] if blockchain is not None else SupportedBlockchain:
+            if chain.is_evm() and len(self.accounts.get(chain)) == 0:  # don't check eth2 and bitcoin since we might need to query new addresses  # noqa: E501
+                continue
 
-                query_method = f'query_{chain.get_key()}_balances'
-                getattr(self, query_method)(ignore_cache=ignore_cache)
-                if ignore_cache is True and chain.is_bitcoin():
-                    xpub_manager.check_for_new_xpub_addresses(blockchain=chain)  # type: ignore # is checked in the if
+            query_method = f'query_{chain.get_key()}_balances'
+            getattr(self, query_method)(ignore_cache=ignore_cache)
+            if ignore_cache is True and chain.is_bitcoin():
+                xpub_manager = XpubManager(chains_aggregator=self)
+                xpub_manager.check_for_new_xpub_addresses(blockchain=chain)  # type: ignore # is checked in the if
 
         self.totals = self.balances.recalculate_totals()
         return self.get_balances_update(blockchain)
@@ -638,6 +634,30 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
             self.balances.bch[account] = Balance(
                 amount=balance,
                 usd_value=balance * bch_usd_price,
+            )
+
+    @protect_with_lock()
+    @cache_response_timewise()
+    def query_nano_balances(
+            self,  # pylint: disable=unused-argument
+            # Kwargs here is so linters don't complain when the "magic" ignore_cache kwarg is given
+            **kwargs: Any,
+    ) -> None:
+        """Queries blockchain.info/blockstream for the balance of all BTC accounts
+
+        May raise:
+        - RemoteError if there is a problem querying any remote
+        """
+        if len(self.accounts.nano) == 0:
+            return
+
+        self.balances.nano = {}
+        nano_usd_price = Inquirer.find_usd_price(A_NANO)
+        balances = get_nano_addresses_balances(self.accounts.nano)
+        for account, balance in balances.items():
+            self.balances.nano[account] = Balance(
+                amount=balance,
+                usd_value=balance * nano_usd_price,
             )
 
     @protect_with_lock()

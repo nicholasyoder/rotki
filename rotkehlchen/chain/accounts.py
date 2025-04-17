@@ -8,6 +8,7 @@ from rotkehlchen.types import (
     BlockchainAddress,
     BTCAddress,
     ChecksumEvmAddress,
+    NanoAddress,
     SupportedBlockchain,
     TuplesOfBlockchainAddresses,
 )
@@ -29,6 +30,7 @@ class BlockchainAccounts:
     dot: tuple[SubstrateAddress, ...] = field(default_factory=tuple)
     avax: tuple[ChecksumEvmAddress, ...] = field(default_factory=tuple)
     zksync_lite: tuple[ChecksumEvmAddress, ...] = field(default_factory=tuple)
+    nano: tuple[NanoAddress, ...] = field(default_factory=tuple)
 
     @overload
     def get(self, blockchain: SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE) -> tuple[ChecksumEvmAddress, ...]:

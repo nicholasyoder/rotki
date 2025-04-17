@@ -272,6 +272,8 @@ def is_valid_db_blockchain_account(
         return is_checksum_address(account)
     if blockchain.is_substrate():  # mypy does not understand the type narrowing here
         return is_valid_substrate_address(blockchain, account)  # type: ignore[arg-type]
+    if blockchain == SupportedBlockchain.NANO:
+        return True
 
     raise AssertionError(f'Should not store blockchain: {blockchain} addresses in the DB')
 

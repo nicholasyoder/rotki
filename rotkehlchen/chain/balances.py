@@ -7,15 +7,16 @@ from typing import TYPE_CHECKING, Any, Literal, get_args, overload
 from rotkehlchen.accounting.structures.balance import Balance, BalanceSheet
 from rotkehlchen.chain.bitcoin.xpub import XpubData
 from rotkehlchen.chain.substrate.types import SubstrateAddress
-from rotkehlchen.constants.assets import A_BCH, A_BTC
+from rotkehlchen.constants.assets import A_BCH, A_BTC, A_NANO
 from rotkehlchen.types import (
     SUPPORTED_BITCOIN_CHAINS,
     SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE,
-    SUPPORTED_NON_BITCOIN_CHAINS,
+    SUPPORTED_CHAINS_WITH_TOKENS,
     SUPPORTED_SUBSTRATE_CHAINS,
     BTCAddress,
     ChecksumEvmAddress,
     Eth2PubKey,
+    NanoAddress,
     SupportedBlockchain,
 )
 
@@ -49,6 +50,7 @@ class BlockchainBalances:
     dot: dict[SubstrateAddress, BalanceSheet] = field(init=False)
     avax: defaultdict[ChecksumEvmAddress, BalanceSheet] = field(init=False)
     zksync_lite: defaultdict[ChecksumEvmAddress, BalanceSheet] = field(init=False)
+    nano: dict[NanoAddress, Balance] = field(init=False)
 
     @overload
     def get(self, chain: SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE) -> defaultdict[ChecksumEvmAddress, BalanceSheet]:  # noqa: E501
@@ -64,6 +66,10 @@ class BlockchainBalances:
 
     @overload
     def get(self, chain: SUPPORTED_SUBSTRATE_CHAINS) -> dict[SubstrateAddress, BalanceSheet]:
+        ...
+
+    @overload
+    def get(self, chain: Literal[SupportedBlockchain.NANO]) -> dict[NanoAddress, Balance]:
         ...
 
     @overload
@@ -89,7 +95,7 @@ class BlockchainBalances:
 
         Each iteration returns the chain shortname used in the code and the balances dict
         """
-        for supported_chain in get_args(SUPPORTED_NON_BITCOIN_CHAINS):
+        for supported_chain in get_args(SUPPORTED_CHAINS_WITH_TOKENS):
             yield (supported_chain, getattr(self, supported_chain.get_key()))
 
     def bitcoin_chains(self) -> Iterator[tuple[Literal[SupportedBlockchain.BITCOIN, SupportedBlockchain.BITCOIN_CASH], dict]]:  # noqa: E501
@@ -112,7 +118,11 @@ class BlockchainBalances:
     def __post_init__(self) -> None:
         for supported_chain in SupportedBlockchain:
             chain_key = supported_chain.get_key()
-            if supported_chain in (SupportedBlockchain.BITCOIN, SupportedBlockchain.BITCOIN_CASH):
+            if supported_chain in (
+                SupportedBlockchain.BITCOIN,
+                SupportedBlockchain.BITCOIN_CASH,
+                SupportedBlockchain.NANO,
+            ):
                 setattr(self, chain_key, defaultdict(Balance))
             else:
                 setattr(self, chain_key, defaultdict(BalanceSheet))
@@ -128,6 +138,8 @@ class BlockchainBalances:
             new_totals.assets[A_BTC] += btc_balance
         for bch_balance in self.bch.values():
             new_totals.assets[A_BCH] += bch_balance
+        for xno_balance in self.nano.values():
+            new_totals.assets[A_NANO] += xno_balance
 
         return new_totals
 
@@ -161,6 +173,11 @@ class BlockchainBalances:
                 )
                 if len(balances) != 0:
                     blockchain_balances[chain.serialize()] = balances
+
+        if given_chain is None or given_chain == SupportedBlockchain.NANO:
+            blockchain_balances[SupportedBlockchain.NANO.serialize()] = {
+                k: v.serialize() for k, v in self.nano.items()
+            }
 
         return blockchain_balances
 
@@ -230,6 +247,9 @@ class BlockchainBalancesUpdate:
                 for balance in per_account.values():
                     # we rely on value being same as symbol of chain coin
                     totals.assets[asset] += balance
+            if self.given_chain == SupportedBlockchain.NANO:
+                for balance in per_account.values():
+                    totals.assets[A_NANO] += balance
             else:
                 for balances in per_account.values():
                     totals += balances
