@@ -1,5 +1,7 @@
 import hashlib
 import platform
+import requests
+from collections.abc import Callable
 from enum import Enum, auto
 from typing import Any
 
@@ -7,8 +9,9 @@ import base58check
 import bech32
 from bip_utils import Bech32ChecksumError, P2TRAddrEncoder, P2WPKHAddrEncoder, SegwitBech32Decoder
 
-from rotkehlchen.errors.serialization import EncodingError
+from rotkehlchen.errors.serialization import EncodingError, DeserializationError
 from rotkehlchen.types import BTCAddress
+from ...errors.misc import UnableToDecryptRemoteData, RemoteError
 
 BIP32_HARDEN: int = 0x80000000
 
@@ -264,3 +267,24 @@ def scriptpubkey_to_btc_address(data: bytes) -> BTCAddress:
         return scriptpubkey_to_p2sh_address(data)
 
     return scriptpubkey_to_bech32_address(data)
+
+
+def query_apis_via_callbacks(api_callbacks: dict[str, Callable], *args, **kwargs):
+    errors: dict[str, str] = {}
+    for api_name, callback in api_callbacks.items():
+        try:
+            return callback(*args, **kwargs)
+        except (
+            requests.exceptions.RequestException,
+            UnableToDecryptRemoteData,
+            requests.exceptions.Timeout,
+            RemoteError,
+            DeserializationError,
+        ) as e:
+            errors[api_name] = str(e)
+            continue
+        except KeyError as e:
+            errors[api_name] = f"Got unexpected response from {api_name}. Couldn't find key {e!s}"
+
+    serialized_errors = ', '.join(f'{source} error is: "{error}"' for (source, error) in errors.items())  # noqa: E501
+    raise RemoteError(f'Bitcoin external API request for balances failed. {serialized_errors}')

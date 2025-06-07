@@ -63,6 +63,7 @@ from rotkehlchen.balances.manual import (
     remove_manually_tracked_balances,
 )
 from rotkehlchen.chain.accounts import BlockchainAccountData, SingleBlockchainAccountData
+from rotkehlchen.chain.bitcoin.transactions import query_bitcoin_transactions
 from rotkehlchen.chain.bitcoin.xpub import XpubManager
 from rotkehlchen.chain.ethereum.airdrops import check_airdrops, fetch_airdrops_metadata
 from rotkehlchen.chain.ethereum.constants import CPT_KRAKEN
@@ -2753,7 +2754,13 @@ class RestAPI:
                 elif blockchain.is_evmlike():  # currently only zksync lite
                     for address in addresses:
                         self.rotkehlchen.chains_aggregator.zksync_lite.fetch_transactions(address)  # type: ignore[arg-type]  # all evmlike will be ChecksumEvmAddress
-                # TODO: Add elif for bitcoin here
+                elif blockchain == SupportedBlockchain.BITCOIN:
+                    query_bitcoin_transactions(
+                        database=self.rotkehlchen.data.db,
+                        from_timestamp=from_timestamp,
+                        to_timestamp=to_timestamp,
+                        addresses=addresses,
+                    )
                 else:
                     result = False
                     message = f'Programming error. Transaction querying for {blockchain} is not handled.'  # noqa: E501

@@ -2,6 +2,7 @@ from collections.abc import Sequence
 
 import requests
 
+from rotkehlchen.chain.bitcoin.utils import query_apis_via_callbacks
 from rotkehlchen.errors.misc import RemoteError, UnableToDecryptRemoteData
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
@@ -111,26 +112,11 @@ def get_bitcoin_addresses_balances(
             'blockstream.info': _query_blockstream_info,
             'mempool.space': _query_mempool_space,
         }
-    errors: dict[str, str] = {}
-    for api_name, callback in api_callbacks.items():
-        try:
-            balances = callback(accounts)
-        except (
-            requests.exceptions.RequestException,
-            UnableToDecryptRemoteData,
-            requests.exceptions.Timeout,
-            RemoteError,
-            DeserializationError,
-        ) as e:
-            errors[api_name] = str(e)
-            continue
-        except KeyError as e:
-            errors[api_name] = f"Got unexpected response from {api_name}. Couldn't find key {e!s}"
-        else:
-            return balances
 
-    serialized_errors = ', '.join(f'{source} error is: "{error}"' for (source, error) in errors.items())  # noqa: E501
-    raise RemoteError(f'Bitcoin external API request for balances failed. {serialized_errors}')
+    return query_apis_via_callbacks(
+        api_callbacks=api_callbacks,
+        accounts=accounts,
+    )
 
 
 def _check_blockstream_for_transactions(
