@@ -16,10 +16,11 @@ from typing import TYPE_CHECKING, Any, TypeVar, overload
 from base58 import b58decode
 from eth_utils import is_hexstr
 from eth_utils.address import to_checksum_address
+from solders.solders import Pubkey
 
 from rotkehlchen.errors.serialization import ConversionError, DeserializationError
 from rotkehlchen.fval import FVal
-from rotkehlchen.types import ChecksumEvmAddress, Timestamp, TimestampMS
+from rotkehlchen.types import ChecksumEvmAddress, SolanaAddress, Timestamp, TimestampMS
 from rotkehlchen.utils.version_check import get_current_version, get_system_spec
 
 if TYPE_CHECKING:
@@ -280,6 +281,11 @@ def bytes_to_address(value: bytes) -> ChecksumEvmAddress:
     type is given.
     """
     return bytes32hexstr_to_address(bytes_to_hexstr(value))
+
+
+def bytes_to_solana_address(value: bytes) -> SolanaAddress:
+    """Converts bytes into a solana address"""
+    return SolanaAddress(str(Pubkey(value)))
 
 
 def address_to_bytes32(address: ChecksumEvmAddress) -> bytes:
