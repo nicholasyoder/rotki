@@ -200,14 +200,19 @@ class AssetsUpdater:
 
     def _get_remote_info_json(self) -> dict[str, Any]:
         url = f'https://raw.githubusercontent.com/rotki/assets/{self.branch}/updates/info.json'
+        log.error(f'X_DEBUG: {url}')
         try:
             response = requests.get(url=url, timeout=REQUESTS_TIMEOUT_TUPLE)
         except requests.exceptions.RequestException as e:
             raise RemoteError(f'Failed to query Github {url} during assets update: {e!s}') from e
 
+        log.error(f'X_DEBUG: {response.text}')
+        log.error(f'X_DEBUG: {response.headers}')
+        log.error(f'X_DEBUG: {response.request.url}')
         try:
             json_data = response.json()
         except requests.exceptions.RequestException as e:
+            log.error(f'X_DEBUG: {e}')
             raise RemoteError(
                 f'Could not parse assets update info as json from Github: {response.text}',
             ) from e

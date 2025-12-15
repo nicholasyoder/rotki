@@ -136,14 +136,14 @@ jobs:
           then
             COVERAGE_ARGS=''
           else
-            COVERAGE_ARGS='--cov=./'
+            COVERAGE_ARGS='"--cov=./"'
           fi
 
           export CASSETTES_DIR="$(pwd)/test-caching"
 
           if [ "${{ matrix.test-group }}" == 'api' ]
           then
-            uv run pytestgeventwrapper.py "$PYTEST_ARGS" "$COVERAGE_ARGS" rotkehlchen/tests/api/test_assets_updates.py::test_update_no_user_loggedin
+            uv run pytestgeventwrapper.py "$PYTEST_ARGS" $COVERAGE_ARGS rotkehlchen/tests/api/test_assets_updates.py::test_update_no_user_loggedin
           fi
 
           uv run pytestgeventwrapper.py --dead-fixtures
