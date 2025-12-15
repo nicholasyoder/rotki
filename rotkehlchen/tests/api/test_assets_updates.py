@@ -912,9 +912,9 @@ log = RotkehlchenLogsAdapter(logger)
 @pytest.mark.parametrize('start_with_logged_in_user', [False])
 @pytest.mark.parametrize('number_of_eth_accounts', [0])
 def test_update_no_user_loggedin(rotkehlchen_api_server: 'APIServer') -> None:
-    
+
     x = requests.get('https://raw.githubusercontent.com/rotki/assets/develop/updates/info.json')
-    log.error(f'X_DEBUG: {x.text}')
+    log.error(f'X_DEBUG1: {x.text}')
 
     response = requests.post(
         api_url_for(
