@@ -688,3 +688,49 @@ Sent when the periodic event processing task is unable to find corresponding eve
 
 
 - ``count``: Total number of asset movements that could not be matched.
+
+
+Historical Balance Processing Progress
+=========================================
+
+Sent during historical balance processing to track progress. This runs as a periodic task that processes all history events chronologically to compute running balances.
+
+::
+
+    {
+        "type": "progress_updates",
+        "data": {
+            "subtype": "historical_balance_processing",
+            "total": 5000,
+            "processed": 2500
+        }
+    }
+
+
+- ``subtype``: Set to "historical_balance_processing" to identify balance processing progress
+- ``total``: Total number of events to process
+- ``processed``: Number of events processed so far
+
+
+Negative Balance Detected
+=================================
+
+Sent when historical balance processing detects a negative balance for an asset, which indicates missing or incorrect events.
+
+::
+
+    {
+        "type": "negative_balance_detected",
+        "data": {
+            "event_identifier": 12345,
+            "group_identifier": "0xabc123...",
+            "asset": "eip155:1/erc20:0x6B175474E89094C44Da98b954EesdedfFE3F46F5D",
+            "balance_before": "100.5"
+        }
+    }
+
+
+- ``event_identifier``: Database identifier of the event that caused the negative balance
+- ``group_identifier``: Group identifier (usually transaction hash) of the problematic event
+- ``asset``: Asset identifier that went negative
+- ``balance_before``: The balance before processing the event that caused it to go negative
