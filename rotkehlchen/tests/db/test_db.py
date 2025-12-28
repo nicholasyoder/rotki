@@ -33,6 +33,7 @@ from rotkehlchen.constants.misc import USERSDIR_NAME
 from rotkehlchen.data_handler import DataHandler
 from rotkehlchen.db.addressbook import DBAddressbook
 from rotkehlchen.db.cache import DBCacheDynamic, DBCacheStatic
+from rotkehlchen.db.constants import KRAKEN_FUTURES_API_KEY_KEY, KRAKEN_FUTURES_API_SECRET_KEY
 from rotkehlchen.db.dbhandler import DBHandler
 from rotkehlchen.db.filtering import AddressbookFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
@@ -1731,6 +1732,79 @@ def test_binance_pairs(user_data_dir, sql_vm_instructions_cb):
         query = db.get_binance_pairs('binance', Location.BINANCE)
     assert query == []
     db.logout()
+
+
+def test_add_edit_remove_kraken_futures(database: DBHandler) -> None:
+    """
+    Tests that adding, editing and removing Kraken with Futures credentials in the DB works.
+    It also test that deleting Kraken also removes the Futures API keys
+    """
+    with database.conn.read_ctx() as cursor:
+        kraken_api_key = ApiKey('kraken_api_key')
+        kraken_api_secret = ApiSecret(b'a3Jha2VuX2FwaV9zZWNyZXQy')
+        kraken_futures_api_key = ApiKey('kraken_futures_api_key')
+        kraken_futures_api_secret = ApiSecret(b'a3Jia2VuX2FwaV9zZWNyZXQy')
+
+        database.add_exchange(
+            'kraken1',
+            Location.KRAKEN,
+            kraken_api_key,
+            kraken_api_secret,
+            kraken_futures_api_key=kraken_futures_api_key,
+            kraken_futures_api_secret=kraken_futures_api_secret,
+        )
+        # check the credentials can be retrieved
+        credentials = database.get_exchange_credentials(cursor)
+        kraken_extras = database.get_exchange_credentials_extras('kraken1', Location.KRAKEN)
+
+    assert len(credentials) == 1
+    assert len(credentials[Location.KRAKEN]) == 1
+    kraken1 = credentials[Location.KRAKEN][0]
+    assert kraken1.name == 'kraken1'
+    assert kraken1.api_key == kraken_api_key
+    assert kraken1.api_secret == kraken_api_secret
+    assert kraken_extras[KRAKEN_FUTURES_API_KEY_KEY] == kraken_futures_api_key
+    assert kraken_extras[KRAKEN_FUTURES_API_SECRET_KEY] == kraken_futures_api_secret
+
+    with database.conn.read_ctx() as cursor:
+        new_kraken_futures_api_key = ApiKey('new_kraken_futures_api_key')
+        new_kraken_futures_api_secret = ApiSecret(b'a3Jia2VuX2FwaV9zZWNyZXQz')
+
+        database.edit_exchange(
+            cursor,
+            'kraken1',
+            Location.KRAKEN,
+            new_name=None,
+            api_key=None,
+            api_secret=None,
+            passphrase=None,
+            kraken_account_type=None,
+            kraken_futures_api_key=new_kraken_futures_api_key,
+            kraken_futures_api_secret=new_kraken_futures_api_secret,
+            binance_selected_trade_pairs=None,
+            okx_location=None,
+        )
+
+        credentials = database.get_exchange_credentials(cursor)
+        kraken_extras = database.get_exchange_credentials_extras('kraken1', Location.KRAKEN)
+
+    assert len(credentials) == 1
+    assert len(credentials[Location.KRAKEN]) == 1
+    kraken1 = credentials[Location.KRAKEN][0]
+    assert kraken1.name == 'kraken1'
+    assert kraken1.api_key == kraken_api_key
+    assert kraken1.api_secret == kraken_api_secret
+    assert kraken_extras[KRAKEN_FUTURES_API_KEY_KEY] == new_kraken_futures_api_key
+    assert kraken_extras[KRAKEN_FUTURES_API_SECRET_KEY] == new_kraken_futures_api_secret
+
+    with database.conn.read_ctx() as cursor:
+        database.remove_exchange(cursor, 'kraken1', Location.KRAKEN)
+        credentials = database.get_exchange_credentials(cursor)
+        kraken_extras = database.get_exchange_credentials_extras('kraken1', Location.KRAKEN)
+
+    assert len(credentials) == 0
+    assert len(credentials[Location.KRAKEN]) == 0
+    assert kraken_extras == {}
 
 
 def test_fresh_db_adds_version(user_data_dir, sql_vm_instructions_cb):
