@@ -112,6 +112,14 @@ export class SubprocessHandler {
     const isCoreAvailable = await this.checkCoreApiAvailability(this.config.urls.coreApiUrl);
     if (!isCoreAvailable) {
       this.logger.error('Failed to connect to core. Exiting');
+      // Report the error to the frontend if the process exited without triggering onProcessError
+      // (e.g., if the process crashed but no error was captured)
+      if (!this.coreManager.isRunning) {
+        listener.onProcessError(
+          'Failed to connect to rotki backend. The backend process has exited. Please check the logs for more details.',
+          BackendCode.TERMINATED,
+        );
+      }
       await this.terminateProcesses();
       return;
     }
@@ -186,6 +194,7 @@ export class SubprocessHandler {
    * to the ping endpoint.
    * Continues to retry pinging the URL for a specified number of attempts,
    * applying a delay between each attempt if the initial request fails.
+   * Fails early if the core process has exited.
    *
    * @param {string} url - The base URL of the core API endpoint to ping.
    * @param {number} [retries=10] - The maximum number of ping attempts before giving up.
@@ -205,6 +214,13 @@ export class SubprocessHandler {
       let ping: () => void;
 
       const retryOrFail = (): void => {
+        // Fail early if the core process has exited
+        if (!this.coreManager.isRunning) {
+          this.logger.error('Core process has exited, aborting ping attempts');
+          resolve(false);
+          return;
+        }
+
         if (attempt <= retries) {
           this.logger.info(`Retrying ping in ${waitSeconds} seconds`);
           setTimeout(ping, waitSeconds * 1000);
@@ -216,6 +232,13 @@ export class SubprocessHandler {
       };
 
       ping = (): void => {
+        // Check if process is still running before each ping
+        if (!this.coreManager.isRunning) {
+          this.logger.error('Core process has exited, aborting ping attempts');
+          resolve(false);
+          return;
+        }
+
         attempt++;
         this.logger.info(`Pinging ${pingUrl.href} attempt ${attempt}`);
 

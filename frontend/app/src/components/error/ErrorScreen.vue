@@ -72,15 +72,14 @@ const errorText = computed(() => {
       <template #subheader>
         {{ subtitle }}
       </template>
-      <div class="font-light text-rui-text-secondary">
-        <pre class="text-caption text-wrap">
-          {{ message }}
+      <div class="font-light text-rui-text-secondary text-caption">
+        <pre v-text="message" />
+        <template v-if="error">
           <RuiDivider
-            v-if="error"
             class="mt-4 mb-2"
           />
-          {{ error }}
-        </pre>
+          <pre v-text="error" />
+        </template>
         <textarea
           v-model="errorText"
           class="absolute -top-[999em] -left-[999em]"
