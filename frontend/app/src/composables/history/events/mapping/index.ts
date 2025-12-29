@@ -179,6 +179,14 @@ export const useHistoryEventMappings = createSharedComposable(() => {
     );
   });
 
+  function getHistoryEventTypeName(eventType: string): string {
+    return get(historyEventTypesData).find(item => item.identifier === eventType)?.label ?? toSentenceCase(eventType);
+  }
+
+  function getHistoryEventSubTypeName(eventSubtype: string): string {
+    return get(historyEventSubTypesData).find(item => item.identifier === eventSubtype)?.label ?? toSentenceCase(eventSubtype);
+  }
+
   const fetchMappings = async (): Promise<void> => {
     try {
       set(historyEventTypeData, await getTransactionTypeMappings());
@@ -210,6 +218,8 @@ export const useHistoryEventMappings = createSharedComposable(() => {
     getAccountingEventTypeData,
     getEventType,
     getEventTypeData,
+    getHistoryEventSubTypeName,
+    getHistoryEventTypeName,
     historyEventSubTypes,
     historyEventSubTypesData,
     historyEventTypeData,

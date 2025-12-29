@@ -109,6 +109,7 @@ const { t } = useI18n({ useScope: 'global' });
 
       <RuiButton
         variant="list"
+        :disabled="processing"
         @click="emit('show:dialog', { type: DIALOG_TYPES.MATCH_ASSET_MOVEMENTS })"
       >
         <template #prepend>

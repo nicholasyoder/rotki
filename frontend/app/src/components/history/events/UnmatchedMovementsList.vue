@@ -5,7 +5,6 @@ import type { UnmatchedAssetMovement } from '@/composables/history/events/use-un
 import type { HistoryEventCollectionRow, HistoryEventEntryWithMeta } from '@/types/history/events/schemas';
 import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
 import DateDisplay from '@/components/display/DateDisplay.vue';
-import TableEmptyState from '@/components/display/TableEmptyState.vue';
 import AssetDetails from '@/components/helper/AssetDetails.vue';
 import BadgeDisplay from '@/components/history/BadgeDisplay.vue';
 import LocationDisplay from '@/components/history/LocationDisplay.vue';
@@ -22,9 +21,11 @@ interface UnmatchedMovementRow {
 
 const props = defineProps<{
   movements: UnmatchedAssetMovement[];
+  ignoreLoading?: boolean;
 }>();
 
 const emit = defineEmits<{
+  ignore: [movement: UnmatchedAssetMovement];
   select: [movement: UnmatchedAssetMovement];
 }>();
 
@@ -86,19 +87,15 @@ const rows = computed<UnmatchedMovementRow[]>(() =>
       {{ t('asset_movement_matching.dialog.description') }}
     </p>
 
-    <TableEmptyState
-      v-if="rows.length === 0"
-      :text="t('asset_movement_matching.dialog.no_unmatched')"
-    />
-
     <RuiDataTable
-      v-else
       :cols="columns"
       :rows="rows"
       row-attr="groupIdentifier"
       outlined
       sticky-header
+      dense
       class="table-inside-dialog"
+      :empty="{ description: t('asset_movement_matching.dialog.no_unmatched') }"
     >
       <template #item.asset="{ row }">
         <AssetDetails :asset="row.asset" />
@@ -121,13 +118,31 @@ const rows = computed<UnmatchedMovementRow[]>(() =>
         />
       </template>
       <template #item.actions="{ row }">
-        <RuiButton
-          size="sm"
-          color="primary"
-          @click="emit('select', row.original)"
-        >
-          {{ t('asset_movement_matching.dialog.find_match') }}
-        </RuiButton>
+        <div class="flex gap-2">
+          <RuiButton
+            size="sm"
+            color="primary"
+            @click="emit('select', row.original)"
+          >
+            {{ t('asset_movement_matching.dialog.find_match') }}
+          </RuiButton>
+          <RuiTooltip
+            :open-delay="400"
+            :popper="{ placement: 'top' }"
+          >
+            <template #activator>
+              <RuiButton
+                size="sm"
+                variant="outlined"
+                :loading="props.ignoreLoading"
+                @click="emit('ignore', row.original)"
+              >
+                {{ t('asset_movement_matching.dialog.ignore') }}
+              </RuiButton>
+            </template>
+            {{ t('asset_movement_matching.dialog.ignore_tooltip') }}
+          </RuiTooltip>
+        </div>
       </template>
     </RuiDataTable>
   </div>

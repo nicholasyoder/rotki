@@ -184,9 +184,16 @@ watchImmediate(route, async (route) => {
   await router.replace({ query: {} });
 });
 
-watch(processing, async (isLoading, wasLoading) => {
-  if (!isLoading && wasLoading)
+const debouncedProcessing = debouncedRef(processing, 200);
+
+watchImmediate(debouncedProcessing, async (isLoading, wasLoading) => {
+  if (!isLoading && (wasLoading || !isDefined(wasLoading))) {
     await actions.fetch.dataAndLocations();
+
+    if (get(mainPage)) {
+      await fetchUnmatchedAssetMovements();
+    }
+  }
 });
 
 // Wait until the route doesn't change anymore to give time for the persisted filter to be set.
@@ -197,12 +204,6 @@ watchDebounced(route, async () => {
 function openMatchAssetMovementsDialog(): void {
   get(dialogContainer)?.show({ type: DIALOG_TYPES.MATCH_ASSET_MOVEMENTS });
 }
-
-onMounted(async () => {
-  if (get(mainPage)) {
-    await fetchUnmatchedAssetMovements();
-  }
-});
 </script>
 
 <template>
@@ -223,7 +224,7 @@ onMounted(async () => {
 
     <div>
       <RuiAlert
-        v-if="mainPage && unmatchedCount > 0"
+        v-if="!debouncedProcessing && mainPage && unmatchedCount > 0"
         type="warning"
         class="mb-4 [&>div]:items-center"
       >
