@@ -16,7 +16,7 @@ def main() -> None:
     try:
         rotkehlchen_server = RotkehlchenServer()
     except (SystemPermissionError, DBSchemaError) as e:
-        print(f'ERROR at initialization: {e!s}')
+        print(f'ERROR at initialization: {e!s}', file=sys.stderr)
         sys.exit(1)
     except SystemExit as e:
         if e.code is None or e.code in (0, 2):
@@ -26,12 +26,14 @@ def main() -> None:
         else:
             tb = traceback.format_exc()
             log.critical(tb)
-            print(f'Failed to start rotki backend:\n{tb}')
+            # Only show clean error message to frontend, full traceback is in logs
+            print(f'Failed to start rotki backend: {e!s}', file=sys.stderr)
             sys.exit(1)
-    except:  # noqa: E722, RUF100  # pylint: disable=bare-except
+    except BaseException as e:
         tb = traceback.format_exc()
         log.critical(tb)
-        print(f'Failed to start rotki backend:\n{tb}')
+        # Only show clean error message to frontend, full traceback is in logs
+        print(f'Failed to start rotki backend: {e!s}', file=sys.stderr)
         sys.exit(1)
 
     rotkehlchen_server.main()
