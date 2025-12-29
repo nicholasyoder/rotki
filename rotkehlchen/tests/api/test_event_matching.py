@@ -10,6 +10,7 @@ from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
+from rotkehlchen.history.events.structures.swap import SwapEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.tests.unit.test_eth2 import HOUR_IN_MILLISECONDS
 from rotkehlchen.tests.utils.api import (
@@ -174,6 +175,7 @@ def test_get_possible_matches(rotkehlchen_api_server: 'APIServer') -> None:
         timestamp=TimestampMS(1510000000000),
         asset=A_ETH,
         amount=FVal('0.1'),
+        location_label='Kraken 1',
     )
     with rotki.data.db.conn.write_ctx() as write_cursor:
         dbevents.add_history_events(
@@ -194,7 +196,15 @@ def test_get_possible_matches(rotkehlchen_api_server: 'APIServer') -> None:
                 (matched_movement.timestamp + 2, '0.1'),  # ID 4 - After the movement, within the time range. Second close Match.  # noqa: E501
                 (matched_movement.timestamp + 3, '0.5'),  # ID 5 - Wrong amount, not a match.
                 (matched_movement.timestamp + HOUR_IN_MILLISECONDS * 2, '0.1'),  # ID 6 - Outside the time range, not matched or included in the other events list.  # noqa: E501
-            ], start=2)]],
+            ], start=2)], SwapEvent(  # Also add an unrelated swap event from the same exchange which should not be included in the possible matches  # noqa: E501
+                timestamp=matched_movement.timestamp,
+                location=matched_movement.location,
+                event_subtype=HistoryEventSubType.SPEND,
+                asset=matched_movement.asset,
+                amount=matched_movement.amount,
+                group_identifier='xyz1',
+                location_label=matched_movement.location_label,
+            )],
         )
 
     assert assert_proper_response_with_result(
