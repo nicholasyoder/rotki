@@ -22,6 +22,11 @@ Exchange asset movement events may now be manually matched with specific onchain
   - Takes no parameters.
   - Returns a list of group identifiers of any unmatched asset movements in the DB.
 
+* **Modified Endpoint**: ``POST /api/(version)/history/events``
+
+  - New optional ``actual_group_identifier`` field in the response, containing the actual group identifier of the event as stored in the DB.
+  - This change preserves the actual group identifier when asset movements are combined with the group of their matched event for display as a single unit in the frontend.
+
 Event/Group Identifier Renaming
 -------------------------------
 

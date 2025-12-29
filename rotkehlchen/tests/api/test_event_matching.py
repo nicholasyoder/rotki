@@ -217,3 +217,104 @@ def test_get_possible_matches(rotkehlchen_api_server: 'APIServer') -> None:
         'close_matches': [3, 4],
         'other_events': [2, 5],
     }
+
+
+def test_get_history_events_with_matched_asset_movements(
+        rotkehlchen_api_server: 'APIServer',
+) -> None:
+    """Test that getting history events with matched asset movements works as expected with
+    asset movements grouped with their matched events.
+    """
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+    dbevents = DBHistoryEvents(rotki.data.db)
+    with rotki.data.db.conn.write_ctx() as write_cursor:
+        dbevents.add_history_events(
+            write_cursor=write_cursor,
+            history=[AssetMovement(
+                identifier=1,
+                location=Location.KRAKEN,
+                event_type=HistoryEventType.WITHDRAWAL,
+                timestamp=TimestampMS(1500000000000),
+                asset=A_ETH,
+                amount=FVal('0.1'),
+                unique_id='1',
+            ), (matched_movement := AssetMovement(
+                identifier=2,
+                location=Location.KRAKEN,
+                event_type=HistoryEventType.WITHDRAWAL,
+                timestamp=TimestampMS(1500000000001),
+                asset=A_ETH,
+                amount=FVal('0.5'),
+                unique_id='2',
+            )), (evm_event_1 := EvmEvent(
+                identifier=3,
+                tx_ref=(tx_ref := make_evm_tx_hash()),
+                sequence_index=0,
+                timestamp=TimestampMS(1500000000002),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=FVal('0.5'),
+                location_label=(user_address := make_evm_address()),
+            )), EvmEvent(
+                identifier=4,
+                tx_ref=tx_ref,
+                sequence_index=1,
+                timestamp=TimestampMS(1500000000002),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.SPEND,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=FVal('0.01'),
+                location_label=user_address,
+            )],
+        )
+
+        rotki.data.db.set_dynamic_cache(
+            write_cursor=write_cursor,
+            name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
+            identifier=3,  # matched event identifier can be anything here
+            value=2,
+        )
+
+    # First query history aggregated by group
+    result = assert_proper_response_with_result(
+        response=requests.post(
+            api_url_for(rotkehlchen_api_server, 'historyeventresource'),
+            json={'aggregate_by_group_ids': True},
+        ),
+        rotkehlchen_api_server=rotkehlchen_api_server,
+    )
+    assert result['entries_found'] == result['entries_found_total'] == result['entries_total'] == 2
+    assert len(result['entries']) == 2
+    assert result['entries'][0]['grouped_events_num'] == 3  # includes both evm events and the matched asset movement  # noqa: E501
+    assert result['entries'][0]['entry']['group_identifier'] == evm_event_1.group_identifier
+    assert result['entries'][1]['grouped_events_num'] == 1  # the unmatched asset movement
+
+    # Then query the evm event group and the matched asset movement should be included
+    result = assert_proper_response_with_result(
+        response=requests.post(
+            api_url_for(rotkehlchen_api_server, 'historyeventresource'),
+            json={
+                'aggregate_by_group_ids': False,
+                'group_identifiers': [evm_event_1.group_identifier],
+            },
+        ),
+        rotkehlchen_api_server=rotkehlchen_api_server,
+    )['entries']
+
+    # The group returned should all have the group_identifier of the evm event, but should also
+    # have the actual_group_identifier set to preserve the real group_identifier of each event.
+    # The presence of this field also notifies frontend that this group is a combination of
+    # several groups and may need special handling.
+    assert len(result) == 3  # receive and spend onchain events plus the asset movement
+    assert result[0]['entry']['event_type'] == 'receive'
+    assert result[0]['entry']['group_identifier'] == evm_event_1.group_identifier
+    assert result[0]['entry']['actual_group_identifier'] == evm_event_1.group_identifier
+    assert result[1]['entry']['event_type'] == 'spend'
+    assert result[1]['entry']['group_identifier'] == evm_event_1.group_identifier
+    assert result[1]['entry']['actual_group_identifier'] == evm_event_1.group_identifier
+    assert result[2]['entry']['event_type'] == 'withdrawal'
+    assert result[2]['entry']['group_identifier'] == evm_event_1.group_identifier
+    assert result[2]['entry']['actual_group_identifier'] == matched_movement.group_identifier

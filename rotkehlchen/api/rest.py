@@ -4102,6 +4102,7 @@ class RestAPI:
             customized_event_ids: list[int],
             ignored_ids: set[str],
             hidden_event_ids: list[int],
+            joined_group_ids: dict[str, str],
     ) -> list[dict[str, Any] | list[dict[str, Any]]]:
         """Serialize and group history events for the api.
         Groups evm & solana swap and multi trade events into sub-lists. Uses the order defined in
@@ -4113,6 +4114,9 @@ class RestAPI:
            corresponding to an event.
         - customized_event_ids, ignored_ids, and hidden_event_ids: arguments applying to all events
            that are passed directly to serialize_for_api for all events.
+        - joined_group_ids: dict mapping group_identifiers to replacement group_identifiers. Used
+           to join groups that are separate in the DB for accounting purposes but need to be shown
+           in the frontend as a single unit, such as asset movements with their matched events.
 
         Returns a list of serialized events with grouped events in sub-lists.
         """
@@ -4132,6 +4136,10 @@ class RestAPI:
                 event_accounting_rule_status=event_accounting_rule_status,
                 grouped_events_num=grouped_events_num,
             )
+            if (replacement_group_id := joined_group_ids.get(event.group_identifier)) is not None:
+                serialized['entry']['group_identifier'] = replacement_group_id
+                serialized['entry']['actual_group_identifier'] = event.group_identifier
+
             if event.entry_type in (HistoryBaseEntryType.EVM_SWAP_EVENT, HistoryBaseEntryType.SOLANA_SWAP_EVENT):  # noqa: E501
                 if (event_subtype_index := EVENT_GROUPING_ORDER[event.event_type].get(event.event_subtype)) is None:  # noqa: E501
                     log.error(
@@ -4192,6 +4200,14 @@ class RestAPI:
             )
             hidden_event_ids = dbevents.get_hidden_event_ids(cursor)
             ignored_ids = self.rotkehlchen.data.db.get_ignored_action_ids(cursor=cursor)
+            processed_events_result, joined_group_ids, entries_found, entries_with_limit, entries_total = dbevents.process_matched_asset_movements(  # noqa: E501
+                cursor=cursor,
+                aggregate_by_group_ids=aggregate_by_group_ids,
+                events_result=events_result,
+                entries_found=entries_found,
+                entries_with_limit=entries_with_limit,
+                entries_total=entries_total,
+            )
 
         accountant_pot = AccountingPot(
             database=self.rotkehlchen.data.db,
@@ -4202,9 +4218,9 @@ class RestAPI:
         events: list[HistoryBaseEntry]
         grouped_events_nums: list[int | None]
         grouped_events_nums, events = (
-            zip(*events_result, strict=False)  # type: ignore  # mypy doesn't understand significance of boolean check.
-            if aggregate_by_group_ids is True and len(events_result) != 0 else
-            ([None] * len(events_result), events_result)
+            zip(*processed_events_result, strict=False)  # type: ignore  # mypy doesn't understand significance of boolean check.
+            if aggregate_by_group_ids is True and len(processed_events_result) != 0 else
+            ([None] * len(processed_events_result), processed_events_result)
         )
         result = {
             'entries': self._serialize_and_group_history_events(
@@ -4220,6 +4236,7 @@ class RestAPI:
                 customized_event_ids=customized_event_ids,
                 ignored_ids=ignored_ids,
                 hidden_event_ids=hidden_event_ids,
+                joined_group_ids=joined_group_ids,
             ),
             'entries_found': entries_with_limit,
             'entries_limit': entries_limit,
