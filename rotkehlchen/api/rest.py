@@ -6436,5 +6436,8 @@ class RestAPI:
 
         return api_response(_wrap_in_ok_result(result={
             'close_matches': close_match_identifiers,
-            'other_events': [x.identifier for x in other_events],
+            'other_events': [x.identifier for x in other_events if not (
+                x.location == asset_movement.location and
+                x.location_label == asset_movement.location_label
+            )],  # Skip any events that are for the same exchange as the asset movement.
         }))
