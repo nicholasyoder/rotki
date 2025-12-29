@@ -83,6 +83,28 @@ const displayValue = computed(() => {
   return value;
 });
 
+const truncatedDisplayValue = computed<string>(() => {
+  const value = get(displayValue);
+  if (typeof value !== 'string')
+    return String(value);
+
+  // Check if the value is in "label (address)" format
+  const labelAddressMatch = value.match(/^(.+?)\s*\(([^)]+)\)$/);
+  if (labelAddressMatch) {
+    const [, label, address] = labelAddressMatch;
+    if (isValidAddress(address) || isValidTxHashOrSignature(address))
+      return `${label} (${truncateAddress(address, 6)})`;
+
+    return value;
+  }
+
+  // Fallback to existing truncation logic for plain addresses
+  if (isValidAddress(value) || isValidTxHashOrSignature(value))
+    return truncateAddress(value, 8);
+
+  return value;
+});
+
 const keyCodeToPropagate: string[] = ['Enter', 'Esc', 'ArrowUp', 'ArrowDown'] as const;
 
 function onKeyDown(e: KeyboardEvent) {
@@ -168,7 +190,7 @@ watch(search, (value) => {
           class="font-normal"
           :title="displayValue"
         >
-          {{ isValidAddress(displayValue) || isValidTxHashOrSignature(displayValue) ? truncateAddress(displayValue, 8) : displayValue }}
+          {{ truncatedDisplayValue }}
         </span>
       </template>
     </template>

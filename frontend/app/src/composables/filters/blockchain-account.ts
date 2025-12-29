@@ -4,20 +4,19 @@ import type { MatchedKeywordWithBehaviour, SearchMatcher } from '@/types/filteri
 import { z } from 'zod/v4';
 import { useAccountCategoryHelper } from '@/composables/accounts/use-account-category-helper';
 import { useBlockchainAccountData } from '@/modules/balances/blockchain/use-blockchain-account-data';
+import { useAddressesNamesStore } from '@/store/blockchain/accounts/addresses-names';
 import { CommaSeparatedStringSchema, RouterExpandedIdsSchema } from '@/types/route';
 import { arrayify } from '@/utils/array';
-import { getAccountAddress, getAccountLabel } from '@/utils/blockchain/accounts/utils';
+import { getAccountAddress, getChain } from '@/utils/blockchain/accounts/utils';
 
 enum BlockchainAccountFilterKeys {
-  ADDRESS = 'address',
+  ACCOUNT = 'account',
   CHAIN = 'chain',
-  LABEL = 'label',
 }
 
 enum BlockchainAccountFilterValueKeys {
-  ADDRESS = 'address',
+  ACCOUNT = 'account',
   CHAIN = 'chain',
-  LABEL = 'label',
 }
 
 export type Matcher = SearchMatcher<BlockchainAccountFilterKeys, BlockchainAccountFilterValueKeys>;
@@ -28,6 +27,7 @@ export function useBlockchainAccountFilter(t: ReturnType<typeof useI18n>['t'], c
   const filters = ref<Filters>({});
 
   const { chainIds, isEvm } = useAccountCategoryHelper(category);
+  const { addressNameSelector } = useAddressesNamesStore();
 
   const filterableChains = computed(() => {
     const evm = get(isEvm);
@@ -36,41 +36,54 @@ export function useBlockchainAccountFilter(t: ReturnType<typeof useI18n>['t'], c
       return ids;
     return [
       ...ids,
-      'looopring',
+      'loopring',
     ];
   });
 
   const { getAccountsByCategory } = useBlockchainAccountData();
 
-  const accounts = get(getAccountsByCategory(category));
+  const matchers = computed<Matcher[]>(() => {
+    const accounts = get(getAccountsByCategory(category));
+    return [
+      {
+        description: t('account_balances.filter.account'),
+        key: BlockchainAccountFilterKeys.ACCOUNT,
+        keyValue: BlockchainAccountFilterValueKeys.ACCOUNT,
+        string: true,
+        suggestions: (): string[] => {
+          const suggestions: string[] = [];
+          const seenAddresses = new Set<string>();
 
-  const matchers = computed<Matcher[]>(() => [
-    {
-      description: t('common.address'),
-      key: BlockchainAccountFilterKeys.ADDRESS,
-      keyValue: BlockchainAccountFilterValueKeys.ADDRESS,
-      string: true,
-      suggestions: (): string[] => accounts.map(item => getAccountAddress(item)),
-      validate: (): true => true,
-    },
-    {
-      description: t('common.chain'),
-      key: BlockchainAccountFilterKeys.CHAIN,
-      keyValue: BlockchainAccountFilterValueKeys.CHAIN,
-      multiple: true,
-      string: true,
-      suggestions: (): string[] => get(filterableChains),
-      validate: (id: string): boolean => get(filterableChains).some(chainId => chainId.toLocaleLowerCase() === id.toLocaleLowerCase()),
-    },
-    {
-      description: t('common.label'),
-      key: BlockchainAccountFilterKeys.LABEL,
-      keyValue: BlockchainAccountFilterValueKeys.LABEL,
-      string: true,
-      suggestions: (): string[] => accounts.map(item => getAccountLabel(item)),
-      validate: (): boolean => true,
-    },
-  ]);
+          for (const item of accounts) {
+            const address = getAccountAddress(item);
+            const chain = getChain(item);
+            const label = get(addressNameSelector(address, chain));
+
+            if (!seenAddresses.has(address)) {
+              seenAddresses.add(address);
+              // If account has a distinct label, show "label (address)", otherwise just address
+              if (label && label !== address)
+                suggestions.push(`${label} (${address})`);
+              else
+                suggestions.push(address);
+            }
+          }
+
+          return suggestions;
+        },
+        validate: (): true => true,
+      },
+      {
+        description: t('account_balances.filter.chain'),
+        key: BlockchainAccountFilterKeys.CHAIN,
+        keyValue: BlockchainAccountFilterValueKeys.CHAIN,
+        multiple: true,
+        string: true,
+        suggestions: (): string[] => get(filterableChains),
+        validate: (id: string): boolean => get(filterableChains).some(chainId => chainId.toLocaleLowerCase() === id.toLocaleLowerCase()),
+      },
+    ];
+  });
 
   const OptionalMultipleString = z
     .array(z.string())
@@ -79,9 +92,8 @@ export function useBlockchainAccountFilter(t: ReturnType<typeof useI18n>['t'], c
     .optional();
 
   const RouteFilterSchema = z.object({
-    [BlockchainAccountFilterValueKeys.ADDRESS]: z.string().optional(),
+    [BlockchainAccountFilterValueKeys.ACCOUNT]: z.string().optional(),
     [BlockchainAccountFilterValueKeys.CHAIN]: OptionalMultipleString,
-    [BlockchainAccountFilterValueKeys.LABEL]: z.string().optional(),
   });
 
   return {
@@ -89,6 +101,25 @@ export function useBlockchainAccountFilter(t: ReturnType<typeof useI18n>['t'], c
     matchers,
     RouteFilterSchema,
   };
+}
+
+/**
+ * Extracts address and label from unified account filter value.
+ * Handles both "label (address)" format and plain address/label strings.
+ */
+export function getAccountFilterParams(accountValue: Filters['account']): { address?: string; label?: string } {
+  if (!accountValue || typeof accountValue !== 'string')
+    return {};
+
+  // Check if the value is in "label (address)" format
+  const match = accountValue.match(/^(.+?)\s*\(([^)]+)\)$/);
+  if (match) {
+    // Format: "label (address)" - use address for filtering
+    return { address: match[2], label: match[1] };
+  }
+
+  // Plain value - could be address or label, send to both
+  return { address: accountValue, label: accountValue };
 }
 
 export const AccountExternalFilterSchema = z.object({
