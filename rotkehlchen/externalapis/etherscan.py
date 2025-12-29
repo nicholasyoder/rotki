@@ -9,7 +9,6 @@ from rotkehlchen.chain.evm.l2_with_l1_fees.types import L2ChainIdsWithL1FeesType
 from rotkehlchen.chain.structures import TimestampOrBlockRange
 from rotkehlchen.db.cache import DBCacheDynamic
 from rotkehlchen.db.history_events import DBHistoryEvents
-from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.errors.misc import ChainNotSupported, RemoteError
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.externalapis.etherscan_like import EtherscanLikeApi
@@ -139,36 +138,6 @@ class Etherscan(ExternalServiceWithRecommendedApiKey, EtherscanLikeApi):
 
         # else
         raise RemoteError(f'{chain_id} {self.name} returned error response: {json_ret}')
-
-    def get_logs(
-            self,
-            chain_id: SUPPORTED_CHAIN_IDS,
-            contract_address: ChecksumEvmAddress,
-            topics: list[str],
-            from_block: int,
-            to_block: int | str = 'latest',
-    ) -> list[dict[str, Any]]:
-        """Performs the etherscan style of eth_getLogs as explained here:
-        https://etherscan.io/apis#logs
-
-        May raise:
-        - RemoteError if there are any problems with reaching Etherscan or if
-        an unexpected response is returned
-        """
-        options = {'fromBlock': from_block, 'toBlock': to_block, 'address': contract_address}
-        for idx, topic in enumerate(topics):
-            if topic is not None:
-                options[f'topic{idx}'] = topic
-                options[f'topic{idx}_{idx + 1}opr'] = 'and'
-
-        timeout_tuple = CachedSettings().get_timeout_tuple()
-        return self._query(
-            chain_id=chain_id,
-            module='logs',
-            action='getLogs',
-            options=options,
-            timeout=(timeout_tuple[0], timeout_tuple[1] * 2),
-        )
 
     def get_withdrawals(
             self,

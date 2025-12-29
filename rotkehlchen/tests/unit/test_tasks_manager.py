@@ -1394,7 +1394,7 @@ def test_graph_query_query_delegations(
 
     block_offset, address_check_counter = 0, 0
 
-    def mock_get_logs(chain_id, contract_address, topics, from_block, to_block):
+    def mock_get_logs(chain_id, contract_address, topics, from_block, to_block, existing_events):
         nonlocal block_offset, address_check_counter
         assert contract_address == CONTRACT_STAKING
         if from_block == 11546786:
