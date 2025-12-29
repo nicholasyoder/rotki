@@ -2,6 +2,8 @@
 Changelog
 =========
 
+
+* :feature:`-` Users can now search blockchain accounts by either address or label using a single unified filter.
 * :bug:`11197` rotki will now group the notifications for Beaconcha.in rate-limited messages to avoid annoying users.
 * :bug:`11208` Users will now be able to use contract addresses to filter assets in asset selection fields.
 * :bug:`-` Deposits in Curve's TwoCrypto and Tricrypto pools are now decoded properly.

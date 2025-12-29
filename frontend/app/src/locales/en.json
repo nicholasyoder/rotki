@@ -60,6 +60,10 @@
       }
     },
     "edit_tooltip": "Edit account",
+    "filter": {
+      "account": "filter by address / label",
+      "chain": "filter by the chain"
+    },
     "headers": {
       "usd_value": "{symbol} value"
     },

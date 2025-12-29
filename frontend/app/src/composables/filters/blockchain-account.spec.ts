@@ -1,0 +1,76 @@
+import { describe, expect, it } from 'vitest';
+import { getAccountFilterParams } from './blockchain-account';
+
+describe('composables/filters/blockchain-account', () => {
+  describe('getAccountFilterParams', () => {
+    it('returns empty object for undefined value', () => {
+      expect(getAccountFilterParams(undefined)).toEqual({});
+    });
+
+    it('extracts address and label from "label (address)" format', () => {
+      const address = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045';
+      const label = 'vitalik.eth';
+      const input = `${label} (${address})`;
+
+      expect(getAccountFilterParams(input)).toEqual({
+        address,
+        label,
+      });
+    });
+
+    it('handles label with special characters in "label (address)" format', () => {
+      const address = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045';
+      const label = 'My Account #1 - Main';
+      const input = `${label} (${address})`;
+
+      expect(getAccountFilterParams(input)).toEqual({
+        address,
+        label,
+      });
+    });
+
+    it('handles label with spaces in "label (address)" format', () => {
+      const address = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045';
+      const label = 'spaced label';
+      const input = `${label} (${address})`;
+
+      expect(getAccountFilterParams(input)).toEqual({
+        address,
+        label,
+      });
+    });
+
+    it('returns same value for both address and label when plain string', () => {
+      const plainAddress = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045';
+
+      expect(getAccountFilterParams(plainAddress)).toEqual({
+        address: plainAddress,
+        label: plainAddress,
+      });
+    });
+
+    it('returns same value for both address and label when plain label string', () => {
+      const plainLabel = 'my-account-label';
+
+      expect(getAccountFilterParams(plainLabel)).toEqual({
+        address: plainLabel,
+        label: plainLabel,
+      });
+    });
+
+    it('handles empty string', () => {
+      expect(getAccountFilterParams('')).toEqual({});
+    });
+
+    it('handles nested parentheses in label', () => {
+      const address = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045';
+      const label = 'Account (Main)';
+      const input = `${label} (${address})`;
+
+      // The regex should capture the outermost parentheses
+      const result = getAccountFilterParams(input);
+      expect(result.address).toBe(address);
+      expect(result.label).toBe(label);
+    });
+  });
+});

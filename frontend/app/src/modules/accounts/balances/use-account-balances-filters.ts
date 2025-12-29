@@ -9,7 +9,7 @@ import type {
 } from '@/types/blockchain/accounts';
 import type { Collection } from '@/types/collection';
 import type { LocationQuery } from '@/types/route';
-import { AccountExternalFilterSchema, type Filters, type Matcher, useBlockchainAccountFilter } from '@/composables/filters/blockchain-account';
+import { AccountExternalFilterSchema, type Filters, getAccountFilterParams, type Matcher, useBlockchainAccountFilter } from '@/composables/filters/blockchain-account';
 import { usePaginationFilters } from '@/composables/use-pagination-filter';
 import { useBlockchainAccountData } from '@/modules/balances/blockchain/use-blockchain-account-data';
 import { fromUriEncoded, toUriEncoded } from '@/utils/route-uri';
@@ -40,6 +40,8 @@ export function useAccountBalancesFilters(category: MaybeRef<string>): AccountBa
   const expanded = ref<string[]>([]);
   const query = ref<LocationQuery>({});
 
+  const filterSchema = useBlockchainAccountFilter(t, category);
+
   const {
     fetchData,
     filters,
@@ -61,7 +63,7 @@ export function useAccountBalancesFilters(category: MaybeRef<string>): AccountBa
       category: get(category),
       tags: get(visibleTags),
     })),
-    filterSchema: () => useBlockchainAccountFilter(t, category),
+    filterSchema: () => filterSchema,
     history: 'router',
     onUpdateFilters(filterQuery) {
       const { expanded: expandedIds, q, tab: qTab, tags } = AccountExternalFilterSchema.parse(filterQuery);
@@ -89,6 +91,7 @@ export function useAccountBalancesFilters(category: MaybeRef<string>): AccountBa
     })),
     requestParams: computed(() => ({
       excluded: get(chainExclusionFilter),
+      ...getAccountFilterParams(get(filterSchema.filters).account),
     })),
   });
 
