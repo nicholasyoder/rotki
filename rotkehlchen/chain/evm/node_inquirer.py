@@ -57,7 +57,6 @@ from rotkehlchen.fval import FVal
 from rotkehlchen.greenlets.manager import GreenletManager
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import (
-    deserialize_evm_address,
     deserialize_evm_transaction,
     deserialize_int_from_hex,
 )
@@ -836,13 +835,14 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
                 while True:  # loop to continuously reduce block range if need b
                     end_block = min(start_block + blocks_step, until_block)
                     try:
-                        new_events = self.etherscan.get_logs(
+                        new_events = self._try_indexers(func=lambda indexer, start=start_block, end=end_block: indexer.get_logs(  # type: ignore[misc]  # noqa: E501
                             chain_id=self.chain_id,
                             contract_address=contract_address,
-                            topics=filter_args['topics'],  # type: ignore
-                            from_block=start_block,
-                            to_block=end_block,
-                        )
+                            topics=filter_args.get('topics', []),
+                            from_block=start,
+                            to_block=end,
+                            existing_events=events,
+                        ))
                     except RemoteError as e:
                         if 'Please select a smaller result dataset' in str(e):
 
@@ -856,56 +856,6 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
                         raise
 
                     break  # we must have a result
-
-                # Turn all Hex ints to ints
-                for e_idx, event in enumerate(new_events):
-                    try:
-                        block_number = deserialize_int_from_hex(
-                            symbol=event['blockNumber'],
-                            location='etherscan log query',
-                        )
-                        log_index = deserialize_int_from_hex(
-                            symbol=event['logIndex'],
-                            location='etherscan log query',
-                        )
-                        # Try to see if the event is a duplicate that got returned
-                        # in the previous iteration
-                        for previous_event in reversed(events):
-                            if previous_event['blockNumber'] < block_number:
-                                break
-
-                            same_event = (
-                                previous_event['logIndex'] == log_index and
-                                previous_event['transactionHash'] == event['transactionHash']
-                            )
-                            if same_event:
-                                events.pop()
-
-                        new_events[e_idx]['address'] = deserialize_evm_address(
-                            event['address'],
-                        )
-                        new_events[e_idx]['blockNumber'] = block_number
-                        new_events[e_idx]['timeStamp'] = deserialize_int_from_hex(
-                            symbol=event['timeStamp'],
-                            location='etherscan log query',
-                        )
-                        new_events[e_idx]['gasPrice'] = deserialize_int_from_hex(
-                            symbol=event['gasPrice'],
-                            location='etherscan log query',
-                        )
-                        new_events[e_idx]['gasUsed'] = deserialize_int_from_hex(
-                            symbol=event['gasUsed'],
-                            location='etherscan log query',
-                        )
-                        new_events[e_idx]['logIndex'] = log_index
-                        new_events[e_idx]['transactionIndex'] = deserialize_int_from_hex(
-                            symbol=event['transactionIndex'],
-                            location='etherscan log query',
-                        )
-                    except DeserializationError as e:
-                        raise RemoteError(
-                            'Couldnt decode an etherscan event due to {str(e)}}',
-                        ) from e
 
                 if log_iteration_cb is not None:
                     log_iteration_cb(

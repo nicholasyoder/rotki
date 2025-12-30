@@ -291,6 +291,7 @@ def test_get_logs(ethereum_inquirer, call_order, ethereum_manager_connect_at_sta
             'timeStamp',  # returned from etherscan
             'blockHash',  # returned from web3
             'removed',  # returned from web3
+            'blockTimestamp',  # returned from web3
         ],
     )
 
@@ -571,9 +572,10 @@ def test_get_logs_graph_delegation(ethereum_inquirer, ethereum_manager_connect_a
         assert options == {
             'address': CONTRACT_STAKING,
             'fromBlock': v_from_block, 'toBlock': v_to_block,
-            'topic0': topic0, 'topic0_1opr': 'and',
+            'topic0': topic0,
             'topic2': f'0x000000000000000000000000{user_address.lower()[2:]}',
-            'topic2_3opr': 'and',
+            'topic0_2_opr': 'and',
+            'topic1_2_opr': 'and',
         }
         return original_etherscan_query(chain_id, module, action, options, timeout)
 
@@ -624,6 +626,7 @@ def test_get_logs_graph_delegation(ethereum_inquirer, ethereum_manager_connect_a
         del expected_logs[0]['gasUsed']
         del expected_logs[0]['timeStamp']
         del logs[0]['removed']
+        del logs[0]['blockTimestamp']
 
     assert logs == expected_logs
 
@@ -657,9 +660,8 @@ def test_get_logs_anonymous(ethereum_inquirer, ethereum_manager_connect_at_start
         assert options == {
             'address': pot_address,
             'fromBlock': deployment_block, 'toBlock': v_to_block,
-            'topic0': topic0, 'topic0_1opr': 'and',
+            'topic0': topic0, 'topic0_1_opr': 'and',
             'topic1': f'0x000000000000000000000000{proxy_address.lower()[2:]}',  # pylint: disable=no-member
-            'topic1_2opr': 'and',
         }
         return []  # empty list to make it succeed
 

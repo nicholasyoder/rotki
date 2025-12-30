@@ -4,6 +4,7 @@ from unittest.mock import patch
 import pytest
 
 from rotkehlchen.accounting.accountant import RemoteError
+from rotkehlchen.chain.evm.types import EvmIndexer, SerializableChainIndexerOrder
 from rotkehlchen.chain.gnosis.constants import BRIDGE_QUERIED_ADDRESS_PREFIX
 from rotkehlchen.chain.gnosis.transactions import DEPLOYED_TS
 from rotkehlchen.db.evmtx import DBEvmTx
@@ -69,6 +70,9 @@ def test_gnosischain_specific_chain_data(
 @pytest.mark.freeze_time('2023-10-25 22:50:45 GMT')
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('gnosis_accounts', [['0x0D0B3A4fB611D11b044444Ed2154cDcd7830d506', '0xdFba7a5EeE7b2Aed0E463e983CB96873DbDD25F0']])  # noqa: E501
+@pytest.mark.parametrize('db_settings', [{'evm_indexers_order': SerializableChainIndexerOrder(
+    order={ChainID.GNOSIS: [EvmIndexer.ETHERSCAN]},
+)}])
 def test_gnosischain_specific_chain_data_failing_logic(
         database: 'DBHandler',
         gnosis_transactions: 'GnosisTransactions',
@@ -106,6 +110,9 @@ def test_gnosischain_specific_chain_data_failing_logic(
 @pytest.mark.freeze_time('2024-11-28 10:44:55 GMT')
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('gnosis_accounts', [['0xc37b40ABdB939635068d3c5f13E7faF686F03B65', '0x2449fE0bEA58e027f374e90b296e72Dfd7bCcBaE']])  # noqa: E501
+@pytest.mark.parametrize('db_settings', [{'evm_indexers_order': SerializableChainIndexerOrder(
+    order={ChainID.GNOSIS: [EvmIndexer.ETHERSCAN]},
+)}])
 def test_gnosischain_specific_chain_data_ts_logic(
         database: 'DBHandler',
         gnosis_transactions: 'GnosisTransactions',
@@ -136,6 +143,7 @@ def test_gnosischain_specific_chain_data_ts_logic(
             topics: list[str],
             from_block: int,
             to_block: int | str = 'latest',
+            existing_events: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         nonlocal counter
         counter += 1

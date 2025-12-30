@@ -160,3 +160,26 @@ def test_get_transaction_by_hash(
     assert tx.timestamp == 1633128954
     assert tx.value == 33000000000000000
     assert tx.gas == 294144
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+def test_get_logs(
+        ethereum_inquirer: 'EthereumInquirer',
+        check_all_indexers,
+) -> None:
+    assert len(events := ethereum_inquirer.get_logs(
+        contract_address=string_to_evm_address('0xdF5e0e81Dff6FAF3A7e52BA697820c5e32D806A8'),
+        abi=ethereum_inquirer.contracts.abi('ERC20_TOKEN'),
+        event_name='Transfer',
+        argument_filters={
+            'from': '0x7780E86699e941254c8f4D9b7eB08FF7e96BBE10',
+            'to': string_to_evm_address('0x5dbcF33D8c2E976c6b560249878e6F1491Bca25c'),
+        },
+        from_block=10712531,
+        to_block=10712753,
+    )) == 1
+    assert events[0]['address'] == '0xdF5e0e81Dff6FAF3A7e52BA697820c5e32D806A8'
+    assert events[0]['blockNumber'] == 10712731
+    assert events[0]['timeStamp'] == 1598134807
+    assert events[0]['data'] == '0x0000000000000000000000000000000000000000000001e3f60028423cff0000'  # noqa: E501
+    assert events[0]['transactionHash'] == '0xca33e56e1e529dacc9aa1261c8ba9230927329eb609fbe252e5bd3c2f5f3bcc9'  # noqa: E501

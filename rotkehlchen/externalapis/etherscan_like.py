@@ -25,7 +25,9 @@ from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.externalapis.utils import get_earliest_ts
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import (
+    deserialize_evm_address,
     deserialize_evm_transaction,
+    deserialize_int_from_hex,
     deserialize_int_from_str,
     deserialize_timestamp,
 )
@@ -845,3 +847,73 @@ class EtherscanLikeApi(ABC):
             method='eth_call',
             options={'to': to_address, 'data': input_data},
         )
+
+    def get_logs(
+            self,
+            chain_id: SUPPORTED_CHAIN_IDS,
+            contract_address: ChecksumEvmAddress,
+            topics: list[str | None],
+            from_block: int,
+            to_block: int | str = 'latest',
+            existing_events: list[dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get logs for a given contract address and topics.
+        May raise RemoteError if there are problems contacting the indexer or the response has
+        invalid data.
+        """
+        options = {'fromBlock': from_block, 'toBlock': to_block, 'address': contract_address}
+        for idx, topic in enumerate(topics):
+            if topic is None:
+                continue
+
+            options[f'topic{idx}'] = topic
+            if idx != 0:
+                for j in range(idx):  # Add AND-operators for all topic combinations with this idx
+                    options[f'topic{j}_{idx}_opr'] = 'and'
+
+        timeout_tuple = CachedSettings().get_timeout_tuple()
+        new_events = self._query(
+            chain_id=chain_id,
+            module='logs',
+            action='getLogs',
+            options=options,
+            timeout=(timeout_tuple[0], timeout_tuple[1] * 2),
+        )
+
+        # Convert all Hex ints to ints
+        for e_idx, event in enumerate(new_events):
+            try:
+                block_number = deserialize_int_from_hex(
+                    symbol=event['blockNumber'],
+                    location=(indexer_location := f'{self.name} log query'),
+                )
+                log_index = deserialize_int_from_hex(
+                    symbol=event['logIndex'],
+                    location=indexer_location,
+                )
+                # Try to see if the event is a duplicate that got returned
+                # in the previous iteration
+                if existing_events is not None:
+                    for previous_event in reversed(existing_events):
+                        if previous_event['blockNumber'] < block_number:
+                            break
+
+                        if (
+                            previous_event['logIndex'] == log_index and
+                            previous_event['transactionHash'] == event['transactionHash']
+                        ):
+                            existing_events.pop()
+
+                new_events[e_idx]['address'] = deserialize_evm_address(event['address'])
+                new_events[e_idx]['blockNumber'] = block_number
+                new_events[e_idx]['logIndex'] = log_index
+                for key in ('timeStamp', 'gasPrice', 'gasUsed', 'transactionIndex'):
+                    new_events[e_idx][key] = deserialize_int_from_hex(
+                        symbol=event[key],
+                        location=indexer_location,
+                    )
+
+            except DeserializationError as e:
+                raise RemoteError(f'Failed to decode a {self.name} log event due to {e!s}') from e
+
+        return new_events
