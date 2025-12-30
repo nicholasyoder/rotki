@@ -132,7 +132,7 @@ from rotkehlchen.constants.timing import ENS_AVATARS_REFRESH
 from rotkehlchen.data_import.manager import DataImportSource
 from rotkehlchen.db.accounting_rules import DBAccountingRules, query_missing_accounting_rules
 from rotkehlchen.db.addressbook import DBAddressbook
-from rotkehlchen.db.cache import DBCacheDynamic
+from rotkehlchen.db.cache import ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE, DBCacheDynamic
 from rotkehlchen.db.calendar import CalendarEntry, CalendarFilterQuery, DBCalendar, ReminderEntry
 from rotkehlchen.db.constants import (
     HISTORY_MAPPING_KEY_STATE,
@@ -6367,9 +6367,22 @@ class RestAPI:
     def match_asset_movements(
             self,
             asset_movement_identifier: int,
-            matched_event_identifier: int,
+            matched_event_identifier: int | None,
     ) -> Response:
-        """Match an exchange asset movement to an onchain event."""
+        """Match an exchange asset movement to an onchain event, or mark the movement as having
+        no match if the matched_event_identifier is None.
+        """
+        if matched_event_identifier is None:
+            # No matched event specified. Mark as having no match so this movement will be ignored.
+            with self.rotkehlchen.data.db.conn.write_ctx() as write_cursor:
+                self.rotkehlchen.data.db.set_dynamic_cache(
+                    write_cursor=write_cursor,
+                    name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
+                    identifier=asset_movement_identifier,
+                    value=ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE,
+                )
+            return api_response(OK_RESULT)
+
         events_db = DBHistoryEvents(database=self.rotkehlchen.data.db)
         asset_movement = matched_event = None
         with self.rotkehlchen.data.db.conn.read_ctx() as cursor:

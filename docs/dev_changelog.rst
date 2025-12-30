@@ -12,15 +12,24 @@ Matching Asset Movements With Onchain Events
 
 Exchange asset movement events may now be manually matched with specific onchain events via the API.
 
+* **New Endpoint**: ``PUT /api/(version)/history/events/match/asset_movements``
+
+  - Match asset movements with corresponding events or mark asset movements as having no match.
+  - Required ``asset_movement`` parameter specifying the DB identifier of the asset movement.
+  - Optional ``matched_event`` parameter specifying the DB identifier of the event to match with the asset movement. If this parameter is omitted or set to null, the asset movement is marked as having no match.
+  - Example: ``{"asset_movement": 123, "matched_event": 124}``
+
 * **New Endpoint**: ``POST /api/(version)/history/events/match/asset_movements``
 
-  - Two required parameters (``asset_movement`` and ``matched_event``) specifying the DB identifiers of the events to match.
-  - Example: ``{"asset_movement": 123, "matched_event": 124}``
+  - Finds possible matches for a given asset movement within the specified time range.
+  - Required ``asset_movement`` parameter specifying the group identifier to find matches for.
+  - Optional ``time_range`` parameter specifying the time range in seconds to include. Defaults to 7200 (2 hours).
+  - Example: ``{"asset_movement": "ef2...69f", "time_range": 7200}``
 
 * **New Endpoint**: ``GET /api/(version)/history/events/match/asset_movements``
 
   - Takes no parameters.
-  - Returns a list of group identifiers of any unmatched asset movements in the DB.
+  - Returns a list of group identifiers of any unmatched asset movements in the DB that are not marked as having no match.
 
 * **Modified Endpoint**: ``POST /api/(version)/history/events``
 

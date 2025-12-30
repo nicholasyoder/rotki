@@ -98,10 +98,14 @@ def get_unmatched_asset_movements(
         for entry in cursor.execute(
                 f'SELECT {HISTORY_BASE_ENTRY_FIELDS}, {CHAIN_EVENT_FIELDS} FROM history_events '
                 'LEFT JOIN chain_events_info ON history_events.identifier=chain_events_info.identifier '  # noqa: E501
-                'WHERE history_events.entry_type=? AND history_events.identifier NOT IN '
-                '(SELECT value FROM key_value_cache WHERE name LIKE ?) '
+                'WHERE history_events.entry_type=? AND CAST(history_events.identifier AS TEXT) NOT IN '  # noqa: E501
+                '(SELECT SUBSTR(name, ?) FROM key_value_cache WHERE name LIKE ?) '
                 'ORDER BY timestamp DESC, sequence_index',
-                (HistoryBaseEntryType.ASSET_MOVEMENT_EVENT.value, 'matched_asset_movement_%'),
+                (
+                    HistoryBaseEntryType.ASSET_MOVEMENT_EVENT.serialize_for_db(),
+                    len(DBCacheDynamic.MATCHED_ASSET_MOVEMENT.name) + 2,
+                    'matched_asset_movement_%',
+                ),
         ):
             if (asset_movement := AssetMovement.deserialize_from_db(entry[1:])).asset.is_fiat():
                 continue
@@ -171,8 +175,8 @@ def update_asset_movement_matched_event(
         events_db.db.set_dynamic_cache(  # type: ignore[call-overload]  # identifiers will not be None here since the events are from the db
             write_cursor=write_cursor,
             name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
-            value=asset_movement.identifier,
-            identifier=matched_event.identifier,
+            value=matched_event.identifier,
+            identifier=asset_movement.identifier,
         )
 
     return True, ''

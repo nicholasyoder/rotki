@@ -4560,7 +4560,7 @@ class ConfigurationUpdateSchema(Schema):
 
 class MatchAssetMovementsSchema(Schema):
     asset_movement = fields.Integer(required=True)
-    matched_event = fields.Integer(required=True)
+    matched_event = fields.Integer(required=False, load_default=None)
 
 
 class FindPossibleMatchesSchema(Schema):

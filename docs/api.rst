@@ -6274,7 +6274,7 @@ Match exchange asset movements with onchain events
 
 .. http:put:: /api/(version)/history/events/match/asset_movements
 
-   Matches exchange asset movement events with corresponding onchain events.
+   Matches exchange asset movement events with corresponding events, or mark the asset movement as having no corresponding event.
 
    **Example Request**:
 
@@ -6290,7 +6290,7 @@ Match exchange asset movements with onchain events
       }
 
    :reqjson int asset_movement: DB identifier of the asset movement to match
-   :reqjson int matched_event: DB identifier of the corresponding onchain event to match with the asset movement.
+   :reqjson int[optional] matched_event: DB identifier of the corresponding event to match with the asset movement. The asset movement is marked as having no match if this parameter is omitted or set to null.
 
    **Example Response**:
 
