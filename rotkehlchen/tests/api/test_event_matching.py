@@ -3,12 +3,13 @@ from typing import TYPE_CHECKING
 
 import requests
 
-from rotkehlchen.constants.assets import A_ETH
+from rotkehlchen.constants.assets import A_BTC, A_ETH, A_WETH
 from rotkehlchen.db.cache import ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE, DBCacheDynamic
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.asset_movement import AssetMovement
+from rotkehlchen.history.events.structures.base import HistoryEvent
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.swap import SwapEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
@@ -228,13 +229,15 @@ def test_get_possible_matches(rotkehlchen_api_server: 'APIServer') -> None:
                 event_subtype=HistoryEventSubType.NONE,
                 asset=A_ETH,
                 amount=FVal(amount),
-            ) for idx, (timestamp, amount) in enumerate([
-                (matched_movement.timestamp - 1, '0.1'),  # ID 2 - Before the movement. Not a close match.  # noqa: E501
-                (matched_movement.timestamp + 1, '0.1'),  # ID 3 - After the movement, within the time range. Close Match.  # noqa: E501
-                (matched_movement.timestamp + 2, '0.1'),  # ID 4 - After the movement, within the time range. Second close Match.  # noqa: E501
-                (matched_movement.timestamp + 3, '0.5'),  # ID 5 - Wrong amount, not a match.
-                (matched_movement.timestamp + HOUR_IN_MILLISECONDS * 2, '0.1'),  # ID 6 - Outside the time range, not matched or included in the other events list.  # noqa: E501
+            ) for idx, (timestamp, asset, amount) in enumerate([
+                (matched_movement.timestamp - 1, A_ETH, '0.1'),  # ID 2 - Before the movement. Not a close match.  # noqa: E501
+                (matched_movement.timestamp + 1, A_ETH, '0.1'),  # ID 3 - After the movement, within the time range. Close match.  # noqa: E501
+                (matched_movement.timestamp + 2, A_ETH, '0.1'),  # ID 4 - After the movement, within the time range. Second close match.  # noqa: E501
+                (matched_movement.timestamp + 3, A_ETH, '0.5'),  # ID 5 - Wrong amount, not a match.  # noqa: E501
+                (matched_movement.timestamp + 4, A_WETH, '0.1'),  # ID 6 - Asset is different, but in the same collection. Third close match.  # noqa: E501
+                (matched_movement.timestamp + HOUR_IN_MILLISECONDS * 2, A_ETH, '0.1'),  # ID 7 - Outside the time range, not matched or included in the other events list.  # noqa: E501
             ], start=2)], SwapEvent(  # Also add an unrelated swap event from the same exchange which should not be included in the possible matches  # noqa: E501
+                identifier=8,
                 timestamp=matched_movement.timestamp,
                 location=matched_movement.location,
                 event_subtype=HistoryEventSubType.SPEND,
@@ -242,19 +245,36 @@ def test_get_possible_matches(rotkehlchen_api_server: 'APIServer') -> None:
                 amount=matched_movement.amount,
                 group_identifier='xyz1',
                 location_label=matched_movement.location_label,
+            ), HistoryEvent(
+                identifier=9,
+                group_identifier='xyz2',
+                sequence_index=0,
+                timestamp=TimestampMS(matched_movement.timestamp - 5),
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                location=Location.EXTERNAL,
+                asset=A_BTC,  # asset not in the same collection as the movement.
+                amount=matched_movement.amount,
             )],
         )
 
-    assert assert_proper_response_with_result(
-        response=requests.post(
-            api_url_for(rotkehlchen_api_server, 'matchassetmovementsresource'),
-            json={'asset_movement': matched_movement.group_identifier},
-        ),
-        rotkehlchen_api_server=rotkehlchen_api_server,
-    ) == {  # Returns DB identifiers. These ids are set above with the enumeration index.
-        'close_matches': [3, 4],
-        'other_events': [2, 5],
-    }
+    for only_expected_assets, expected_other_events in [
+        (True, [2, 5]),  # skips the BTC event (9)
+        (False, [2, 5, 9]),  # BTC event included but is last since its timestamp is farthest from the asset movement  # noqa: E501
+    ]:
+        assert assert_proper_response_with_result(
+            response=requests.post(
+                api_url_for(rotkehlchen_api_server, 'matchassetmovementsresource'),
+                json={
+                    'asset_movement': matched_movement.group_identifier,
+                    'only_expected_assets': only_expected_assets,
+                },
+            ),
+            rotkehlchen_api_server=rotkehlchen_api_server,
+        ) == {  # Returns DB identifiers. These ids are set above with the enumeration index.
+            'close_matches': [3, 4, 6],
+            'other_events': expected_other_events,
+        }
 
 
 def test_get_history_events_with_matched_asset_movements(
