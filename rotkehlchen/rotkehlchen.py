@@ -58,6 +58,7 @@ from rotkehlchen.chain.zksync_lite.manager import ZksyncLiteManager
 from rotkehlchen.config import default_data_directory
 from rotkehlchen.constants import ONE, ZERO
 from rotkehlchen.constants.assets import A_USD
+from rotkehlchen.constants.misc import CONTRACT_TAG_NAME
 from rotkehlchen.data_handler import DataHandler
 from rotkehlchen.data_import.manager import CSVDataImporter
 from rotkehlchen.data_migrations.manager import DataMigrationManager
@@ -769,7 +770,6 @@ class Rotkehlchen:
         list[tuple[SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE, ChecksumEvmAddress]],
         list[tuple[SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE, ChecksumEvmAddress]],
         list[tuple[SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE, ChecksumEvmAddress]],
-        list[tuple[SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE, ChecksumEvmAddress]],
     ]:
         """Adds each account for all evm addresses
 
@@ -783,8 +783,6 @@ class Rotkehlchen:
         - list address, chain tuples for all addresses already tracked.
         - list address, chain tuples for all addresses that failed to be added.
         - list address, chain tuples for all addresses that have no activity in their chain.
-        - list address, chain tuples for all addresses that are contracts except those
-        identified as SAFE contracts.
 
         May raise:
         - TagConstraintError if any of the given account data contain unknown tags.
@@ -815,12 +813,17 @@ class Rotkehlchen:
                     account_data=[account_data_entry.to_blockchain_account_data(chain)],
                 )
 
+            if len(evm_contract_addresses) != 0:
+                write_cursor.executemany(
+                    'INSERT OR IGNORE INTO tag_mappings(object_reference, tag_name) VALUES (?, ?)',
+                    [(address, CONTRACT_TAG_NAME) for address in evm_contract_addresses],
+                )
+
         return (
             added_accounts,
             existed_accounts,
             failed_accounts,
             no_activity_accounts,
-            evm_contract_addresses,
         )
 
     @overload

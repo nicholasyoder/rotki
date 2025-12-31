@@ -3766,11 +3766,12 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
     with db_v50.conn.read_ctx() as cursor:
         assert column_exists(cursor=cursor, table_name='history_events', column_name='event_identifier')  # noqa: E501
         assert not column_exists(cursor=cursor, table_name='history_events', column_name='group_identifier')  # noqa: E501
-        assert cursor.execute('SELECT COUNT(*) FROM chain_events_info').fetchone()[0] == 1
+        assert cursor.execute('SELECT COUNT(*) FROM chain_events_info').fetchone()[0] == 2
         assert cursor.execute('SELECT identifier, event_identifier, sequence_index, asset FROM history_events ORDER BY identifier').fetchall() == (result := [  # noqa: E501
             (1, 'TEST_EVENT_1', 0, 'ETH'),
             (2, 'TEST_EVENT_2', 0, 'BTC'),
             (3, 'TEST_EVENT_3', 1, 'USD'),
+            (4, 'SAFE_DEPLOY_EVENT', 0, 'ETH'),
         ])
         assert not table_exists(cursor=cursor, name='lido_csm_node_operators')
         assert not table_exists(cursor=cursor, name='lido_csm_node_operator_metrics')
@@ -3778,6 +3779,16 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
         assert cursor.execute(
             "SELECT COUNT(*) FROM location WHERE location = 'x'",
         ).fetchone()[0] == 0
+        assert cursor.execute(
+            "SELECT name, background_color FROM tags WHERE name = 'Contract'",
+        ).fetchone() == ('Contract', 'FF0000')
+        assert cursor.execute(
+            'SELECT object_reference, tag_name FROM tag_mappings ORDER BY object_reference',
+        ).fetchall() == [((existing_contract_tag_address := '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'), 'Contract')]  # noqa: E501
+        assert cursor.execute(
+            'SELECT tag_name FROM tag_mappings WHERE object_reference = ?',
+            ((safe_contract_address := '0x5A0b54D5dc17e0AadC383d2db43B0a0D3E029c4c'),),
+        ).fetchone() is None
 
     db_v50.logout()
     db = _init_db_with_target_version(
@@ -3789,7 +3800,7 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
     with db.conn.read_ctx() as cursor:
         assert not column_exists(cursor=cursor, table_name='history_events', column_name='event_identifier')  # noqa: E501
         assert column_exists(cursor=cursor, table_name='history_events', column_name='group_identifier')  # noqa: E501
-        assert cursor.execute('SELECT COUNT(*) FROM chain_events_info').fetchone()[0] == 1  # ensure that fk relations are kept  # noqa: E501
+        assert cursor.execute('SELECT COUNT(*) FROM chain_events_info').fetchone()[0] == 2
         assert cursor.execute('SELECT identifier, group_identifier, sequence_index, asset FROM history_events ORDER BY identifier').fetchall() == result  # noqa: E501
         assert cursor.execute(  # Verify the unique constraint was updated
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='history_events'",
@@ -3800,5 +3811,14 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
         assert cursor.execute(
             "SELECT COUNT(*) FROM location WHERE location = 'x' AND seq = 56",
         ).fetchone()[0] == 1
+        assert cursor.execute(
+            "SELECT name, background_color FROM tags WHERE name IN ('Contract', 'Contract (Custom)') ORDER BY name",  # noqa: E501
+        ).fetchall() == [('Contract', '9370DB'), ('Contract (Custom)', 'FF0000')]
+        assert cursor.execute(  # account with a Safe deployment tx now has the Contract tag
+            'SELECT object_reference, tag_name FROM tag_mappings ORDER BY object_reference',
+        ).fetchall() == [
+            (safe_contract_address, 'Contract'),
+            (existing_contract_tag_address, 'Contract (Custom)'),
+        ]
 
     db.logout()

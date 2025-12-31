@@ -8828,8 +8828,7 @@ Adding EVM accounts to all EVM chains
                   "arbitrum_one",
                   "base"
                ]
-            },
-            "evm_contracts": [{"0x9008D19f58AAbD9eD0D60971565AA8510560ab41": ["eth"]}]
+            }
         },
         "message": ""
       }
@@ -8841,7 +8840,6 @@ Adding EVM accounts to all EVM chains
    :resjson object existed: A mapping containing addresses and in what chains they were already tracked before the api call so no action was taken on them.
    :resjson object failed: A mapping containing which chains failed to get added for each address due to some error contacting remote APIs.
    :resjson object no_activity: A mapping containing addresses and in which chains they had no activity so no action was taken for them.
-   :resjson list no_activity: A list of the addresses that were detected as ethereum contracts.
    :statuscode 200: Accounts successfully added
    :statuscode 400: Provided JSON or data is in some way malformed. The accounts to add contained invalid addresses or were an empty list.
    :statuscode 401: User is not logged in.

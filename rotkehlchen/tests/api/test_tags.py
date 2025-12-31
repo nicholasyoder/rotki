@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Final
 import pytest
 import requests
 
+from rotkehlchen.constants.misc import CONTRACT_TAG_NAME
 from rotkehlchen.tests.utils.api import (
     api_url_for,
     assert_error_response,
@@ -33,7 +34,7 @@ def test_add_and_query_tags(rotkehlchen_api_server: 'APIServer') -> None:
     )
     assert_proper_response(response)
     data = response.json()
-    assert data['result'] == {}, 'In the beginning we should have no tags'
+    assert {k: v for k, v in data['result'].items() if k != CONTRACT_TAG_NAME} == {}, 'In the beginning we should have no user-added tags'  # noqa: E501
 
     # Add one tag and see its response shows it was added
     tag1 = {
@@ -50,7 +51,7 @@ def test_add_and_query_tags(rotkehlchen_api_server: 'APIServer') -> None:
     )
     assert_proper_response(response)
     data = response.json()
-    assert len(data['result']) == 1
+    assert len(data['result']) == 2
     assert data['result']['Public'] == tag1
 
     # Add a second tag and see its response shows it was added
@@ -68,7 +69,7 @@ def test_add_and_query_tags(rotkehlchen_api_server: 'APIServer') -> None:
     )
     assert_proper_response(response)
     data = response.json()
-    assert len(data['result']) == 2
+    assert len(data['result']) == 3
     assert data['result']['Public'] == tag1
     assert data['result']['private'] == tag2
 
@@ -100,14 +101,14 @@ def test_add_and_query_tags(rotkehlchen_api_server: 'APIServer') -> None:
     )
     assert_proper_response(response)
     data = response.json()
-    assert len(data['result']) == 2
+    assert len(data['result']) == 3
     assert data['result']['Public'] == tag1
     assert data['result']['private'] == tag2
 
     # And finally also check the DB to be certain
     with rotki.data.db.conn.read_ctx() as cursor:
         db_response = rotki.data.db.get_tags(cursor)
-    assert len(db_response) == 2
+    assert len(db_response) == 3
     assert db_response['Public'].serialize() == tag1
     assert db_response['private'].serialize() == tag2
 
@@ -129,7 +130,7 @@ def test_add_tag_without_description(rotkehlchen_api_server: 'APIServer') -> Non
     assert_proper_response(response)
     tag1['description'] = None
     data = response.json()
-    assert len(data['result']) == 1
+    assert len(data['result']) == 2
     assert data['result']['Public'] == tag1
 
     # Query tags and see that the added tag is there
@@ -141,13 +142,13 @@ def test_add_tag_without_description(rotkehlchen_api_server: 'APIServer') -> Non
     )
     assert_proper_response(response)
     data = response.json()
-    assert len(data['result']) == 1
+    assert len(data['result']) == 2
     assert data['result']['Public'] == tag1
 
     # And finally also check the DB to be certain
     with rotki.data.db.conn.read_ctx() as cursor:
         db_response = rotki.data.db.get_tags(cursor)
-    assert len(db_response) == 1
+    assert len(db_response) == 2
     assert db_response['Public'].serialize() == tag1
 
 
@@ -357,7 +358,7 @@ def test_edit_tags(rotkehlchen_api_server: 'APIServer') -> None:
     )
     assert_proper_response(response)
     data = response.json()
-    assert len(data['result']) == 2
+    assert len(data['result']) == 3
     assert data['result']['Public'] == tag1
     tag2 = edit_tag_data
     tag2['name'] = 'private'
@@ -377,7 +378,7 @@ def test_edit_tags(rotkehlchen_api_server: 'APIServer') -> None:
     )
     assert_proper_response(response)
     data = response.json()
-    assert len(data['result']) == 2
+    assert len(data['result']) == 3
     assert data['result']['Public'] == tag1
     edit_tag_data['description'] = tag2['description']
     assert data['result']['private'] == edit_tag_data
@@ -396,7 +397,7 @@ def test_edit_tags(rotkehlchen_api_server: 'APIServer') -> None:
     )
     assert_proper_response(response)
     data = response.json()
-    assert len(data['result']) == 2
+    assert len(data['result']) == 3
     assert data['result']['Public'] == tag1
     tag2['foreground_color'] = edit_tag_data['foreground_color']
     assert data['result']['private'] == tag2
@@ -415,7 +416,7 @@ def test_edit_tags(rotkehlchen_api_server: 'APIServer') -> None:
     )
     assert_proper_response(response)
     data = response.json()
-    assert len(data['result']) == 2
+    assert len(data['result']) == 3
     assert data['result']['Public'] == tag1
     tag2['background_color'] = edit_tag_data['background_color']
     assert data['result']['private'] == tag2
@@ -488,14 +489,14 @@ def test_edit_tags(rotkehlchen_api_server: 'APIServer') -> None:
     )
     assert_proper_response(response)
     data = response.json()
-    assert len(data['result']) == 2
+    assert len(data['result']) == 3
     assert data['result']['Public'] == tag1
     assert data['result']['personal'] == tag2
 
     # And finally also check the DB to be certain
     with rotki.data.db.conn.read_ctx() as cursor:
         db_response = rotki.data.db.get_tags(cursor)
-    assert len(db_response) == 2
+    assert len(db_response) == 3
     assert db_response['Public'].serialize() == tag1
     assert db_response['personal'].serialize() == tag2
 
@@ -532,7 +533,7 @@ def test_delete_tags(rotkehlchen_api_server: 'APIServer') -> None:
     )
     assert_proper_response(response)
     data = response.json()
-    assert len(data['result']) == 2
+    assert len(data['result']) == 3
     assert data['result']['Public'] == tag1
     assert data['result']['private'] == tag2
     # Query tags and see that both added tags are in the response
@@ -544,7 +545,7 @@ def test_delete_tags(rotkehlchen_api_server: 'APIServer') -> None:
     )
     assert_proper_response(response)
     data = response.json()
-    assert len(data['result']) == 2
+    assert len(data['result']) == 3
     assert data['result']['Public'] == tag1
     assert data['result']['private'] == tag2
 
@@ -560,7 +561,7 @@ def test_delete_tags(rotkehlchen_api_server: 'APIServer') -> None:
     )
     assert_proper_response(response)
     data = response.json()
-    assert len(data['result']) == 1
+    assert len(data['result']) == 2
 
     # Now try to delete a non existing tag
     delete_tag_data = {'name': 'hello'}
@@ -585,13 +586,13 @@ def test_delete_tags(rotkehlchen_api_server: 'APIServer') -> None:
     )
     assert_proper_response(response)
     data = response.json()
-    assert len(data['result']) == 1
+    assert len(data['result']) == 2
     assert data['result']['private'] == tag2
 
     # And finally also check the DB to be certain
     with rotki.data.db.conn.read_ctx() as cursor:
         db_response = rotki.data.db.get_tags(cursor)
-    assert len(db_response) == 1
+    assert len(db_response) == 2
     assert db_response['private'].serialize() == tag2
 
 
@@ -700,7 +701,7 @@ def test_delete_utilized_tag(rotkehlchen_api_server: 'APIServer') -> None:
     )
     assert_proper_response(response)
     data = response.json()
-    assert len(data['result']) == 1
+    assert len(data['result']) == 2
     assert data['result']['public'] is not None
 
     # Now check the DB directly and see that tag mappings of the deleted tag are gone
@@ -849,3 +850,64 @@ def test_editing_chain_type_tags(rotkehlchen_api_server: 'APIServer') -> None:
         assert result[0]['address'] == TEST_ADDRESS
         assert result[0]['tags'] == ['tag_validators']
         assert result[0]['label'] == 'validators'
+
+
+def test_cannot_delete_reserved_contract_tag(rotkehlchen_api_server: 'APIServer') -> None:
+    response = requests.delete(
+        api_url_for(rotkehlchen_api_server, 'tagsresource'),
+        json={'name': CONTRACT_TAG_NAME},
+    )
+    assert_error_response(
+        response=response,
+        contained_in_msg=f'Cannot delete reserved system tag "{CONTRACT_TAG_NAME}"',
+        status_code=HTTPStatus.CONFLICT,
+    )
+
+    response = requests.delete(
+        api_url_for(rotkehlchen_api_server, 'tagsresource'),
+        json={'name': CONTRACT_TAG_NAME.lower()},
+    )
+    assert_error_response(
+        response=response,
+        contained_in_msg='Cannot delete reserved system tag',
+        status_code=HTTPStatus.CONFLICT,
+    )
+
+
+def test_cannot_rename_reserved_contract_tag(rotkehlchen_api_server: 'APIServer') -> None:
+    response = requests.patch(
+        api_url_for(rotkehlchen_api_server, 'tagsresource'),
+        json={'name': CONTRACT_TAG_NAME, 'new_name': 'MyContract'},
+    )
+    assert_error_response(
+        response=response,
+        contained_in_msg=f'Cannot rename reserved system tag "{CONTRACT_TAG_NAME}"',
+        status_code=HTTPStatus.CONFLICT,
+    )
+
+    response = requests.patch(
+        api_url_for(rotkehlchen_api_server, 'tagsresource'),
+        json={'name': CONTRACT_TAG_NAME.lower(), 'new_name': 'MyContract'},
+    )
+    assert_error_response(
+        response=response,
+        contained_in_msg='Cannot rename reserved system tag',
+        status_code=HTTPStatus.CONFLICT,
+    )
+
+
+def test_can_edit_contract_tag_appearance(rotkehlchen_api_server: 'APIServer') -> None:
+    response = requests.patch(
+        api_url_for(rotkehlchen_api_server, 'tagsresource'),
+        json={
+            'name': CONTRACT_TAG_NAME,
+            'description': 'Updated description',
+            'background_color': '123456',
+            'foreground_color': 'abcdef',
+        },
+    )
+    assert_proper_response(response)
+    data = response.json()
+    assert data['result'][CONTRACT_TAG_NAME]['description'] == 'Updated description'
+    assert data['result'][CONTRACT_TAG_NAME]['background_color'] == '123456'
+    assert data['result'][CONTRACT_TAG_NAME]['foreground_color'] == 'abcdef'

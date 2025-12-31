@@ -1,7 +1,17 @@
 import logging
 from typing import TYPE_CHECKING
 
+from pysqlcipher3 import dbapi2 as sqlcipher
+
+from rotkehlchen.chain.evm.decoding.safe.constants import CPT_SAFE_MULTISIG
+from rotkehlchen.constants import (
+    CONTRACT_TAG_BACKGROUND_COLOR,
+    CONTRACT_TAG_DESCRIPTION,
+    CONTRACT_TAG_FOREGROUND_COLOR,
+    CONTRACT_TAG_NAME,
+)
 from rotkehlchen.db.utils import update_table_schema
+from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter, enter_exit_debug_log
 from rotkehlchen.utils.progress import perform_userdb_upgrade_steps, progress_step
 
@@ -106,6 +116,58 @@ def upgrade_v50_to_v51(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
         write_cursor.execute(
             'CREATE INDEX IF NOT EXISTS idx_event_metrics_metric_key '
             'ON event_metrics(metric_key);',
+        )
+
+    @progress_step(description='Adding reserved Contract tag.')
+    def _add_contract_tag(write_cursor: 'DBCursor') -> None:
+        """Adds the reserved 'Contract' system tag for tagging smart contract addresses.
+        Renames any existing user 'Contract' tag to 'Contract (Custom)' first.
+        """
+        write_cursor.switch_foreign_keys('OFF')
+        write_cursor.execute(
+            'UPDATE tags SET name = ? WHERE name = ? COLLATE NOCASE',
+            (f'{CONTRACT_TAG_NAME} (Custom)', CONTRACT_TAG_NAME),
+        )
+        write_cursor.execute(
+            'UPDATE tag_mappings SET tag_name = ? WHERE tag_name = ? COLLATE NOCASE',
+            (f'{CONTRACT_TAG_NAME} (Custom)', CONTRACT_TAG_NAME),
+        )
+        write_cursor.switch_foreign_keys('ON')
+        try:
+            write_cursor.execute(
+                'INSERT INTO tags(name, description, background_color, foreground_color) '
+                'VALUES (?, ?, ?, ?)',
+                (CONTRACT_TAG_NAME, CONTRACT_TAG_DESCRIPTION,
+                 CONTRACT_TAG_BACKGROUND_COLOR, CONTRACT_TAG_FOREGROUND_COLOR),
+            )
+        except sqlcipher.IntegrityError as e:  # pylint: disable=no-member
+            log.error(f'Failed to insert Contract tag during upgrade: {e}')
+
+    @progress_step(description='Tagging Safe contract addresses.')
+    def _tag_safe_addresses(write_cursor: 'DBCursor') -> None:
+        """Tags existing tracked accounts that have Safe deployment events with the Contract tag.
+
+        Note: This step must run before any step that deletes history_events, as it depends
+        on the presence of Safe deployment events to identify contract addresses.
+        """
+        write_cursor.execute(
+            """
+            INSERT OR IGNORE INTO tag_mappings(object_reference, tag_name)
+            SELECT B.account, ?
+            FROM blockchain_accounts B
+            WHERE EXISTS (
+                SELECT 1
+                FROM chain_events_info C
+                JOIN history_events H ON C.identifier = H.identifier
+                WHERE C.address = B.account
+                  AND C.counterparty = ?
+                  AND H.type = ?
+                  AND H.subtype = ?
+            )
+            """,
+            (CONTRACT_TAG_NAME, CPT_SAFE_MULTISIG,
+             HistoryEventType.INFORMATIONAL.serialize(),
+             HistoryEventSubType.CREATE.serialize()),
         )
 
     perform_userdb_upgrade_steps(db=db, progress_handler=progress_handler, should_vacuum=True)
