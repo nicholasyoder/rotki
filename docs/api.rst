@@ -5425,6 +5425,7 @@ Dealing with History Events
    :resjson string identifier: Common key. This is the identifier of a single event.
    :resjson string entry_type: Common key. This identifies the category of the event and determines the schema. Possible values are: ``"history event"``, ``"evm event"``, ``"eth withdrawal event"``, ``"eth block event"``, ``"eth deposit event"``.
    :resjson string group_identifier: Common key. An identifier grouping multiple events under a common group. This is how we group transaction events under a transaction, staking related events under block production etc.
+   :resjson string[optional] actual_group_identifier: The actual group identifier of the event as stored in the DB. Used when events from different underlying groups are all joined into a single group for display in the frontend.
    :resjson int sequence_index: Common key. This is an index that tries to provide the order of history entries for a single group_identifier.
    :resjson int timestamp: Common key. The timestamp of the entry
    :resjson string event_accounting_rule_status: Common key. It explains the status of accounting rules for the event. Possible values are: ``has rule``: Meaning the event has a rule. ``processed``: meaning the event will be processed because it is affected by another event. ``not processed`` meaning it doesn't have any rule and won't be processed by accounting.

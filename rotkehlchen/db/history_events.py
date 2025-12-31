@@ -1451,3 +1451,95 @@ class DBHistoryEvents:
             'top_days_by_number_of_transactions': top_days_by_number_of_transactions,
             'transactions_per_protocol': transactions_per_protocol,
         }
+
+    def process_matched_asset_movements(
+            self,
+            cursor: 'DBCursor',
+            aggregate_by_group_ids: bool,
+            events_result: list[tuple[int, HistoryBaseEntry]] | list[HistoryBaseEntry],
+            entries_found: int,
+            entries_with_limit: int,
+            entries_total: int,
+    ) -> tuple[
+        list[tuple[int, HistoryBaseEntry]] | list[HistoryBaseEntry],
+        dict[str, str],
+        int,
+        int,
+        int,
+    ]:
+        """Process the events_result joining asset movements with the group of their matched event.
+
+        Handles two cases:
+        - aggregate_by_group_ids is True: matched asset movement groups are skipped, and matched
+         event groups have their grouped_events_num incremented to account for the asset movements
+         that will be included in that group.
+        - aggregate_by_group_ids is False: If a matched event group is included in the result, the
+         corresponding asset movement events are added to the result.
+
+        Returns a tuple containing the processed events, joined group ids dict, entries found,
+        entries with limit, and entries total.
+        """
+        movement_group_ids_to_group_count, movement_id_to_group_id, matched_event_group_id_to_movement, joined_group_ids = {}, {}, {}, {}  # noqa: E501
+        for movement_id, movement_group_identifier, match_group_identifier, group_count in cursor.execute(  # noqa: E501
+                'SELECT value AS movement_id, '
+                'movement_events_join.group_identifier, match_events_join.group_identifier, '
+                '(SELECT COUNT(*) FROM history_events he2 '
+                'WHERE he2.group_identifier = movement_events_join.group_identifier) as group_count '  # noqa: E501
+                'FROM key_value_cache '
+                'JOIN history_events movement_events_join ON CAST(movement_events_join.identifier AS TEXT) = movement_id '  # noqa: E501
+                'JOIN history_events match_events_join ON CAST(match_events_join.identifier AS TEXT) = SUBSTR(name, ?) '  # noqa: E501
+                'WHERE name LIKE ?;',
+                (
+                    len(DBCacheDynamic.MATCHED_ASSET_MOVEMENT.name) + 2,
+                    f'{DBCacheDynamic.MATCHED_ASSET_MOVEMENT.name.lower()}%',
+                ),
+        ):
+            movement_group_ids_to_group_count[movement_group_identifier] = group_count
+            movement_id_to_group_id[movement_id] = movement_group_identifier
+            matched_event_group_id_to_movement[match_group_identifier] = movement_id
+            joined_group_ids[movement_group_identifier] = match_group_identifier
+            joined_group_ids[match_group_identifier] = match_group_identifier
+
+        processed_events_result = []
+        if aggregate_by_group_ids:
+            for grouped_events_num, event in events_result:  # type: ignore[misc]  # events_result is a different type depending on aggregate_by_group_ids
+                if event.group_identifier in movement_group_ids_to_group_count:
+                    # Skip any matched asset movements. They will be added to the group of
+                    # the matched event instead, so they can be properly collapsed into a
+                    # single event in frontend.
+                    entries_found -= 1
+                    entries_with_limit -= 1
+                    entries_total -= 1
+                    continue
+                elif (
+                    (movement_id := matched_event_group_id_to_movement.get(event.group_identifier)) is not None and  # noqa: E501
+                    (movement_group_id := movement_id_to_group_id.get(movement_id)) is not None and
+                    (movement_group_count := movement_group_ids_to_group_count.get(movement_group_id)) is not None  # noqa: E501
+                ):
+                    # There is a matched event in this group. Need to increase the count for this
+                    # group to include the matched asset movement and its fee if present.
+                    processed_events_result.append((grouped_events_num + movement_group_count, event))  # noqa: E501
+                    continue
+
+                processed_events_result.append((grouped_events_num, event))
+        else:  # Not aggregating. Need to include the asset movements in their matched groups
+            events_by_group = defaultdict(list)
+            for event in events_result:
+                events_by_group[event.group_identifier].append(event)  # type: ignore[union-attr]
+
+            for group_identifier, events in events_by_group.items():
+                if (
+                    (movement_id := matched_event_group_id_to_movement.get(group_identifier)) is not None and  # noqa: E501
+                    (movement_group_id := movement_id_to_group_id.get(movement_id)) is not None
+                ):
+                    for event in self.get_history_events_internal(
+                        cursor=cursor,
+                        filter_query=HistoryEventFilterQuery.make(
+                            group_identifiers=[movement_group_id],
+                        ),
+                    ):
+                        events.append(event)
+
+                processed_events_result.extend(events)  # type: ignore[arg-type]
+
+        return processed_events_result, joined_group_ids, entries_found, entries_with_limit, entries_total  # noqa: E501
