@@ -7,6 +7,7 @@ from rotkehlchen.db.cache import DBCacheDynamic, DBCacheStatic
 from rotkehlchen.db.constants import CHAIN_EVENT_FIELDS, HISTORY_BASE_ENTRY_FIELDS
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
+from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.base import HistoryBaseEntry, HistoryBaseEntryType
 from rotkehlchen.history.events.structures.onchain_event import OnchainEvent
@@ -197,7 +198,9 @@ def find_asset_movement_matches(
         possible_matches = events_db.get_history_events_internal(
             cursor=cursor,
             filter_query=HistoryEventFilterQuery.make(
-                assets=(asset_movement.asset,),
+                assets=GlobalDBHandler.get_assets_in_same_collection(
+                    identifier=asset_movement.asset.identifier,
+                ),
                 **{  # type: ignore[arg-type]
                     'type_and_subtype_combinations': [
                         (HistoryEventType.SPEND, HistoryEventSubType.NONE),
@@ -247,6 +250,11 @@ def find_asset_movement_matches(
             for match in close_matches:
                 if isinstance(match, OnchainEvent) and str(match.tx_ref) == tx_ref:
                     return [match]
+
+        if len(asset_matches := [
+            match for match in close_matches if match.asset == asset_movement.asset
+        ]) == 1:  # Maybe match by exact asset match (matched events can have any asset in the collection)  # noqa: E501
+            return asset_matches
 
         log.debug(
             f'Multiple close matches found for '

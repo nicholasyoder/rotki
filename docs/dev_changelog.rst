@@ -24,7 +24,8 @@ Exchange asset movement events may now be manually matched with specific onchain
   - Finds possible matches for a given asset movement within the specified time range.
   - Required ``asset_movement`` parameter specifying the group identifier to find matches for.
   - Optional ``time_range`` parameter specifying the time range in seconds to include. Defaults to 7200 (2 hours).
-  - Example: ``{"asset_movement": "ef2...69f", "time_range": 7200}``
+  - Optional ``only_expected_assets`` parameter indicating whether to limit the possible matches to only events with assets in the same collection as the asset movement's asset. True by default.
+  - Example: ``{"asset_movement": "ef2...69f", "time_range": 7200, "only_expected_assets": true}``
 
 * **New Endpoint**: ``GET /api/(version)/history/events/match/asset_movements``
 

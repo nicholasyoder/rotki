@@ -6358,11 +6358,13 @@ Match exchange asset movements with onchain events
 
       {
           "asset_movement": "ef2fcd9d69e358f184e5aae29f74b39e7613a13eaaae00717bde70a165cfd69f",
-          "time_range": 7200
+          "time_range": 7200,
+          "only_expected_assets": true
       }
 
    :reqjson string asset_movement: Group identifier of the asset movement to find matches for.
-   :reqjson int time_range: Optional. Time range in seconds to search for matches. Defaults to 7200 (2 hours).
+   :reqjson int[optional] time_range: Time range in seconds to search for matches. Defaults to 7200 (2 hours).
+   :reqjson bool[optional] only_expected_assets: Flag indicating whether to limit the possible matches to only events with assets in the same collection as the asset movement's asset. True by default.
 
    **Example Response**:
 

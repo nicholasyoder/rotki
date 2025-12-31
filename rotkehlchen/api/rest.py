@@ -6424,7 +6424,10 @@ class RestAPI:
             self,
             asset_movement_group_identifier: str,
             time_range: int,
+            only_expected_assets: bool,
     ) -> Response:
+        """Get possible matches for an asset movement within the given time range, limiting to only
+        events with assets in the same collection depending on the `only_expected_assets` flag."""
         events_db = DBHistoryEvents(database=self.rotkehlchen.data.db)
         asset_movement = fee_event = None
         with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
@@ -6458,9 +6461,13 @@ class RestAPI:
             other_events = events_db.get_history_events_internal(
                 cursor=cursor,
                 filter_query=HistoryEventFilterQuery.make(
+                    order_by_rules=[(f'ABS(timestamp - {asset_movement.timestamp})', True)],
                     from_ts=Timestamp(asset_movement_timestamp - time_range),
                     to_ts=Timestamp(asset_movement_timestamp + time_range),
                     ignored_ids=[str(x) for x in close_match_identifiers] + [str(asset_movement.identifier)],  # noqa: E501
+                    assets=GlobalDBHandler.get_assets_in_same_collection(
+                        identifier=asset_movement.asset.identifier,
+                    ) if only_expected_assets else None,
                 ),
             )
 
