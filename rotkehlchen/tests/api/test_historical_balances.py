@@ -5,6 +5,7 @@ from unittest.mock import patch
 import pytest
 import requests
 
+from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.assets.utils import get_or_create_evm_token
 from rotkehlchen.chain.evm.types import string_to_evm_address
@@ -23,6 +24,7 @@ from rotkehlchen.history.events.structures.types import (
 from rotkehlchen.history.price import PriceHistorian
 from rotkehlchen.history.types import HistoricalPrice, HistoricalPriceOracle
 from rotkehlchen.tasks.historical_balances import process_historical_balances
+from rotkehlchen.tests.fixtures.messages import MockRotkiNotifier
 from rotkehlchen.tests.utils.api import (
     api_url_for,
     assert_error_response,
@@ -104,10 +106,9 @@ def fixture_setup_historical_data(rotkehlchen_api_server: 'APIServer') -> None:
         )
 
     # Process events to populate event_metrics table
-    msg_aggregator = rotkehlchen_api_server.rest_api.rotkehlchen.msg_aggregator
     process_historical_balances(
         database=db,
-        msg_aggregator=msg_aggregator,
+        msg_aggregator=db.msg_aggregator,
     )
 
 
@@ -177,6 +178,7 @@ def test_get_historical_asset_balance(
             ),
         )
 
+    process_historical_balances(database=db, msg_aggregator=db.msg_aggregator)
     response = requests.post(
         api_url_for(
             rotkehlchen_api_server,
@@ -218,6 +220,7 @@ def test_get_historical_asset_amounts_over_time(
             )],
         )
 
+    process_historical_balances(database=db, msg_aggregator=db.msg_aggregator)
     response = requests.post(
         api_url_for(
             rotkehlchen_api_server,
@@ -232,7 +235,6 @@ def test_get_historical_asset_amounts_over_time(
     result = assert_proper_sync_response_with_result(response)
     # Check all balance amount change points are present with correct amounts
     assert len(result['times']) == len(result['values'])
-    assert 'last_group_identifier' not in result
     for ts, amount in zip(result['times'], result['values'], strict=True):
         assert ts in {START_TS, START_TS + DAY_IN_SECONDS * 2, START_TS + DAY_IN_SECONDS * 3}
         assert amount in {'2', '1.5', '3.5'}
@@ -245,6 +247,7 @@ def test_get_historical_asset_amounts_over_time_with_negative_amount(
 ) -> None:
     # Add more events to create a scenario with multiple potential negative balance events
     db = rotkehlchen_api_server.rest_api.rotkehlchen.data.db
+    db.msg_aggregator.rotki_notifier = MockRotkiNotifier()  # type: ignore[assignment]
     events = [
         HistoryEvent(
             group_identifier='btc_spend_2',
@@ -275,6 +278,12 @@ def test_get_historical_asset_amounts_over_time_with_negative_amount(
             history=events,
         )
 
+    process_historical_balances(database=db, msg_aggregator=db.msg_aggregator)
+
+    # Check that negative balance was detected via WS message
+    messages = db.msg_aggregator.rotki_notifier.messages  # type: ignore[union-attr]
+    assert any(m.message_type == WSMessageType.NEGATIVE_BALANCE_DETECTED for m in messages)
+
     response = requests.post(
         api_url_for(
             rotkehlchen_api_server,
@@ -289,8 +298,6 @@ def test_get_historical_asset_amounts_over_time_with_negative_amount(
     result = assert_proper_sync_response_with_result(response)
     assert len(result['times']) == len(result['values'])
     assert len(result['times']) == 2
-
-    assert result['last_group_identifier'] == [6, events[0].group_identifier]
     assert result['times'][0] == START_TS  # Initial timestamp
     assert result['times'][1] == START_TS + DAY_IN_SECONDS * 2  # First spend
     assert result['values'][0] == '2'  # Initial balance
@@ -303,6 +310,7 @@ def test_get_historical_assets_in_collection_amounts_over_time(
         setup_historical_data: None,
 ) -> None:
     db = rotkehlchen_api_server.rest_api.rotkehlchen.data.db
+    db.msg_aggregator.rotki_notifier = MockRotkiNotifier()  # type: ignore[assignment]
     events = [
         HistoryEvent(
             group_identifier='btc_spend_2',
@@ -333,6 +341,12 @@ def test_get_historical_assets_in_collection_amounts_over_time(
             history=events,
         )
 
+    process_historical_balances(database=db, msg_aggregator=db.msg_aggregator)
+
+    # Check that negative balance was detected via WS message
+    messages = db.msg_aggregator.rotki_notifier.messages  # type: ignore[union-attr]
+    assert any(m.message_type == WSMessageType.NEGATIVE_BALANCE_DETECTED for m in messages)
+
     response = requests.post(
         api_url_for(
             rotkehlchen_api_server,
@@ -347,8 +361,6 @@ def test_get_historical_assets_in_collection_amounts_over_time(
     result = assert_proper_sync_response_with_result(response)
     assert len(result['times']) == len(result['values'])
     assert len(result['times']) == 2
-
-    assert result['last_group_identifier'] == [6, events[0].group_identifier]
     assert result['times'][0] == START_TS  # Initial timestamp
     assert result['times'][1] == START_TS + DAY_IN_SECONDS * 2  # First spend
     assert result['values'][0] == '2'  # Initial balance

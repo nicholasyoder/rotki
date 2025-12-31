@@ -1,5 +1,6 @@
 import logging
 from collections import defaultdict
+from operator import itemgetter
 from typing import TYPE_CHECKING, TypedDict
 
 from rotkehlchen.assets.asset import Asset
@@ -8,6 +9,8 @@ from rotkehlchen.constants.prices import ZERO_PRICE
 from rotkehlchen.db.filtering import (
     HistoryEventFilterQuery,
 )
+from rotkehlchen.db.settings import CachedSettings
+from rotkehlchen.db.utils import get_query_chunks
 from rotkehlchen.errors.misc import NotFoundError, RemoteError
 from rotkehlchen.errors.price import NoPriceForGivenTimestamp
 from rotkehlchen.errors.serialization import DeserializationError
@@ -20,6 +23,7 @@ from rotkehlchen.history.events.structures.types import (
 )
 from rotkehlchen.history.price import PriceHistorian
 from rotkehlchen.logging import RotkehlchenLogsAdapter
+from rotkehlchen.tasks.historical_balances import Bucket
 from rotkehlchen.types import EventMetricKey, Timestamp
 from rotkehlchen.utils.misc import timestamp_to_daystart_timestamp, ts_ms_to_sec, ts_sec_to_ms
 
@@ -55,10 +59,8 @@ class HistoricalBalancesManager:
         """
         asset_balances_by_id: dict[str, FVal] = {}
         with self.db.conn.read_ctx() as cursor:
-            main_currency = self.db.get_setting(cursor=cursor, name='main_currency')
             cursor.execute(
-                """
-                SELECT asset, SUM(metric_value) FROM (
+                """SELECT asset, SUM(metric_value) FROM (
                     SELECT he.asset, em.metric_value, MAX(he.timestamp + he.sequence_index)
                     FROM event_metrics em
                     INNER JOIN history_events he ON em.event_identifier = he.identifier
@@ -75,6 +77,7 @@ class HistoricalBalancesManager:
             raise NotFoundError('No historical data found until the given timestamp.')
 
         result: dict[Asset, HistoricalBalance] = {}
+        main_currency = CachedSettings().main_currency
         for asset_id, amount in asset_balances_by_id.items():
             asset = Asset(asset_id)
             try:
@@ -115,72 +118,98 @@ class HistoricalBalancesManager:
         return {asset.resolve_to_evm_token(): balance for asset, balance in current_balances.items() if balance > ZERO}  # noqa: E501
 
     def get_asset_balance(self, asset: Asset, timestamp: Timestamp) -> HistoricalBalance:
-        """Get historical balance for a single asset at a given timestamp
+        """Get historical balance for a single asset at a given timestamp.
+
+        The inner query gets the latest balance per bucket via MAX(timestamp + sequence_index),
+        relying on SQLite's bare column behavior to return non-aggregated columns from that row.
+        See https://www.sqlite.org/lang_select.html#bareagg
 
         May raise:
         - NotFoundError if balance for the asset at the given timestamp does not exist.
-        - DeserializationError if there is a problem deserializing an event from DB.
         """
-        events, main_currency = self._get_events_and_currency(to_ts=timestamp, assets=(asset,))
-        if len(events) == 0:
-            raise NotFoundError(f'No historical data found for {asset} until the given timestamp.')
-
-        current_balances: dict[Asset, FVal] = defaultdict(FVal)
-        for event in events:
-            if self._update_balances(
-                event=event,
-                current_balances=current_balances,
-            ) is not None:
-                break
+        with self.db.conn.read_ctx() as cursor:
+            if (total_amount := cursor.execute(
+                """SELECT SUM(metric_value) FROM (SELECT em.metric_value, MAX(he.timestamp + he.sequence_index)
+                    FROM event_metrics em
+                    INNER JOIN history_events he ON em.event_identifier = he.identifier
+                    WHERE em.metric_key = ? AND he.timestamp <= ? AND he.asset = ?
+                    GROUP BY he.location, he.location_label, em.protocol
+                )""",  # noqa: E501
+                (EventMetricKey.BALANCE.serialize(), ts_sec_to_ms(timestamp), asset.identifier),
+            ).fetchone()[0]) is None:
+                raise NotFoundError(f'No historical data found for {asset} until the given timestamp.')  # noqa: E501
 
         try:
             price = PriceHistorian.query_historical_price(
                 from_asset=asset,
-                to_asset=main_currency,
+                to_asset=CachedSettings().main_currency,
                 timestamp=timestamp,
             )
         except (RemoteError, NoPriceForGivenTimestamp):
             price = ZERO_PRICE
 
-        return {'amount': current_balances[asset], 'price': price}
+        return {'amount': FVal(total_amount), 'price': price}
 
     def get_assets_amounts(
             self,
             assets: tuple[Asset, ...],
             from_ts: Timestamp,
             to_ts: Timestamp,
-    ) -> tuple[dict[Timestamp, FVal], tuple[str | int | None, str | None] | None]:
+    ) -> dict[Timestamp, FVal]:
         """Get historical balance amounts for the given assets within the given time range.
 
-        If a negative amount is encountered, returns a tuple of (identifier, group_identifier)
-        for the event that caused it alongside the balances.
+        Returns cumulative balance at each event timestamp, relative to the start of the
+        time range (starting from 0). Uses pre-computed balances from event_metrics table.
 
-        It does not include the value of the balances in the user's profit currency as
-        that is handled separately by the frontend in a different request.
+        The first query gets the latest balance per bucket via MAX(timestamp + sequence_index),
+        relying on SQLite's bare column behavior to return non-aggregated columns from that row.
+        See https://www.sqlite.org/lang_select.html#bareagg
 
         May raise:
         - NotFoundError if no events exist for the assets in the specified time period.
-        - DeserializationError if there is a problem deserializing an event from DB.
         """
-        events, _ = self._get_events_and_currency(from_ts=from_ts, to_ts=to_ts, assets=assets)
-        if len(events) == 0:
+        asset_ids = [asset.identifier for asset in assets]
+        from_ts_ms, to_ts_ms = ts_sec_to_ms(from_ts), ts_sec_to_ms(to_ts)
+        balance_per_bucket: dict[Bucket, FVal] = {}
+        events_in_range: list[tuple] = []
+
+        with self.db.conn.read_ctx() as cursor:
+            for chunk, placeholders in get_query_chunks(data=asset_ids):
+                cursor.execute(
+                    f"""SELECT he.location, he.location_label, em.protocol, he.asset, em.metric_value, MAX(he.timestamp + he.sequence_index)
+                    FROM event_metrics em
+                    INNER JOIN history_events he ON em.event_identifier = he.identifier
+                    WHERE em.metric_key = ? AND he.asset IN ({placeholders}) AND he.timestamp < ?
+                    GROUP BY he.location, he.location_label, em.protocol, he.asset""",  # noqa: E501
+                    (EventMetricKey.BALANCE.serialize(), *chunk, from_ts_ms),
+                )
+                for location, location_label, protocol, asset, metric_value, _ in cursor:
+                    bucket = Bucket.from_db((location, location_label, protocol, asset))
+                    balance_per_bucket[bucket] = FVal(metric_value)
+
+                # Get all events within the time range
+                events_in_range.extend(cursor.execute(
+                    f"""SELECT he.timestamp, he.sequence_index, he.location, he.location_label, em.protocol, he.asset, em.metric_value
+                    FROM event_metrics em
+                    INNER JOIN history_events he ON em.event_identifier = he.identifier
+                    WHERE em.metric_key = ? AND he.asset IN ({placeholders}) AND he.timestamp >= ? AND he.timestamp <= ?""",  # noqa: E501
+                    (EventMetricKey.BALANCE.serialize(), *chunk, from_ts_ms, to_ts_ms),
+                ).fetchall())
+
+        if len(events_in_range) == 0:
             raise NotFoundError(f'No historical data found for {assets} within {from_ts=} and {to_ts=}.')  # noqa: E501
 
-        negative_balance_data = None
-        current_balances: dict[Asset, FVal] = defaultdict(FVal)
-        amounts: dict[Timestamp, FVal] = defaultdict(lambda: ZERO)
-        for event in events:
-            if (negative_balance_data := self._update_balances(
-                event=event,
-                current_balances=current_balances,
-            )) is not None:
-                break
+        # Sort by timestamp and sequence_index to process events in chronological order
+        events_in_range.sort(key=itemgetter(0, 1))
+        starting_total = sum(balance_per_bucket.values(), ZERO)
+        amounts: dict[Timestamp, FVal] = {}
 
-            # Combine balances of all assets. Overwrite any existing value for this timestamp
-            # so the final amount per timestamp is the cumulative result of all processed events.
-            amounts[ts_ms_to_sec(event.timestamp)] = FVal(sum(current_balances[asset] for asset in assets))  # noqa: E501
+        # Process each event, updating bucket balances and recording delta from start
+        for ts_ms, _, location, location_label, protocol, asset, metric_value in events_in_range:
+            balance_per_bucket[Bucket.from_db((location, location_label, protocol, asset))] = FVal(metric_value)  # noqa: E501
+            amounts[ts_ms_to_sec(ts_ms)] = sum(balance_per_bucket.values(), ZERO) - starting_total
 
-        return amounts, negative_balance_data
+        return amounts
 
     def get_historical_netvalue(
             self,

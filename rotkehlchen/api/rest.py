@@ -5901,24 +5901,18 @@ class RestAPI:
                     )
                     assets = tuple(Asset(row[0]) for row in cursor)
 
-            balances, last_group_identifier = HistoricalBalancesManager(self.rotkehlchen.data.db).get_assets_amounts(  # noqa: E501
+            balances = HistoricalBalancesManager(self.rotkehlchen.data.db).get_assets_amounts(
                 assets=assets,
                 from_ts=from_timestamp,
                 to_ts=to_timestamp,
             )
-        except DeserializationError as e:
-            return api_response(wrap_in_fail_result(str(e), status_code=HTTPStatus.INTERNAL_SERVER_ERROR))  # noqa: E501
         except NotFoundError as e:
             return api_response(wrap_in_fail_result(str(e), status_code=HTTPStatus.NOT_FOUND))
 
-        result = {
+        return api_response(_wrap_in_ok_result(result={
             'times': list(balances),
             'values': [str(x) for x in balances.values()],
-        }
-        if last_group_identifier is not None:
-            result['last_group_identifier'] = last_group_identifier
-
-        return api_response(_wrap_in_ok_result(result=result))
+        }))
 
     def get_historical_netvalue(
             self,

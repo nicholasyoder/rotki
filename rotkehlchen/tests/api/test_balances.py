@@ -1295,7 +1295,7 @@ def test_solana_balances_multiple_accounts(
     ))
     assert result['assets']['solana/token:EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v']['amount'] == '160556.002808'  # USDC  # noqa: E501
     assert result['assets']['solana/token:2zMMhcVQEXDtdE6vsFS7S7D5oUodfJHE8vd1gnBouauv']['amount'] == '370905.247021'  # PENGU  # noqa: E501
-    assert result['assets']['solana/token:WLFinEv6ypjkczcS83FZqFpgFZYwQXutRbxGe7oC16g']['amount'] == '100122.11'  # WLFI  # noqa: E501
+    assert result['assets']['solana/token:Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB']['amount'] == '21787'  # USDT  # noqa: E501
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])

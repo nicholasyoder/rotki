@@ -50,6 +50,15 @@ The common identifier for groups of events (i.e. all events from a given EVM tx)
   - ``POST /api/(version)/balances/historical/asset`` - Renamed ``last_event_identifier`` to ``last_group_identifier``.
   - ``POST /api/(version)/balances/historical/netvalue`` - Renamed ``last_event_identifier`` to ``last_group_identifier``.
 
+Historical Balance Metrics
+--------------------------
+
+Historical balance data is now computed via a periodic task and stored in the ``event_metrics`` table.
+
+* **Modified Endpoint**: ``POST /api/(version)/balances/historical/asset``
+
+  - Removed ``last_group_identifier`` from response. Negative balance detection is now handled by the periodic task.
+
 
 :releasetag:`1.41.1`
 ====================
