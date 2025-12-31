@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 import requests
 
 from rotkehlchen.constants.assets import A_ETH
-from rotkehlchen.db.cache import DBCacheDynamic
+from rotkehlchen.db.cache import ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE, DBCacheDynamic
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.fval import FVal
@@ -12,6 +12,7 @@ from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.swap import SwapEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
+from rotkehlchen.tasks.events import get_unmatched_asset_movements
 from rotkehlchen.tests.unit.test_eth2 import HOUR_IN_MILLISECONDS
 from rotkehlchen.tests.utils.api import (
     api_url_for,
@@ -60,13 +61,13 @@ def test_match_asset_movements(rotkehlchen_api_server: 'APIServer') -> None:
         url=api_url_for(rotkehlchen_api_server, 'matchassetmovementsresource'),
         json={'asset_movement': 1, 'matched_event': 2},
     ))
-    assert matched_event.identifier is not None
+    assert asset_movement.identifier is not None
     with rotki.data.db.conn.read_ctx() as cursor:
         assert rotki.data.db.get_dynamic_cache(
             cursor=cursor,
             name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
-            identifier=matched_event.identifier,
-        ) == asset_movement.identifier
+            identifier=asset_movement.identifier,
+        ) == matched_event.identifier
         events = dbevents.get_history_events_internal(
             cursor=cursor,
             filter_query=HistoryEventFilterQuery.make(),
@@ -123,6 +124,43 @@ def test_match_asset_movements_errors(rotkehlchen_api_server: 'APIServer') -> No
     )
 
 
+def test_mark_asset_movement_no_match(rotkehlchen_api_server: 'APIServer') -> None:
+    """Test that marking an asset movement as not matching works as expected."""
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+    dbevents = DBHistoryEvents(rotki.data.db)
+    with rotki.data.db.conn.write_ctx() as write_cursor:
+        dbevents.add_history_events(
+            write_cursor=write_cursor,
+            history=[(asset_movement := AssetMovement(
+                identifier=1,
+                location=Location.KRAKEN,
+                event_type=HistoryEventType.WITHDRAWAL,
+                timestamp=TimestampMS(1500000000000),
+                asset=A_ETH,
+                amount=FVal('0.1'),
+                unique_id='1',
+            ))],
+        )
+
+    movements, _ = get_unmatched_asset_movements(database=rotki.data.db)
+    assert len(movements) == 1
+    assert asset_movement.identifier is not None
+    assert_simple_ok_response(requests.put(
+        url=api_url_for(rotkehlchen_api_server, 'matchassetmovementsresource'),
+        json={'asset_movement': asset_movement.identifier},
+    ))
+
+    with rotki.data.db.conn.read_ctx() as cursor:
+        assert rotki.data.db.get_dynamic_cache(
+            cursor=cursor,
+            name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
+            identifier=asset_movement.identifier,
+        ) == ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE
+
+    movements, _ = get_unmatched_asset_movements(database=rotki.data.db)
+    assert len(movements) == 0
+
+
 def test_get_unmatched_asset_movements(rotkehlchen_api_server: 'APIServer') -> None:
     """Test getting unmatched asset movements"""
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
@@ -152,8 +190,8 @@ def test_get_unmatched_asset_movements(rotkehlchen_api_server: 'APIServer') -> N
         rotki.data.db.set_dynamic_cache(
             write_cursor=write_cursor,
             name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
-            identifier=5,  # matched event identifier can be anything here
-            value=matched_movement.identifier,
+            identifier=matched_movement.identifier,
+            value=5,  # matched event identifier can be anything here
         )
 
     result = assert_proper_response_with_result(
@@ -271,11 +309,13 @@ def test_get_history_events_with_matched_asset_movements(
             )],
         )
 
+        assert matched_movement.identifier is not None
+        assert evm_event_1.identifier is not None
         rotki.data.db.set_dynamic_cache(
             write_cursor=write_cursor,
             name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
-            identifier=3,  # matched event identifier can be anything here
-            value=2,
+            identifier=matched_movement.identifier,
+            value=evm_event_1.identifier,
         )
 
     # First query history aggregated by group

@@ -13,7 +13,7 @@ from rotkehlchen.chain.bitcoin.bch.constants import BCH_GROUP_IDENTIFIER_PREFIX
 from rotkehlchen.chain.bitcoin.btc.constants import BTC_GROUP_IDENTIFIER_PREFIX
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants import ZERO
-from rotkehlchen.db.cache import DBCacheDynamic, DBCacheStatic
+from rotkehlchen.db.cache import ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE, DBCacheDynamic, DBCacheStatic
 from rotkehlchen.db.constants import (
     CHAIN_EVENT_FIELDS,
     CHAIN_FIELD_LENGTH,
@@ -1481,17 +1481,18 @@ class DBHistoryEvents:
         """
         movement_group_ids_to_group_count, movement_id_to_group_id, matched_event_group_id_to_movement, joined_group_ids = {}, {}, {}, {}  # noqa: E501
         for movement_id, movement_group_identifier, match_group_identifier, group_count in cursor.execute(  # noqa: E501
-                'SELECT value AS movement_id, '
+                'SELECT SUBSTR(name, ?) AS movement_id, '
                 'movement_events_join.group_identifier, match_events_join.group_identifier, '
                 '(SELECT COUNT(*) FROM history_events he2 '
                 'WHERE he2.group_identifier = movement_events_join.group_identifier) as group_count '  # noqa: E501
                 'FROM key_value_cache '
                 'JOIN history_events movement_events_join ON CAST(movement_events_join.identifier AS TEXT) = movement_id '  # noqa: E501
-                'JOIN history_events match_events_join ON CAST(match_events_join.identifier AS TEXT) = SUBSTR(name, ?) '  # noqa: E501
-                'WHERE name LIKE ?;',
+                'JOIN history_events match_events_join ON CAST(match_events_join.identifier AS TEXT) = value '  # noqa: E501
+                'WHERE name LIKE ? and value != ?;',
                 (
                     len(DBCacheDynamic.MATCHED_ASSET_MOVEMENT.name) + 2,
                     f'{DBCacheDynamic.MATCHED_ASSET_MOVEMENT.name.lower()}%',
+                    ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE,
                 ),
         ):
             movement_group_ids_to_group_count[movement_group_identifier] = group_count

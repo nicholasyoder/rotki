@@ -256,11 +256,11 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
             'SELECT * FROM key_value_cache WHERE name LIKE ?',
             ('matched_asset_movement_%',),
         ).fetchall() == [
-            (f'matched_asset_movement_{withdrawal4_identifier}', str(withdrawal4_matched_event.identifier)),  # noqa: E501
             (f'matched_asset_movement_{withdrawal4_matched_event.identifier}', str(withdrawal4_identifier)),  # noqa: E501
-            (f'matched_asset_movement_{deposit3_matched_event.identifier}', str(deposit_3_identifier)),  # noqa: E501
-            (f'matched_asset_movement_{withdrawal1_matched_event.identifier}', str(withdrawal_1_identifier)),  # noqa: E501
-            (f'matched_asset_movement_{deposit2_matched_event.identifier}', str(deposit_2_identifier)),  # noqa: E501
+            (f'matched_asset_movement_{withdrawal4_identifier}', str(withdrawal4_matched_event.identifier)),  # noqa: E501
+            (f'matched_asset_movement_{deposit_3_identifier}', str(deposit3_matched_event.identifier)),  # noqa: E501
+            (f'matched_asset_movement_{withdrawal_1_identifier}', str(withdrawal1_matched_event.identifier)),  # noqa: E501
+            (f'matched_asset_movement_{deposit_2_identifier}', str(deposit2_matched_event.identifier)),  # noqa: E501
         ]
         matched_asset_movements = events_db.get_history_events_internal(
             cursor=cursor,
