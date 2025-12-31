@@ -20,8 +20,8 @@ from rotkehlchen.history.events.structures.types import (
 )
 from rotkehlchen.history.price import PriceHistorian
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.types import Timestamp
-from rotkehlchen.utils.misc import timestamp_to_daystart_timestamp, ts_ms_to_sec
+from rotkehlchen.types import EventMetricKey, Timestamp
+from rotkehlchen.utils.misc import timestamp_to_daystart_timestamp, ts_ms_to_sec, ts_sec_to_ms
 
 if TYPE_CHECKING:
     from rotkehlchen.assets.asset import EvmToken
@@ -44,23 +44,39 @@ class HistoricalBalancesManager:
         self.db = db
 
     def get_balances(self, timestamp: Timestamp) -> dict[Asset, HistoricalBalance]:
-        """Get historical balances for all assets at a given timestamp
+        """Get historical balances for all assets at a given timestamp.
+
+        The inner query gets the latest balance per bucket via MAX(timestamp + sequence_index),
+        relying on SQLite's bare column behavior to return non-aggregated columns from that row.
+        See https://www.sqlite.org/lang_select.html#bareagg
 
         May raise:
         - NotFoundError if balance for the given timestamp does not exist.
-        - DeserializationError if there is a problem deserializing an event from DB.
         """
-        events, main_currency = self._get_events_and_currency(to_ts=timestamp)
-        if len(events) == 0:
+        asset_balances_by_id: dict[str, FVal] = {}
+        with self.db.conn.read_ctx() as cursor:
+            main_currency = self.db.get_setting(cursor=cursor, name='main_currency')
+            cursor.execute(
+                """
+                SELECT asset, SUM(metric_value) FROM (
+                    SELECT he.asset, em.metric_value, MAX(he.timestamp + he.sequence_index)
+                    FROM event_metrics em
+                    INNER JOIN history_events he ON em.event_identifier = he.identifier
+                    WHERE em.metric_key = ? AND he.timestamp <= ?
+                    GROUP BY he.location, he.location_label, em.protocol, he.asset
+                ) GROUP BY asset
+                """,
+                (EventMetricKey.BALANCE.serialize(), ts_sec_to_ms(timestamp)),
+            )
+            for asset_id, total in cursor:
+                asset_balances_by_id[asset_id] = FVal(total)
+
+        if len(asset_balances_by_id) == 0:
             raise NotFoundError('No historical data found until the given timestamp.')
 
-        current_balances: dict[Asset, FVal] = defaultdict(FVal)
-        for event in events:
-            if self._update_balances(event=event, current_balances=current_balances) is not None:
-                break
-
         result: dict[Asset, HistoricalBalance] = {}
-        for asset, amount in current_balances.items():
+        for asset_id, amount in asset_balances_by_id.items():
+            asset = Asset(asset_id)
             try:
                 price = PriceHistorian.query_historical_price(
                     from_asset=asset,
