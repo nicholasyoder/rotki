@@ -22,6 +22,9 @@ Changelog
 * :feature:`-` rotki will now be able to decode Sushiswap RedSnwap router transactions.
 * :feature:`10599` Users will now be able to bulk ignore assets, or mark assets as spam, from the account page.
 * :bug:`11208` Users will now be able to use contract addresses to filter assets in asset selection fields.
+* :feature:`-` Users can now search blockchain accounts by either address or label using a single unified filter.
+* :bug:`11197` rotki will now group the notifications for Beaconcha.in rate-limited messages to avoid annoying users.
+* :bug:`-` Deposits in Curve's TwoCrypto and Tricrypto pools are now decoded properly.
 
 * :release:`1.41.3 <2025-12-19>`
 * :bug:`11166` Date time picker quick options will now work cumulatively, allowing users to go further back in time with multiple clicks.

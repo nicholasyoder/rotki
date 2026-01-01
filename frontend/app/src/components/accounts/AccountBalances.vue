@@ -21,7 +21,7 @@ import { useAccountAssetSelection } from '@/composables/accounts/use-account-ass
 import { useAccountCategoryHelper } from '@/composables/accounts/use-account-category-helper';
 import { useRefresh } from '@/composables/balances/refresh';
 import { useBlockchains } from '@/composables/blockchain';
-import { AccountExternalFilterSchema, type Filters, type Matcher, useBlockchainAccountFilter } from '@/composables/filters/blockchain-account';
+import { AccountExternalFilterSchema, type Filters, getAccountFilterParams, type Matcher, useBlockchainAccountFilter } from '@/composables/filters/blockchain-account';
 import { usePaginationFilters } from '@/composables/use-pagination-filter';
 import { AccountBalancesTable } from '@/modules/accounts/table';
 import { useBlockchainAccountsStore } from '@/modules/accounts/use-blockchain-accounts-store';
@@ -58,6 +58,8 @@ const { fetchAccounts } = useBlockchains();
 const { balances } = storeToRefs(useBalancesStore());
 const { accounts: accountsState } = storeToRefs(useBlockchainAccountsStore());
 
+const filterSchema = useBlockchainAccountFilter(t, category);
+
 const {
   fetchData,
   filters,
@@ -79,7 +81,7 @@ const {
     category: get(category),
     tags: get(visibleTags),
   })),
-  filterSchema: () => useBlockchainAccountFilter(t, category),
+  filterSchema: () => filterSchema,
   history: 'router',
   onUpdateFilters(filterQuery) {
     const { expanded: expandedIds, q, tab: qTab, tags } = AccountExternalFilterSchema.parse(filterQuery);
@@ -107,6 +109,7 @@ const {
   })),
   requestParams: computed(() => ({
     excluded: get(chainExclusionFilter),
+    ...getAccountFilterParams(get(filterSchema.filters).account),
   })),
 });
 

@@ -6,6 +6,7 @@ import { mount, type VueWrapper } from '@vue/test-utils';
 import { setActivePinia } from 'pinia';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import SuggestedItem from '@/components/table-filter/SuggestedItem.vue';
+import { truncateAddress } from '@/utils/truncate';
 
 vi.mock('@/composables/assets/retrieval', () => ({
   useAssetInfoRetrieval: vi.fn().mockReturnValue({
@@ -146,5 +147,87 @@ describe('table-filter/SuggestedItem.vue', () => {
     await wrapper.setProps({ chip: true });
 
     expect(wrapper.find('span').text()).toBe(key);
+  });
+
+  describe('address truncation', () => {
+    const validAddress = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045';
+
+    it('truncates plain address value', () => {
+      const suggestion: Suggestion = {
+        index: 0,
+        total: 1,
+        asset: false,
+        key: 'account',
+        value: validAddress,
+      };
+      wrapper = createWrapper({ suggestion });
+
+      const displayedValue = wrapper.find('span > span:nth-child(3)').text();
+      expect(displayedValue).toBe(truncateAddress(validAddress, 8));
+      expect(displayedValue).not.toBe(validAddress);
+    });
+
+    it('truncates address in "label (address)" format', () => {
+      const label = 'vitalik.eth';
+      const labelAddressValue = `${label} (${validAddress})`;
+      const suggestion: Suggestion = {
+        index: 0,
+        total: 1,
+        asset: false,
+        key: 'account',
+        value: labelAddressValue,
+      };
+      wrapper = createWrapper({ suggestion });
+
+      const displayedValue = wrapper.find('span > span:nth-child(3)').text();
+      expect(displayedValue).toBe(`${label} (${truncateAddress(validAddress, 6)})`);
+      expect(displayedValue).not.toBe(labelAddressValue);
+    });
+
+    it('does not truncate non-address values', () => {
+      const plainValue = 'some-regular-text';
+      const suggestion: Suggestion = {
+        index: 0,
+        total: 1,
+        asset: false,
+        key: 'label',
+        value: plainValue,
+      };
+      wrapper = createWrapper({ suggestion });
+
+      const displayedValue = wrapper.find('span > span:nth-child(3)').text();
+      expect(displayedValue).toBe(plainValue);
+    });
+
+    it('does not truncate "label (non-address)" format', () => {
+      const labelNonAddressValue = 'My Label (some-id-123)';
+      const suggestion: Suggestion = {
+        index: 0,
+        total: 1,
+        asset: false,
+        key: 'account',
+        value: labelNonAddressValue,
+      };
+      wrapper = createWrapper({ suggestion });
+
+      const displayedValue = wrapper.find('span > span:nth-child(3)').text();
+      expect(displayedValue).toBe(labelNonAddressValue);
+    });
+
+    it('preserves full value in title attribute for tooltip', () => {
+      const label = 'vitalik.eth';
+      const labelAddressValue = `${label} (${validAddress})`;
+      const suggestion: Suggestion = {
+        index: 0,
+        total: 1,
+        asset: false,
+        key: 'account',
+        value: labelAddressValue,
+      };
+      wrapper = createWrapper({ suggestion });
+
+      const titleValue = wrapper.find('span > span:nth-child(3)').attributes('title');
+      expect(titleValue).toBe(labelAddressValue);
+    });
   });
 });

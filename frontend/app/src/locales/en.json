@@ -62,6 +62,10 @@
     "edit_tooltip": "Edit account",
     "enter_selection_mode": "Enter selection mode to bulk ignore or mark assets as spam",
     "exit_selection_mode": "Exit selection mode",
+    "filter": {
+      "account": "filter by address / label",
+      "chain": "filter by the chain"
+    },
     "per_chain": "Per chain",
     "refresh_tooltip": "Refresh {blockchain} balances ignoring any cached entries"
   },
@@ -1220,7 +1224,8 @@
     }
   },
   "asset_select": {
-    "no_results": "No assets matching your search"
+    "no_results": "No assets matching your search",
+    "placeholder": "Search by asset symbol, name, or the contract address."
   },
   "asset_table": {
     "copy_identifier": {
