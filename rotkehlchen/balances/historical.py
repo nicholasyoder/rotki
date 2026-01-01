@@ -1,7 +1,9 @@
 import logging
 from collections import defaultdict
-from operator import itemgetter
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, TypedDict
+
+import polars as pl
 
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.constants import DAY_IN_SECONDS, ONE, ZERO
@@ -23,8 +25,7 @@ from rotkehlchen.history.events.structures.types import (
 )
 from rotkehlchen.history.price import PriceHistorian
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.tasks.historical_balances import Bucket
-from rotkehlchen.types import EventMetricKey, Timestamp
+from rotkehlchen.types import EventMetricKey, Timestamp, TimestampMS
 from rotkehlchen.utils.misc import timestamp_to_daystart_timestamp, ts_ms_to_sec, ts_sec_to_ms
 
 if TYPE_CHECKING:
@@ -47,17 +48,22 @@ class HistoricalBalancesManager:
     def __init__(self, db: 'DBHandler') -> None:
         self.db = db
 
-    def get_balances(self, timestamp: Timestamp) -> dict[Asset, HistoricalBalance]:
+    def get_balances(
+            self,
+            timestamp: Timestamp,
+    ) -> tuple[bool, dict[Asset, HistoricalBalance] | None]:
         """Get historical balances for all assets at a given timestamp.
 
         The inner query gets the latest balance per bucket via MAX(timestamp + sequence_index),
         relying on SQLite's bare column behavior to return non-aggregated columns from that row.
         See https://www.sqlite.org/lang_select.html#bareagg
 
-        May raise:
-        - NotFoundError if balance for the given timestamp does not exist.
+        Returns a tuple of (processing_required, balances):
+        - processing_required: True if events exist but haven't been processed yet
+        - balances: Dict of asset to balance info, or None if no data available
         """
         asset_balances_by_id: dict[str, FVal] = {}
+        timestamp_ms = ts_sec_to_ms(timestamp)
         with self.db.conn.read_ctx() as cursor:
             cursor.execute(
                 """SELECT asset, SUM(metric_value) FROM (
@@ -68,13 +74,17 @@ class HistoricalBalancesManager:
                     GROUP BY he.location, he.location_label, em.protocol, he.asset
                 ) GROUP BY asset
                 """,
-                (EventMetricKey.BALANCE.serialize(), ts_sec_to_ms(timestamp)),
+                (EventMetricKey.BALANCE.serialize(), timestamp_ms),
             )
             for asset_id, total in cursor:
                 asset_balances_by_id[asset_id] = FVal(total)
 
         if len(asset_balances_by_id) == 0:
-            raise NotFoundError('No historical data found until the given timestamp.')
+            needs_processing = self._has_unprocessed_events(
+                where_clause='timestamp <= ?',
+                bindings=[timestamp_ms],
+            )
+            return needs_processing, None
 
         result: dict[Asset, HistoricalBalance] = {}
         main_currency = CachedSettings().main_currency
@@ -91,7 +101,7 @@ class HistoricalBalancesManager:
 
             result[asset] = {'amount': amount, 'price': price}
 
-        return result
+        return False, result
 
     def get_erc721_tokens_balances(
             self,
@@ -117,16 +127,22 @@ class HistoricalBalancesManager:
 
         return {asset.resolve_to_evm_token(): balance for asset, balance in current_balances.items() if balance > ZERO}  # noqa: E501
 
-    def get_asset_balance(self, asset: Asset, timestamp: Timestamp) -> HistoricalBalance:
+    def get_asset_balance(
+            self,
+            asset: Asset,
+            timestamp: Timestamp,
+    ) -> tuple[bool, HistoricalBalance | None]:
         """Get historical balance for a single asset at a given timestamp.
 
         The inner query gets the latest balance per bucket via MAX(timestamp + sequence_index),
         relying on SQLite's bare column behavior to return non-aggregated columns from that row.
         See https://www.sqlite.org/lang_select.html#bareagg
 
-        May raise:
-        - NotFoundError if balance for the asset at the given timestamp does not exist.
+        Returns a tuple of (processing_required, balance):
+        - processing_required: True if events exist but haven't been processed yet
+        - balance: Balance info dict, or None if no data available
         """
+        timestamp_ms = ts_sec_to_ms(timestamp)
         with self.db.conn.read_ctx() as cursor:
             if (total_amount := cursor.execute(
                 """SELECT SUM(metric_value) FROM (SELECT em.metric_value, MAX(he.timestamp + he.sequence_index)
@@ -135,9 +151,13 @@ class HistoricalBalancesManager:
                     WHERE em.metric_key = ? AND he.timestamp <= ? AND he.asset = ?
                     GROUP BY he.location, he.location_label, em.protocol
                 )""",  # noqa: E501
-                (EventMetricKey.BALANCE.serialize(), ts_sec_to_ms(timestamp), asset.identifier),
+                (EventMetricKey.BALANCE.serialize(), timestamp_ms, asset.identifier),
             ).fetchone()[0]) is None:
-                raise NotFoundError(f'No historical data found for {asset} until the given timestamp.')  # noqa: E501
+                needs_processing = self._has_unprocessed_events(
+                    where_clause='asset = ? AND timestamp <= ?',
+                    bindings=[asset.identifier, timestamp_ms],
+                )
+                return needs_processing, None
 
         try:
             price = PriceHistorian.query_historical_price(
@@ -148,68 +168,81 @@ class HistoricalBalancesManager:
         except (RemoteError, NoPriceForGivenTimestamp):
             price = ZERO_PRICE
 
-        return {'amount': FVal(total_amount), 'price': price}
+        return False, {'amount': FVal(total_amount), 'price': price}
 
     def get_assets_amounts(
             self,
             assets: tuple[Asset, ...],
             from_ts: Timestamp,
             to_ts: Timestamp,
-    ) -> dict[Timestamp, FVal]:
+    ) -> tuple[bool, dict[Timestamp, FVal] | None]:
         """Get historical balance amounts for the given assets within the given time range.
 
-        Returns cumulative balance at each event timestamp, relative to the start of the
-        time range (starting from 0). Uses pre-computed balances from event_metrics table.
-
-        The first query gets the latest balance per bucket via MAX(timestamp + sequence_index),
-        relying on SQLite's bare column behavior to return non-aggregated columns from that row.
-        See https://www.sqlite.org/lang_select.html#bareagg
-
-        May raise:
-        - NotFoundError if no events exist for the assets in the specified time period.
+        Returns a tuple of (processing_required, amounts):
+        - processing_required: True if events exist but haven't been processed yet
+        - amounts: Cumulative balance at each event timestamp, relative to the start of the
+          time range (starting from 0). Uses pre-computed balances from event_metrics table.
+          Uses SQL LAG() window function to compute per-bucket balance deltas in the database.
+          None if no data is available.
         """
-        asset_ids = [asset.identifier for asset in assets]
         from_ts_ms, to_ts_ms = ts_sec_to_ms(from_ts), ts_sec_to_ms(to_ts)
-        balance_per_bucket: dict[Bucket, FVal] = {}
-        events_in_range: list[tuple] = []
-
+        metric_key, asset_ids = EventMetricKey.BALANCE.serialize(), [asset.identifier for asset in assets]  # noqa: E501
+        schema = {'timestamp': pl.Int64, 'sort_key': pl.Int64, 'delta': pl.Float64}
+        df = pl.DataFrame(schema=schema)
         with self.db.conn.read_ctx() as cursor:
             for chunk, placeholders in get_query_chunks(data=asset_ids):
-                cursor.execute(
-                    f"""SELECT he.location, he.location_label, em.protocol, he.asset, em.metric_value, MAX(he.timestamp + he.sequence_index)
-                    FROM event_metrics em
-                    INNER JOIN history_events he ON em.event_identifier = he.identifier
-                    WHERE em.metric_key = ? AND he.asset IN ({placeholders}) AND he.timestamp < ?
-                    GROUP BY he.location, he.location_label, em.protocol, he.asset""",  # noqa: E501
-                    (EventMetricKey.BALANCE.serialize(), *chunk, from_ts_ms),
-                )
-                for location, location_label, protocol, asset, metric_value, _ in cursor:
-                    bucket = Bucket.from_db((location, location_label, protocol, asset))
-                    balance_per_bucket[bucket] = FVal(metric_value)
+                if (chunk_df := pl.DataFrame(
+                    cursor.execute(
+                        f"""
+                        WITH all_events AS (
+                            SELECT
+                                he.timestamp,
+                                he.location || COALESCE(he.location_label, '') || COALESCE(em.protocol, '') || he.asset as bucket,
+                                CAST(em.metric_value AS REAL) as balance,
+                                he.timestamp + he.sequence_index as sort_key
+                            FROM event_metrics em
+                            INNER JOIN history_events he ON em.event_identifier = he.identifier
+                            WHERE em.metric_key = ? AND he.asset IN ({placeholders})
+                        ),
+                        with_delta AS (
+                            SELECT
+                                timestamp,
+                                sort_key,
+                                balance - COALESCE(LAG(balance) OVER (PARTITION BY bucket ORDER BY sort_key), 0) as delta
+                            FROM all_events
+                        )
+                        SELECT timestamp, sort_key, delta
+                        FROM with_delta
+                        WHERE timestamp >= ? AND timestamp <= ?
+                        """,  # noqa: E501
+                        (metric_key, *chunk, from_ts_ms, to_ts_ms),
+                    ),
+                    schema=schema,
+                    orient='row',
+                )).height > 0:
+                    df.vstack(chunk_df, in_place=True)
 
-                # Get all events within the time range
-                events_in_range.extend(cursor.execute(
-                    f"""SELECT he.timestamp, he.sequence_index, he.location, he.location_label, em.protocol, he.asset, em.metric_value
-                    FROM event_metrics em
-                    INNER JOIN history_events he ON em.event_identifier = he.identifier
-                    WHERE em.metric_key = ? AND he.asset IN ({placeholders}) AND he.timestamp >= ? AND he.timestamp <= ?""",  # noqa: E501
-                    (EventMetricKey.BALANCE.serialize(), *chunk, from_ts_ms, to_ts_ms),
-                ).fetchall())
+        if df.height == 0:
+            for chunk, placeholders in get_query_chunks(data=asset_ids):
+                if self._has_unprocessed_events(
+                    where_clause=f'asset IN ({placeholders}) AND timestamp >= ? AND timestamp <= ?',  # noqa: E501
+                    bindings=[*chunk, from_ts_ms, to_ts_ms],
+                ):
+                    return True, None
+            return False, None
 
-        if len(events_in_range) == 0:
-            raise NotFoundError(f'No historical data found for {assets} within {from_ts=} and {to_ts=}.')  # noqa: E501
+        result_df = (
+            df.rechunk().sort('sort_key')
+            .with_columns(pl.col('delta').cum_sum().alias('amount'))
+            .select(['timestamp', 'amount'])
+        )
 
-        # Sort by timestamp and sequence_index to process events in chronological order
-        events_in_range.sort(key=itemgetter(0, 1))
-        starting_total = sum(balance_per_bucket.values(), ZERO)
-        amounts: dict[Timestamp, FVal] = {}
-
-        # Process each event, updating bucket balances and recording delta from start
-        for ts_ms, _, location, location_label, protocol, asset, metric_value in events_in_range:
-            balance_per_bucket[Bucket.from_db((location, location_label, protocol, asset))] = FVal(metric_value)  # noqa: E501
-            amounts[ts_ms_to_sec(ts_ms)] = sum(balance_per_bucket.values(), ZERO) - starting_total
-
-        return amounts
+        timestamps = result_df['timestamp'].to_list()
+        amounts = result_df['amount'].to_list()
+        return False, {
+            ts_ms_to_sec(ts): FVal(amt)
+            for ts, amt in zip(timestamps, amounts, strict=True)
+        }
 
     def get_historical_netvalue(
             self,
@@ -281,6 +314,20 @@ class HistoricalBalancesManager:
             net_worth_per_day[day_ts] = day_total
 
         return net_worth_per_day, missing_price_points, negative_balance_data
+
+    def _has_unprocessed_events(
+            self,
+            where_clause: str,
+            bindings: Sequence[str | TimestampMS],
+    ) -> bool:
+        """Check if unprocessed history events exist matching the given conditions.
+
+        Used to distinguish between "events exist but need processing"
+        vs "no events in this time range at all" when no metrics are found.
+        """
+        query = f'SELECT 1 FROM history_events WHERE {where_clause} LIMIT 1'
+        with self.db.conn.read_ctx() as cursor:
+            return cursor.execute(query, bindings).fetchone() is not None
 
     def _get_events_and_currency(
             self,

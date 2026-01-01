@@ -1213,6 +1213,7 @@ def test_query_liquity_balances(
     assert account_balances['liabilities'] == {A_LUSD: {CPT_LIQUITY: {'amount': '2188.673572189031978055', 'value': '3283.0103582835479670825'}}}  # noqa: E501
 
 
+@pytest.mark.freeze_time('2026-01-01 00:00:00 GMT')
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
 @pytest.mark.parametrize('number_of_eth_accounts', [1])
@@ -1275,6 +1276,7 @@ def test_balance_snapshot_saves_manual_prices_as_historical(
         assert FVal(price_str) == ONE
 
 
+@pytest.mark.freeze_time('2026-01-01 00:00:00 GMT')
 @pytest.mark.vcr
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
 @pytest.mark.parametrize('number_of_eth_accounts', [0])

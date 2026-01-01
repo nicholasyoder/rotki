@@ -128,10 +128,11 @@ def test_get_historical_balance(
     )
 
     result = assert_proper_sync_response_with_result(response)
-    assert result['BTC']['amount'] == '1.5'
-    assert result['BTC']['price'] == '15806.226022787'
-    assert result['ETH']['amount'] == '10'
-    assert result['ETH']['price'] == '1151.10913718085'
+    assert result['processing_required'] is False
+    assert result['entries']['BTC']['amount'] == '1.5'
+    assert result['entries']['BTC']['price'] == '15806.226022787'
+    assert result['entries']['ETH']['amount'] == '10'
+    assert result['entries']['ETH']['price'] == '1151.10913718085'
 
     # try retrieving the balance of a day without event and
     # see that the balance of the previous day is used.
@@ -151,8 +152,9 @@ def test_get_historical_balance(
         task_id,
     )
     # Balances(amount) should be same as day 1
-    assert outcome['result']['BTC']['amount'] == '2'
-    assert outcome['result']['ETH']['amount'] == '10'
+    assert outcome['result']['processing_required'] is False
+    assert outcome['result']['entries']['BTC']['amount'] == '2'
+    assert outcome['result']['entries']['ETH']['amount'] == '10'
 
 
 @pytest.mark.vcr(filter_query_parameters=['api_key'])
@@ -191,9 +193,10 @@ def test_get_historical_asset_balance(
     )
 
     result = assert_proper_sync_response_with_result(response)
+    assert result['processing_required'] is False
     # Should show post-withdrawal balance
-    assert result['amount'] == '1.7'  # 2 - 0.5 + 0.2
-    assert result['price'] == '15806.226022787'
+    assert result['entries']['amount'] == '1.7'  # 2 - 0.5 + 0.2
+    assert result['entries']['price'] == '15806.226022787'
 
 
 @pytest.mark.parametrize('start_with_valid_premium', [True])
@@ -237,7 +240,7 @@ def test_get_historical_asset_amounts_over_time(
     assert len(result['times']) == len(result['values'])
     for ts, amount in zip(result['times'], result['values'], strict=True):
         assert ts in {START_TS, START_TS + DAY_IN_SECONDS * 2, START_TS + DAY_IN_SECONDS * 3}
-        assert amount in {'2', '1.5', '3.5'}
+        assert amount in {'2.0', '1.5', '3.5'}
 
 
 @pytest.mark.parametrize('start_with_valid_premium', [True])
@@ -300,7 +303,7 @@ def test_get_historical_asset_amounts_over_time_with_negative_amount(
     assert len(result['times']) == 2
     assert result['times'][0] == START_TS  # Initial timestamp
     assert result['times'][1] == START_TS + DAY_IN_SECONDS * 2  # First spend
-    assert result['values'][0] == '2'  # Initial balance
+    assert result['values'][0] == '2.0'  # Initial balance
     assert result['values'][1] == '1.5'  # Balance after first spend
 
 
@@ -363,7 +366,7 @@ def test_get_historical_assets_in_collection_amounts_over_time(
     assert len(result['times']) == 2
     assert result['times'][0] == START_TS  # Initial timestamp
     assert result['times'][1] == START_TS + DAY_IN_SECONDS * 2  # First spend
-    assert result['values'][0] == '2'  # Initial balance
+    assert result['values'][0] == '2.0'  # Initial balance
     assert result['values'][1] == '1.5'  # Balance after first spend
 
 
@@ -373,7 +376,8 @@ def test_get_historical_balance_before_first_event(
         rotkehlchen_api_server: 'APIServer',
         setup_historical_data: None,
 ) -> None:
-    """Test getting historical balances before any events"""
+    """Test getting historical balances before any events returns processing_required=False
+    since no events exist before the requested timestamp."""
     response = requests.post(
         api_url_for(
             rotkehlchen_api_server,
@@ -381,11 +385,9 @@ def test_get_historical_balance_before_first_event(
         ),
         json={'timestamp': START_TS - DAY_IN_SECONDS},  # Day before first event
     )
-    assert_error_response(
-        response=response,
-        contained_in_msg='No historical data found until the given timestamp.',
-        status_code=HTTPStatus.NOT_FOUND,
-    )
+    result = assert_proper_sync_response_with_result(response)
+    assert result['processing_required'] is False
+    assert 'entries' not in result
 
 
 @pytest.mark.parametrize('start_with_valid_premium', [True])
@@ -1001,3 +1003,96 @@ def test_historical_price_cache_only_special_assets(
     result = assert_proper_sync_response_with_result(response)
     assert str(START_TS) in result['prices']
     assert result['prices'][str(START_TS)] == '1400'
+
+
+@pytest.mark.parametrize('start_with_valid_premium', [True])
+def test_get_historical_asset_amounts_processing_required(
+        rotkehlchen_api_server: 'APIServer',
+) -> None:
+    """Test that processing_required flag is returned correctly and that the
+    processing trigger endpoint works."""
+    db = rotkehlchen_api_server.rest_api.rotkehlchen.data.db
+    events = [
+        HistoryEvent(
+            group_identifier='btc_receive_1',
+            sequence_index=0,
+            timestamp=ts_sec_to_ms(START_TS),
+            event_type=HistoryEventType.RECEIVE,
+            event_subtype=HistoryEventSubType.NONE,
+            location=Location.BLOCKCHAIN,
+            asset=A_BTC,
+            amount=FVal('2'),
+            notes='Receive BTC',
+        ),
+    ]
+    with db.user_write() as write_cursor:
+        DBHistoryEvents(database=db).add_history_events(
+            write_cursor=write_cursor,
+            history=events,
+        )
+
+    # events exist but are not yet processed
+    response = requests.post(
+        api_url_for(
+            rotkehlchen_api_server,
+            'historicalassetamountsresource',
+        ),
+        json={
+            'asset': 'BTC',
+            'from_timestamp': START_TS,
+            'to_timestamp': START_TS + DAY_IN_SECONDS,
+        },
+    )
+    result = assert_proper_sync_response_with_result(response)
+    assert result['processing_required'] is True
+    assert 'times' not in result
+    assert 'values' not in result
+
+    # trigger processing via the API
+    response = requests.post(
+        api_url_for(
+            rotkehlchen_api_server,
+            'historicalbalanceprocessingresource',
+        ),
+        json={'async_query': False},
+    )
+    assert_proper_sync_response_with_result(response)
+
+    # now data should be available
+    response = requests.post(
+        api_url_for(
+            rotkehlchen_api_server,
+            'historicalassetamountsresource',
+        ),
+        json={
+            'asset': 'BTC',
+            'from_timestamp': START_TS,
+            'to_timestamp': START_TS + DAY_IN_SECONDS,
+        },
+    )
+    result = assert_proper_sync_response_with_result(response)
+    assert result['processing_required'] is False
+    assert 'times' in result
+    assert 'values' in result
+
+
+@pytest.mark.parametrize('start_with_valid_premium', [True])
+def test_get_historical_asset_amounts_no_events(
+        rotkehlchen_api_server: 'APIServer',
+) -> None:
+    """Test that processing_required=False is returned when no events exist in time range."""
+    response = requests.post(
+        api_url_for(
+            rotkehlchen_api_server,
+            'historicalassetamountsresource',
+        ),
+        json={
+            'asset': 'BTC',
+            'from_timestamp': START_TS,
+            'to_timestamp': START_TS + DAY_IN_SECONDS,
+        },
+    )
+    result = assert_proper_sync_response_with_result(response)
+    assert result['processing_required'] is False
+    assert 'times' not in result
+    assert 'values' not in result

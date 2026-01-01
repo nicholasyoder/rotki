@@ -3527,6 +3527,16 @@ class HistoricalNetValueResource(BaseMethodView):
         )
 
 
+class HistoricalBalanceProcessingResource(BaseMethodView):
+
+    post_schema = AsyncQueryArgumentSchema()
+
+    @require_loggedin_user()
+    @use_kwargs(post_schema, location='json')
+    def post(self, async_query: bool) -> Response:
+        return self.rest_api.trigger_historical_balance_processing(async_query=async_query)
+
+
 class HistoricalPricesPerAssetResource(BaseMethodView):
 
     post_schema = HistoricalPricesPerAssetSchema()

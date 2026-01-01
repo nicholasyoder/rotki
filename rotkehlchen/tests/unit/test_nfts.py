@@ -83,6 +83,7 @@ def test_sorting_nfts(blockchain: ChainsAggregator):
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('ethereum_accounts', [['0xA2a6D337e042009EbAC0f0c398Fef08Dc1074f19']])
+@pytest.mark.freeze_time('2026-01-01 00:00:00 GMT')
 @pytest.mark.parametrize('gnosis_accounts', [['0xc37b40ABdB939635068d3c5f13E7faF686F03B65']])
 @pytest.mark.parametrize('start_with_valid_premium', [True])
 @pytest.mark.parametrize('ethereum_modules', [['nfts']])

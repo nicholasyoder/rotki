@@ -13994,6 +13994,10 @@ Historical Balance Queries
     Gets historical balance data at a specific timestamp, calculated from processing of historical events.
     If asset is provided, returns balance for that specific asset. Otherwise returns balances for all assets.
 
+    The response includes a ``processing_required`` flag that indicates whether historical events exist but haven't
+    been processed yet. If ``processing_required`` is true, call ``POST /balances/historical/process`` to trigger
+    processing, then retry this endpoint.
+
     .. note::
       This endpoint can also be queried asynchronously by using ``"async_query": true``.
 
@@ -14023,7 +14027,7 @@ Historical Balance Queries
       :reqjsonarr integer timestamp: The timestamp to query the balance for
       :reqjsonarr string asset: (Optional) The asset identifier to query balance for. If not provided, returns balances for all assets.
 
-    **Example Response (All Assets):**
+    **Example Response (All Assets - data available):**
 
       .. sourcecode:: http
 
@@ -14033,19 +14037,22 @@ Historical Balance Queries
         {
           "message": "",
           "result": {
-            "BTC": {
-              "amount": "2.0",
-              "price": "20000"
-            },
-            "ETH": {
-              "amount": "10.0",
-              "price": "1500"
+            "processing_required": false,
+            "entries": {
+              "BTC": {
+                "amount": "2.0",
+                "price": "20000"
+              },
+              "ETH": {
+                "amount": "10.0",
+                "price": "1500"
+              }
             }
           },
           "status_code": 200
         }
 
-    **Example Response (Single Asset):**
+    **Example Response (Single Asset - data available):**
 
       .. sourcecode:: http
 
@@ -14055,18 +14062,36 @@ Historical Balance Queries
       {
         "message": "",
         "result": {
-          "amount": "2.0",
-          "price": "20000"
+          "processing_required": false,
+          "entries": {
+            "amount": "2.0",
+            "price": "20000"
+          }
         },
         "status_code": 200
       }
 
-      :resjson object result: Either a mapping of all assets to their balance info, or single asset balance info if asset was provided
+    **Example Response (processing required):**
+
+      .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+        "message": "",
+        "result": {
+          "processing_required": true
+        },
+        "status_code": 200
+      }
+
+      :resjson bool processing_required: Whether historical events exist but need processing. If true, call the processing endpoint and retry.
+      :resjson object entries: (Only present when data is available) Either a mapping of all assets to their balance info, or single asset balance info if asset was provided
       :resjson string amount: The amount of the asset held at the timestamp
       :resjson string price: The price of the asset at the timestamp in the user's profit currency
       :statuscode 200: Historical balances returned
       :statuscode 400: Malformed query
-      :statuscode 404: No historical data found for the timestamp
       :statuscode 403: User does not have premium access
       :statuscode 409: User is not logged in
       :statuscode 500: Internal Rotki error
@@ -14075,6 +14100,10 @@ Historical Balance Queries
 
     Gets historical balance amounts for a specific asset within a given time range, calculated from pre-computed balance metrics.
     It's the total amount of asset held at each timestamp where a change occurred.
+
+    The response includes a ``processing_required`` flag that indicates whether historical events exist but haven't
+    been processed yet. If ``processing_required`` is true, call ``POST /balances/historical/process`` to trigger
+    processing, then retry this endpoint.
 
     **Example Request:**
 
@@ -14095,7 +14124,7 @@ Historical Balance Queries
       :reqjsonarr integer from_timestamp: The start timestamp of the query range
       :reqjsonarr integer to_timestamp: The end timestamp of the query range
 
-    **Example Response:**
+    **Example Response (data available):**
 
       .. sourcecode:: http
 
@@ -14105,18 +14134,49 @@ Historical Balance Queries
         {
           "message": "",
           "result": {
+            "processing_required": false,
             "times": [1672531200, 1673308800, 1674518400],
-            "values": ["1.5", "2.0", "1.8"],
+            "values": ["1.5", "2.0", "1.8"]
           },
           "status_code": 200
         }
 
-        :resjson list[integer] times: Timestamps of balance changes.
-        :resjson list[string] values: Net asset balance amount at each corresponding timestamp.
+    **Example Response (processing required):**
+
+      .. sourcecode:: http
+
+        HTTP/1.1 200 OK
+        Content-Type: application/json
+
+        {
+          "message": "",
+          "result": {
+            "processing_required": true
+          },
+          "status_code": 200
+        }
+
+    **Example Response (no events in range):**
+
+      .. sourcecode:: http
+
+        HTTP/1.1 200 OK
+        Content-Type: application/json
+
+        {
+          "message": "",
+          "result": {
+            "processing_required": false
+          },
+          "status_code": 200
+        }
+
+        :resjson bool processing_required: True if events exist but haven't been processed yet. False otherwise.
+        :resjson list[integer] times: Timestamps of balance changes. Only present when data is available.
+        :resjson list[string] values: Net asset balance amount at each corresponding timestamp. Only present when data is available.
         :statuscode 200: Historical balances returned
         :statuscode 400: Malformed query
         :statuscode 401: User is not logged in
-        :statuscode 404: No historical data found for the asset in the given time range
         :statuscode 403: User does not have premium access
         :statuscode 500: Internal Rotki error
 
@@ -14175,6 +14235,44 @@ Historical Balance Queries
         :statuscode 401: User is not logged in
         :statuscode 403: User does not have premium access
         :statuscode 404: No historical data found in the given time range
+        :statuscode 500: Internal Rotki error
+
+  .. http:post:: /api/(version)/balances/historical/process
+
+      Triggers historical balance processing. This endpoint bypasses the normal background task scheduling
+      and immediately processes historical events to populate the event_metrics table.
+
+      .. note::
+          This endpoint can be queried asynchronously by using ``"async_query": true``.
+
+      **Example Request:**
+
+        .. http:example:: curl wget httpie python-requests
+
+          POST /api/(version)/balances/historical/process HTTP/1.1
+          Host: localhost:5042
+          Content-Type: application/json;charset=UTF-8
+
+          {"async_query": false}
+
+        :reqjsonarr bool async_query: Whether to run the processing asynchronously
+
+      **Example Response:**
+
+        .. sourcecode:: http
+
+          HTTP/1.1 200 OK
+          Content-Type: application/json
+
+          {
+            "message": "",
+            "result": true,
+            "status_code": 200
+          }
+
+        :resjson bool result: True on success
+        :statuscode 200: Processing completed successfully
+        :statuscode 401: User is not logged in
         :statuscode 500: Internal Rotki error
 
   .. http:post:: /api/(version)/balances/historical/asset/prices
