@@ -1002,8 +1002,32 @@ class EVMTransactionDecoder(TransactionDecoder['EvmTransaction', EvmDecodingRule
             # any tracked address is not involved
             return events
 
-        # now decode the actual transaction eth transfer itself
         amount = ZERO if tx.value == 0 else from_wei(FVal(tx.value))
+        if (
+            tx.to_address is not None and
+            tx.from_address == tx.to_address and
+            self.base.is_tracked(tx.from_address) and
+            not (tx.authorization_list is not None and len(tx.authorization_list) > 0)  # AA authorizations are handled with their own event  # noqa: E501
+        ):
+            if amount == ZERO and len(tx.input_data) == 0:
+                notes = 'No value transaction to self'
+            else:
+                notes = f'Transaction to self of {amount} {self.value_asset.symbol}'
+            events.append(self.base.make_event(
+                tx_ref=tx.tx_hash,
+                sequence_index=self.base.get_next_sequence_index_pre_decoding(),
+                timestamp=tx.timestamp,
+                event_type=HistoryEventType.TRANSACTION_TO_SELF,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=self.value_asset,
+                amount=amount,
+                location_label=tx.from_address,
+                notes=notes,
+                address=tx.to_address,
+            ))
+            return events
+
+        # now decode the actual transaction eth transfer itself
         if tx.to_address is None:
             if not self.base.is_tracked(tx.from_address):
                 return events

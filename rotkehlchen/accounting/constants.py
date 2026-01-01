@@ -142,6 +142,9 @@ EVENT_CATEGORY_MAPPINGS = {  # possible combinations of types and subtypes mappe
         HistoryEventSubType.LOSS: {DEFAULT: EventCategory.LOSS},
         HistoryEventSubType.FEE: {DEFAULT: EventCategory.FEE},
     },
+    HistoryEventType.TRANSACTION_TO_SELF: {
+        HistoryEventSubType.NONE: {DEFAULT: EventCategory.SELF_TRANSACTION},
+    },
 }
 
 EVENT_GROUPING_ORDER = {  # Determines how to group events when serializing for the api
@@ -350,6 +353,9 @@ EVENT_CATEGORY_DETAILS = {
     )}, EventCategory.PROFIT: {DEFAULT: EventCategoryDetails(
         label='profit',
         icon='lu-trending-up',
+    )}, EventCategory.SELF_TRANSACTION: {DEFAULT: EventCategoryDetails(
+        label='self transaction',
+        icon='lu-repeat-2',
     )},
 }
 

@@ -52,6 +52,7 @@ class HistoryEventType(SerializableEnumNameMixin):
     BURN = auto()
     MULTI_TRADE = auto()
     MARGIN = auto()
+    TRANSACTION_TO_SELF = auto()
 
 
 class HistoryEventSubType(SerializableEnumNameMixin):
@@ -194,6 +195,7 @@ class EventCategory(Enum):
     ACCOUNT_DEPOSIT = 57, EventDirection.NEUTRAL
     ACCOUNT_WITHDRAWAL = 58, EventDirection.NEUTRAL
     PROFIT = 59, EventDirection.IN
+    SELF_TRANSACTION = 60, EventDirection.NEUTRAL
 
     @property
     def direction(self) -> EventDirection:
