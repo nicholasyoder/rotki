@@ -31,6 +31,11 @@ Exchange asset movement events may now be manually matched with specific onchain
 
   - Optional ``only_ignored`` flag indicating whether to return a list of the movements that are marked as having no match, or the list of all movements that have not been matched or ignored yet.
 
+* **New Endpoint**: ``DELETE /api/(version)/history/events/match/asset_movements``
+
+  - Required ``asset_movement`` parameter specifying the DB identifier of the asset movement to unlink from its corresponding matched event.
+  - Unlinks the asset movement from its matched event. This asset movement will now appear in the list of unmatched movements again.
+
 * **Modified Endpoint**: ``POST /api/(version)/history/events``
 
   - New optional ``actual_group_identifier`` field in the response, containing the actual group identifier of the event as stored in the DB.

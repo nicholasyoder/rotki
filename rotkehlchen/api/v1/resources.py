@@ -180,6 +180,7 @@ from rotkehlchen.api.v1.schemas import (
     TransactionDecodingSchema,
     TransactionQuerySchema,
     TransactionReferenceAdditionSchema,
+    UnlinkMatchedAssetMovementSchema,
     UpdateCalendarReminderSchema,
     UpdateCalendarSchema,
     UserActionLoginSchema,
@@ -3648,6 +3649,7 @@ class MatchAssetMovementsResource(BaseMethodView):
     get_schema = GetUnmatchedAssetMovementsSchema()
     put_schema = MatchAssetMovementsSchema()
     post_schema = FindPossibleMatchesSchema()
+    delete_schema = UnlinkMatchedAssetMovementSchema()
 
     @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
@@ -3669,4 +3671,11 @@ class MatchAssetMovementsResource(BaseMethodView):
             asset_movement_group_identifier=asset_movement,
             time_range=time_range,
             only_expected_assets=only_expected_assets,
+        )
+
+    @require_loggedin_user()
+    @use_kwargs(delete_schema, location='json')
+    def delete(self, asset_movement: int) -> Response:
+        return self.rest_api.unlink_matched_asset_movements(
+            asset_movement_identifier=asset_movement,
         )

@@ -6486,6 +6486,47 @@ class RestAPI:
 
         return api_response(_wrap_in_ok_result(result=movement_group_ids))
 
+    def unlink_matched_asset_movements(
+            self,
+            asset_movement_identifier: int,
+    ) -> Response:
+        """Unlink an asset movement from its matched event. Also attempts to remove an entry for
+        the matched event's identifier since it could be two asset movements matched to each other
+        in which case there is an entry for both.
+
+        Note that the matched event is not modified to revert the changes to its event type, notes,
+        counterparty, etc since this info is no longer available. While we could have this stored
+        in the extra data, the event may also have been edited by user since the matching, and we
+        would risk overwriting user changes. For onchain events at least, the user can manually
+        delete the event and redecode the tx to reset it if needed.
+        """
+        with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
+            matched_event_identifier = self.rotkehlchen.data.db.get_dynamic_cache(
+                cursor=cursor,
+                name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
+                identifier=asset_movement_identifier,
+            )
+
+        if matched_event_identifier is None:
+            return api_response(wrap_in_fail_result(message=(
+                f'asset movement {asset_movement_identifier} is not matched with an event '
+                f'or marked as having no match'
+            )), HTTPStatus.BAD_REQUEST)
+
+        with self.rotkehlchen.data.db.conn.write_ctx() as write_cursor:
+            for identifier in (
+                [asset_movement_identifier]
+                if matched_event_identifier == ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE else
+                [asset_movement_identifier, matched_event_identifier]
+            ):
+                self.rotkehlchen.data.db.delete_dynamic_cache(
+                    write_cursor=write_cursor,
+                    name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
+                    identifier=str(identifier),
+                )
+
+        return api_response(OK_RESULT)
+
     def get_matches_for_asset_movement(
             self,
             asset_movement_group_identifier: str,

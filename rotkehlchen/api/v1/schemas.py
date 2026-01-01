@@ -4571,3 +4571,7 @@ class FindPossibleMatchesSchema(Schema):
     asset_movement = fields.String(required=True)
     time_range = fields.Integer(required=False, load_default=ASSET_MOVEMENT_MATCH_WINDOW)
     only_expected_assets = fields.Boolean(required=False, load_default=True)
+
+
+class UnlinkMatchedAssetMovementSchema(Schema):
+    asset_movement = fields.Integer(required=True)
