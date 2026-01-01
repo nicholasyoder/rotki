@@ -66,8 +66,8 @@ interface UseHistoryEventsApiReturn {
   pullAndRecodeEthBlockEventRequest: (payload: PullEthBlockEventPayload) => Promise<PendingTask>;
   getTransactionStatusSummary: () => Promise<TransactionStatus>;
   getUnmatchedAssetMovements: () => Promise<string[]>;
-  getAssetMovementMatches: (assetMovement: string, timeRange: number) => Promise<AssetMovementMatchSuggestions>;
-  matchAssetMovements: (assetMovement: number, matchedEvent: number) => Promise<boolean>;
+  getAssetMovementMatches: (assetMovement: string, timeRange: number, onlyExpectedAssets: boolean) => Promise<AssetMovementMatchSuggestions>;
+  matchAssetMovements: (assetMovement: number, matchedEvent?: number | null) => Promise<boolean>;
 }
 
 export function useHistoryEventsApi(): UseHistoryEventsApiReturn {
@@ -289,16 +289,17 @@ export function useHistoryEventsApi(): UseHistoryEventsApiReturn {
   const getUnmatchedAssetMovements = async (): Promise<string[]> =>
     api.get<string[]>('/history/events/match/asset_movements');
 
-  const getAssetMovementMatches = async (assetMovement: string, timeRange: number): Promise<AssetMovementMatchSuggestions> =>
+  const getAssetMovementMatches = async (assetMovement: string, timeRange: number, onlyExpectedAssets: boolean): Promise<AssetMovementMatchSuggestions> =>
     api.post<AssetMovementMatchSuggestions>('/history/events/match/asset_movements', {
       assetMovement,
+      onlyExpectedAssets,
       timeRange,
     });
 
-  const matchAssetMovements = async (assetMovement: number, matchedEvent: number): Promise<boolean> =>
+  const matchAssetMovements = async (assetMovement: number, matchedEvent?: number | null): Promise<boolean> =>
     api.put<boolean>('/history/events/match/asset_movements', {
       assetMovement,
-      matchedEvent,
+      ...(matchedEvent != null && { matchedEvent }),
     });
 
   return {

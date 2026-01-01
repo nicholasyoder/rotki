@@ -16,6 +16,8 @@ export interface PotentialMatchRow {
   location: string;
   timestamp: number;
   txRef?: string;
+  eventType: string;
+  eventSubtype: string;
   isCloseMatch: boolean;
 }
 
@@ -42,7 +44,8 @@ const searchLoading = ref<boolean>(false);
 const matchingLoading = ref<boolean>(false);
 const potentialMatches = ref<PotentialMatchRow[]>([]);
 const selectedMatchId = ref<number>();
-const searchTimeRange = ref<string>('24');
+const searchTimeRange = ref<string>('1');
+const onlyExpectedAssets = ref<boolean>(true);
 
 function getEventEntry(row: HistoryEventCollectionRow): HistoryEventEntryWithMeta {
   const events = Array.isArray(row) ? row : [row];
@@ -56,6 +59,8 @@ function transformToMatchRow(row: HistoryEventCollectionRow, isCloseMatch: boole
   return {
     amount: entry.amount,
     asset: entry.asset,
+    eventSubtype: entry.eventSubtype,
+    eventType: entry.eventType,
     identifier: entry.identifier,
     isCloseMatch,
     location: entry.location,
@@ -71,11 +76,11 @@ async function searchPotentialMatches(): Promise<void> {
   try {
     const groupIdentifier = props.movement.groupIdentifier;
 
-    const hours = Number.parseInt(get(searchTimeRange), 10) || 24;
+    const hours = Number.parseInt(get(searchTimeRange), 10) || 1;
     const timeRangeInSeconds = hours * 60 * 60;
 
     // Get match suggestions from backend
-    const suggestions = await getAssetMovementMatches(groupIdentifier, timeRangeInSeconds);
+    const suggestions = await getAssetMovementMatches(groupIdentifier, timeRangeInSeconds, get(onlyExpectedAssets));
     const allIdentifiers = [...suggestions.closeMatches, ...suggestions.otherEvents];
 
     if (allIdentifiers.length === 0) {
@@ -91,17 +96,10 @@ async function searchPotentialMatches(): Promise<void> {
       offset: 0,
     });
 
-    // Transform and mark close matches
+    // Transform and mark close matches (order is already handled by backend)
     const closeMatchSet = new Set(suggestions.closeMatches);
     const matches = response.entries
       .map(row => transformToMatchRow(row, closeMatchSet.has(getEventEntry(row).entry.identifier)));
-
-    // Sort: close matches first, then by timestamp descending
-    matches.sort((a, b) => {
-      if (a.isCloseMatch !== b.isCloseMatch)
-        return a.isCloseMatch ? -1 : 1;
-      return b.timestamp - a.timestamp;
-    });
 
     set(potentialMatches, matches);
   }
@@ -149,7 +147,8 @@ watch(modelValue, async (isOpen) => {
   if (isOpen) {
     set(potentialMatches, []);
     set(selectedMatchId, undefined);
-    set(searchTimeRange, '24');
+    set(searchTimeRange, '1');
+    set(onlyExpectedAssets, true);
     await searchPotentialMatches();
   }
 }, { immediate: true });
@@ -179,6 +178,7 @@ watch(modelValue, async (isOpen) => {
       <PotentialMatchesList
         v-model:selected-match-id="selectedMatchId"
         v-model:search-time-range="searchTimeRange"
+        v-model:only-expected-assets="onlyExpectedAssets"
         :movement="movement"
         :matches="potentialMatches"
         :loading="searchLoading"

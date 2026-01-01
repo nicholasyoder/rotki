@@ -10,6 +10,7 @@ import AssetDetails from '@/components/helper/AssetDetails.vue';
 import BadgeDisplay from '@/components/history/BadgeDisplay.vue';
 import LocationDisplay from '@/components/history/LocationDisplay.vue';
 import LocationIcon from '@/components/history/LocationIcon.vue';
+import { useHistoryEventMappings } from '@/composables/history/events/mapping';
 import HashLink from '@/modules/common/links/HashLink.vue';
 
 interface PotentialMatchRow {
@@ -19,12 +20,16 @@ interface PotentialMatchRow {
   location: string;
   timestamp: number;
   txRef?: string;
+  eventType: string;
+  eventSubtype: string;
   isCloseMatch: boolean;
 }
 
 const selectedMatchId = defineModel<number | undefined>('selectedMatchId', { required: true });
 
 const searchTimeRange = defineModel<string>('searchTimeRange', { required: true });
+
+const onlyExpectedAssets = defineModel<boolean>('onlyExpectedAssets', { required: true });
 
 const props = defineProps<{
   movement: UnmatchedAssetMovement;
@@ -38,6 +43,8 @@ const emit = defineEmits<{
 
 const { t } = useI18n({ useScope: 'global' });
 
+const { getHistoryEventSubTypeName, getHistoryEventTypeName } = useHistoryEventMappings();
+
 const columns = computed<DataTableColumn<PotentialMatchRow>[]>(() => [
   {
     key: 'timestamp',
@@ -46,6 +53,11 @@ const columns = computed<DataTableColumn<PotentialMatchRow>[]>(() => [
   {
     key: 'txRef',
     label: t('common.tx_hash'),
+  },
+  {
+    class: 'whitespace-pre-line',
+    key: 'eventTypeAndSubtype',
+    label: `${t('transactions.events.form.event_type.label')} -\n${t('transactions.events.form.event_subtype.label')}`,
   },
   {
     align: 'end',
@@ -120,30 +132,44 @@ const movementEntry = computed(() => getEventEntry(props.movement.events).entry)
         </tbody>
       </SimpleTable>
     </div>
-
-    <div class="flex items-center gap-2 mb-4">
-      <p class="text-body-2 font-medium mr-4">
+    <div class="border-t border-default pt-4">
+      <div class="text-body-2 font-medium mb-4">
         {{ t('asset_movement_matching.dialog.search_description') }}
-      </p>
-      <RuiTextField
-        v-model="searchTimeRange"
-        type="number"
-        min="1"
-        color="primary"
-        hide-details
-        max="168"
-        :label="t('asset_movement_matching.dialog.time_range_hours')"
-        class="w-40"
-        variant="outlined"
-        dense
-      />
-      <RuiButton
-        class="!h-10"
-        :loading="loading"
-        @click="emit('search')"
-      >
-        {{ t('common.actions.search') }}
-      </RuiButton>
+      </div>
+      <div class="flex items-center gap-4 mb-4 flex-wrap">
+        <RuiTextField
+          v-model="searchTimeRange"
+          type="number"
+          min="1"
+          color="primary"
+          hide-details
+          max="168"
+          :label="t('asset_movement_matching.dialog.time_range_hours')"
+          class="w-40"
+          variant="outlined"
+          dense
+        />
+        <RuiTooltip :popper="{ placement: 'top' }">
+          <template #activator>
+            <RuiCheckbox
+              v-model="onlyExpectedAssets"
+              color="primary"
+              hide-details
+              size="sm"
+            >
+              {{ t('asset_movement_matching.dialog.only_expected_assets') }}
+            </RuiCheckbox>
+          </template>
+          {{ t('asset_movement_matching.dialog.only_expected_assets_hint') }}
+        </RuiTooltip>
+        <RuiButton
+          class="!h-10"
+          :loading="loading"
+          @click="emit('search')"
+        >
+          {{ t('common.actions.search') }}
+        </RuiButton>
+      </div>
     </div>
 
     <RuiDataTable
@@ -161,7 +187,7 @@ const movementEntry = computed(() => getEventEntry(props.movement.events).entry)
           <LocationIcon
             horizontal
             icon
-            size="1.5rem"
+            size="1.25rem"
             :item="row.location"
           />
           <HashLink
@@ -171,17 +197,23 @@ const movementEntry = computed(() => getEventEntry(props.movement.events).entry)
             :location="row.location"
           />
           <span v-else>-</span>
-          <RuiChip
-            v-if="row.isCloseMatch"
-            size="sm"
-            color="success"
-          >
-            {{ t('asset_movement_matching.dialog.recommended') }}
-          </RuiChip>
         </div>
+        <RuiChip
+          v-if="row.isCloseMatch"
+          size="sm"
+          color="success"
+          class="mt-1.5 -ml-0.5 !px-0.5 !py-0.25"
+          content-class="!text-xs"
+        >
+          {{ t('asset_movement_matching.dialog.recommended') }}
+        </RuiChip>
       </template>
       <template #item.asset="{ row }">
         <AssetDetails :asset="row.asset" />
+      </template>
+      <template #item.eventTypeAndSubtype="{ row }">
+        <div>{{ getHistoryEventTypeName(row.eventType) }} -</div>
+        <div>{{ getHistoryEventSubTypeName(row.eventSubtype) }}</div>
       </template>
       <template #item.amount="{ row }">
         <AmountDisplay :value="row.amount" />

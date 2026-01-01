@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import type { HistoryEventEntryWithMeta } from '@/types/history/events/schemas';
 import PotentialMatchesDialog from '@/components/history/events/PotentialMatchesDialog.vue';
 import UnmatchedMovementsList from '@/components/history/events/UnmatchedMovementsList.vue';
 import CardTitle from '@/components/typography/CardTitle.vue';
+import { useHistoryEventsApi } from '@/composables/api/history/events';
 import {
   type UnmatchedAssetMovement,
   useUnmatchedAssetMovements,
@@ -21,12 +23,33 @@ const {
   unmatchedMovements,
 } = useUnmatchedAssetMovements();
 
+const { matchAssetMovements } = useHistoryEventsApi();
+
 const selectedMovement = ref<UnmatchedAssetMovement>();
 const showPotentialMatchesDialog = ref<boolean>(false);
+const ignoreLoading = ref<boolean>(false);
+
+function getEventEntry(movement: UnmatchedAssetMovement): HistoryEventEntryWithMeta {
+  const events = Array.isArray(movement.events) ? movement.events : [movement.events];
+  return events[0];
+}
 
 function selectMovement(movement: UnmatchedAssetMovement): void {
   set(selectedMovement, movement);
   set(showPotentialMatchesDialog, true);
+}
+
+async function ignoreMovement(movement: UnmatchedAssetMovement): Promise<void> {
+  set(ignoreLoading, true);
+  try {
+    const eventEntry = getEventEntry(movement);
+    await matchAssetMovements(eventEntry.entry.identifier);
+    await fetchUnmatchedAssetMovements();
+    emit('refresh');
+  }
+  finally {
+    set(ignoreLoading, false);
+  }
 }
 
 function onMatched(): void {
@@ -77,6 +100,8 @@ onMounted(async () => {
       <UnmatchedMovementsList
         v-else
         :movements="unmatchedMovements"
+        :ignore-loading="ignoreLoading"
+        @ignore="ignoreMovement($event)"
         @select="selectMovement($event)"
       />
 

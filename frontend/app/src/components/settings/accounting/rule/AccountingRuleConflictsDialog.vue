@@ -8,7 +8,6 @@ import type {
   AccountingRuleConflictResolution,
   AccountingTreatment,
 } from '@/types/settings/accounting';
-import { toSentenceCase } from '@rotki/common';
 import BigDialog from '@/components/dialogs/BigDialog.vue';
 import BadgeDisplay from '@/components/history/BadgeDisplay.vue';
 import CounterpartyDisplay from '@/components/history/CounterpartyDisplay.vue';
@@ -98,18 +97,7 @@ const tableHeaders = computed<DataTableColumn<AccountingRuleConflict>[]>(() => [
   },
 ]);
 
-const { getEventTypeData, historyEventSubTypesData, historyEventTypesData } = useHistoryEventMappings();
-
-function getHistoryEventTypeName(eventType: string): string {
-  return get(historyEventTypesData).find(item => item.identifier === eventType)?.label ?? toSentenceCase(eventType);
-}
-
-function getHistoryEventSubTypeName(eventSubtype: string): string {
-  return (
-    get(historyEventSubTypesData).find(item => item.identifier === eventSubtype)?.label
-    ?? toSentenceCase(eventSubtype)
-  );
-}
+const { getEventTypeData, getHistoryEventSubTypeName, getHistoryEventTypeName } = useHistoryEventMappings();
 
 function getType(eventType: string, eventSubtype: string) {
   return get(

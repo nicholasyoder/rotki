@@ -8,9 +8,10 @@ import { useManualBalanceData } from '@/modules/balances/manual/use-manual-balan
 import { useManualBalances } from '@/modules/balances/manual/use-manual-balances';
 import { useBalancesStore } from '@/modules/balances/use-balances-store';
 import { useBalancePricesStore } from '@/store/balances/prices';
-import { useGeneralSettingsStore } from '@/store/settings/general';
+import { useSettingsStore } from '@/store/settings';
 import { useTaskStore } from '@/store/tasks';
 import { BalanceType } from '@/types/balances';
+import { CURRENCY_USD } from '@/types/currencies';
 
 vi.mock('@/composables/api/balances/manual', () => ({
   useManualBalancesApi: vi.fn().mockReturnValue({
@@ -89,12 +90,12 @@ const ethPrice = {
 describe('store::balances/manual', () => {
   let store: ReturnType<typeof useBalancesStore>;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     setActivePinia(createPinia());
     store = useBalancesStore();
     const { exchangeRates, prices } = storeToRefs(useBalancePricesStore());
-    const { currency } = storeToRefs(useGeneralSettingsStore());
-    set(currency, { name: 'United States Dollar', tickerSymbol: 'USD', unicodeSymbol: '$', crypto: false });
+    const { update: updateSettings } = useSettingsStore();
+    await updateSettings({ mainCurrency: CURRENCY_USD });
     set(exchangeRates, { USD: bigNumberify(1) });
     set(prices, {
       ETH: ethPrice,
