@@ -2012,7 +2012,6 @@ class RestAPI:
                 existed_accounts,
                 failed_accounts,
                 no_activity_accounts,
-                evm_contract_addresses,
             ) = self.rotkehlchen.add_evm_accounts(account_data=account_data)
         except (EthSyncError, TagConstraintError) as e:
             return {'result': None, 'message': str(e), 'status_code': HTTPStatus.CONFLICT}
@@ -2027,7 +2026,6 @@ class RestAPI:
             ('failed', failed_accounts),
             ('existed', existed_accounts),
             ('no_activity', no_activity_accounts),
-            ('evm_contracts', evm_contract_addresses),
         ):
             for chain, address in list_of_accounts:
                 result_dicts[response_key][address].append(chain.serialize())

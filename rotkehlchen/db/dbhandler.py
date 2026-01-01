@@ -34,7 +34,7 @@ from rotkehlchen.chain.substrate.types import SubstrateAddress
 from rotkehlchen.constants import ONE, ZERO
 from rotkehlchen.constants.assets import A_ETH, A_ETH2, A_USD
 from rotkehlchen.constants.limits import FREE_USER_NOTES_LIMIT
-from rotkehlchen.constants.misc import NFT_DIRECTIVE, USERDB_NAME
+from rotkehlchen.constants.misc import CONTRACT_TAG_NAME, NFT_DIRECTIVE, USERDB_NAME
 from rotkehlchen.constants.timing import HOUR_IN_SECONDS
 from rotkehlchen.db.cache import (
     AddressArgType,
@@ -3126,8 +3126,12 @@ class DBHandler:
 
         Raises:
         - TagConstraintError: If the tag name to edit does not exist in the DB
+          or if trying to rename a reserved system tag.
         - InputError: If no field to edit was given.
         """
+        if name.lower() == CONTRACT_TAG_NAME.lower() and new_name is not None:
+            raise TagConstraintError(f'Cannot rename reserved system tag "{name}"')
+
         if new_name == name:
             new_name = None
 
@@ -3205,8 +3209,11 @@ class DBHandler:
 
         Raises:
         - TagConstraintError: If the tag name to delete does not exist in the DB
+          or if the tag is a reserved system tag.
         """
-        # Delete the tag mappings for all affected accounts
+        if name.lower() == CONTRACT_TAG_NAME.lower():
+            raise TagConstraintError(f'Cannot delete reserved system tag "{name}"')
+
         write_cursor.execute(
             'DELETE FROM tag_mappings WHERE '
             'tag_name = ?;', (name,),

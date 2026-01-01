@@ -69,30 +69,30 @@ def test_module_deactivation(blockchain):
         assert module_name not in blockchain.eth_modules
 
 
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('ethereum_accounts', [[]])
 def test_detect_evm_accounts(blockchain: 'ChainsAggregator') -> None:
     """
     Tests that the detection of EVM accounts activity in chains where they are not tracked yet
     works as expected.
     """
-    # Is a contract in ethereum mainnet and should not be added anywhere else despite it having
-    # activity in other chains
-    eth_addy_contract = make_evm_address()
+    # Is a contract in ethereum mainnet. Now added to chains where it has activity (optimism, avax)
+    eth_addy_contract = string_to_evm_address('0x06FAC6fd222E59D3D8602795fdD88769bCB998Bd')
 
     # Is an EOA in optimism. Has activity in all chains. Should be added to optimism, and avax
-    addy_eoa_1 = make_evm_address()
+    addy_eoa_1 = string_to_evm_address('0xFaa7Fa8B22704057B8345Ed8C9bE7d5081eefb81')
 
     # Is an EOA in ethereum mainnet. Has activity only in ethereum and in optimism. Should be
     # added to optimism and should not be added to avax
-    addy_eoa_2 = make_evm_address()
+    addy_eoa_2 = string_to_evm_address('0xeFB06924caC08837153f6544d029A8208b236196')
     # polygon and mainnet - auto-detected on most of the other chains.
-    addy_eoa_3 = make_evm_address()
+    addy_eoa_3 = string_to_evm_address('0xDC50D9Ca7f5D062Acb2f9f8369da9919D9F08F8E')
     # arbitrum and mainnet - auto-detected on polygon
-    addy_eoa_4 = make_evm_address()
+    addy_eoa_4 = string_to_evm_address('0x1cdE61EC6C5De8E479d463a1abeaF588E36F5326')
 
     # Is an EOA that is initially already added everywhere. Has activity in all chains.
     # Since is already added, should not be added again.
-    everywhere_addy = make_evm_address()
+    everywhere_addy = string_to_evm_address('0x0cBc2327D4E4aA011807C20ea81FAba73Ad603ab')
 
     # Labels are as follows:
     # addy_eoa_2 - same label set on both ethereum and polygon initially - Updated to multichain
@@ -156,7 +156,7 @@ def test_detect_evm_accounts(blockchain: 'ChainsAggregator') -> None:
         blockchain.detect_evm_accounts()
 
     assert set(blockchain.accounts.eth) == {addy_eoa_1, addy_eoa_2, addy_eoa_3, addy_eoa_4, eth_addy_contract, everywhere_addy}  # noqa: E501
-    assert set(blockchain.accounts.optimism) == {addy_eoa_1, addy_eoa_2, everywhere_addy}
+    assert set(blockchain.accounts.optimism) == {addy_eoa_1, addy_eoa_2, eth_addy_contract, everywhere_addy}  # noqa: E501
     assert set(blockchain.accounts.avax) == {addy_eoa_1, everywhere_addy, eth_addy_contract}
     assert set(blockchain.accounts.polygon_pos) == {addy_eoa_2, addy_eoa_3, addy_eoa_4, everywhere_addy}  # noqa: E501
     assert set(blockchain.accounts.arbitrum_one) == {addy_eoa_3, addy_eoa_4, everywhere_addy}
@@ -172,6 +172,7 @@ def test_detect_evm_accounts(blockchain: 'ChainsAggregator') -> None:
             (SupportedBlockchain.ETHEREUM, addy_eoa_1, None),
             (SupportedBlockchain.AVALANCHE, addy_eoa_1, None),
             (SupportedBlockchain.AVALANCHE, eth_addy_contract, None),
+            (SupportedBlockchain.OPTIMISM, eth_addy_contract, None),
             (SupportedBlockchain.OPTIMISM, addy_eoa_2, label1),
             (SupportedBlockchain.POLYGON_POS, addy_eoa_4, None),
             (SupportedBlockchain.POLYGON_POS, addy_eoa_3, label2),

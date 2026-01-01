@@ -200,7 +200,9 @@ CREATE TABLE IF NOT EXISTS tags (
     background_color TEXT,
     foreground_color TEXT
 );
-"""
+/* Contract */
+INSERT OR IGNORE INTO tags(name, description, background_color, foreground_color) VALUES ('Contract', 'System tag for smart contract addresses', '9370DB', 'FFFFFF');
+"""  # noqa: E501
 
 DB_CREATE_BLOCKCHAIN_ACCOUNTS = """
 CREATE TABLE IF NOT EXISTS blockchain_accounts (

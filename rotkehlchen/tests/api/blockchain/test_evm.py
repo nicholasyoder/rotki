@@ -316,10 +316,10 @@ def test_add_multievm_accounts(rotkehlchen_api_server: 'APIServer') -> None:
         ), json=request_data)
 
     result = assert_proper_sync_response_with_result(response)
-
     assert result == {
         'added': {
             '0x9531C059098e3d194fF87FebB587aB07B30B1306': ['all'],
+            '0x9008D19f58AAbD9eD0D60971565AA8510560ab41': ['eth'],
         },
         'failed': {
             '0xc37b40ABdB939635068d3c5f13E7faF686F03B65': [
@@ -345,19 +345,6 @@ def test_add_multievm_accounts(rotkehlchen_api_server: 'APIServer') -> None:
                 'binance_sc',
                 'zksync_lite',
             ],
-            '0x9008D19f58AAbD9eD0D60971565AA8510560ab41': ['avax', 'zksync_lite'],
-        },
-        'evm_contracts': {
-            '0x9008D19f58AAbD9eD0D60971565AA8510560ab41': [
-                'eth',
-                'optimism',
-                'polygon_pos',
-                'arbitrum_one',
-                'base',
-                'gnosis',
-                'scroll',
-                'binance_sc',
-            ],
         },
     }
 
@@ -375,6 +362,7 @@ def test_add_multievm_accounts(rotkehlchen_api_server: 'APIServer') -> None:
     ))
     result = assert_proper_sync_response_with_result(response)
     assert result == [
+        {'address': contract_account, 'label': None, 'tags': ['Contract']},
         {'address': common_account, 'label': label, 'tags': ['metamask']},
     ]
     response = requests.get(api_url_for(

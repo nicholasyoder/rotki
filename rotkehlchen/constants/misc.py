@@ -43,3 +43,8 @@ AIRDROPSDIR_NAME: Final = 'airdrops'
 AIRDROPSPOAPDIR_NAME: Final = 'airdrops_poap'
 
 DEFAULT_BALANCE_LABEL: Final = 'address'
+
+CONTRACT_TAG_NAME: Final = 'Contract'
+CONTRACT_TAG_DESCRIPTION: Final = 'System tag for smart contract addresses'
+CONTRACT_TAG_BACKGROUND_COLOR: Final = '9370DB'
+CONTRACT_TAG_FOREGROUND_COLOR: Final = 'FFFFFF'

@@ -1309,6 +1309,20 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
 
         return all(result_tuple[0] for result_tuple in outputs)
 
+    def is_contract(self, address: ChecksumEvmAddress) -> bool:
+        """Check if an address is a contract (has bytecode) on this chain.
+
+        Returns True if bytecode exists, False otherwise (EOA or non-deployed contract).
+        """
+        try:
+            return self.get_code(account=address) != '0x'
+        except RemoteError as e:
+            log.error(
+                f'Failed to get code for {address} on {self.chain_name} due to {e}. '
+                'Assuming not a contract.',
+            )
+            return False
+
     @overload
     def get_transactions(
             self,
