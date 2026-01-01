@@ -185,14 +185,29 @@ def test_get_unmatched_asset_movements(rotkehlchen_api_server: 'APIServer') -> N
                 asset=A_ETH,
                 amount=FVal('0.1'),
                 unique_id='2',
+            )), (no_match_movement := AssetMovement(
+                identifier=3,
+                location=Location.KRAKEN,
+                event_type=HistoryEventType.WITHDRAWAL,
+                timestamp=TimestampMS(1510000000000),
+                asset=A_ETH,
+                amount=FVal('0.1'),
+                unique_id='3',
             ))],
         )
         assert matched_movement.identifier is not None
+        assert no_match_movement.identifier is not None
         rotki.data.db.set_dynamic_cache(
             write_cursor=write_cursor,
             name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
             identifier=matched_movement.identifier,
             value=5,  # matched event identifier can be anything here
+        )
+        rotki.data.db.set_dynamic_cache(
+            write_cursor=write_cursor,
+            name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
+            identifier=no_match_movement.identifier,
+            value=ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE,
         )
 
     result = assert_proper_response_with_result(
@@ -200,6 +215,15 @@ def test_get_unmatched_asset_movements(rotkehlchen_api_server: 'APIServer') -> N
         rotkehlchen_api_server=rotkehlchen_api_server,
     )
     assert result == [unmatched_movement.group_identifier]
+
+    result = assert_proper_response_with_result(
+        response=requests.get(
+            api_url_for(rotkehlchen_api_server, 'matchassetmovementsresource'),
+            params={'only_ignored': True},
+        ),
+        rotkehlchen_api_server=rotkehlchen_api_server,
+    )
+    assert result == [no_match_movement.group_identifier]
 
 
 def test_get_possible_matches(rotkehlchen_api_server: 'APIServer') -> None:

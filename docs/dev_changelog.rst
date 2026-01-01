@@ -29,8 +29,7 @@ Exchange asset movement events may now be manually matched with specific onchain
 
 * **New Endpoint**: ``GET /api/(version)/history/events/match/asset_movements``
 
-  - Takes no parameters.
-  - Returns a list of group identifiers of any unmatched asset movements in the DB that are not marked as having no match.
+  - Optional ``only_ignored`` flag indicating whether to return a list of the movements that are marked as having no match, or the list of all movements that have not been matched or ignored yet.
 
 * **Modified Endpoint**: ``POST /api/(version)/history/events``
 

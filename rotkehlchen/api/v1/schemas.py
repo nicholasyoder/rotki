@@ -4558,6 +4558,10 @@ class ConfigurationUpdateSchema(Schema):
     )
 
 
+class GetUnmatchedAssetMovementsSchema(Schema):
+    only_ignored = fields.Boolean(required=False, load_default=False)
+
+
 class MatchAssetMovementsSchema(Schema):
     asset_movement = fields.Integer(required=True)
     matched_event = fields.Integer(required=False, load_default=None)

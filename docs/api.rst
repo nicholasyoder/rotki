@@ -6319,8 +6319,10 @@ Match exchange asset movements with onchain events
 
    .. http:example:: curl wget httpie python-requests
 
-      GET /api/1/history/events/match/asset_movements HTTP/1.1
+      GET /api/1/history/events/match/asset_movements?only_ignored=false HTTP/1.1
       Host: localhost:5042
+
+   :reqquery bool[optional] only_ignored: Flag indicating whether to return a list of the ignored asset movements, or the list of all movements that have not been matched or ignored yet.
 
    **Example Response**:
 

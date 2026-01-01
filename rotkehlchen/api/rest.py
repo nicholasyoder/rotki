@@ -6413,12 +6413,29 @@ class RestAPI:
 
         return api_response(wrap_in_fail_result(message=error_msg), HTTPStatus.BAD_REQUEST)
 
-    def get_unmatched_asset_movements(self) -> Response:
-        """Get the group identifiers of all unmatched asset movements."""
-        asset_movements, _ = get_unmatched_asset_movements(database=self.rotkehlchen.data.db)
-        return api_response(_wrap_in_ok_result(
-            result=list(dict.fromkeys(event.group_identifier for event in asset_movements)),
-        ))
+    def get_unmatched_asset_movements(self, only_ignored: bool) -> Response:
+        """Get the group identifiers of unmatched asset movements.
+        Gets the movements that are marked as having no match if only_ignored is True otherwise
+        gets all the movements that have not been matched or ignored yet.
+        """
+        if only_ignored:
+            with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
+                movement_group_ids = [x[0] for x in cursor.execute(
+                    'SELECT DISTINCT group_identifier FROM history_events WHERE identifier IN ('
+                    'SELECT SUBSTR(name, ?) FROM key_value_cache WHERE name LIKE ? and value = ?) '
+                    'ORDER BY timestamp, sequence_index',
+                    (
+                        len(DBCacheDynamic.MATCHED_ASSET_MOVEMENT.name) + 2,
+                        f'{DBCacheDynamic.MATCHED_ASSET_MOVEMENT.name.lower()}%',
+                        ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE,
+                    ),
+                )]
+        else:
+            asset_movements, _ = get_unmatched_asset_movements(database=self.rotkehlchen.data.db)
+            # convert to id list using dict.fromkeys to remove duplicates but retain original order
+            movement_group_ids = list(dict.fromkeys(event.group_identifier for event in asset_movements))  # noqa: E501
+
+        return api_response(_wrap_in_ok_result(result=movement_group_ids))
 
     def get_matches_for_asset_movement(
             self,
