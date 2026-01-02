@@ -105,6 +105,7 @@ from rotkehlchen.api.v1.schemas import (
     ExternalServicesResourceDeleteSchema,
     FileListSchema,
     FindPossibleMatchesSchema,
+    GetUnmatchedAssetMovementsSchema,
     GnosisPaySiweChallengeSchema,
     HistoricalAssetsPriceSchema,
     HistoricalPerAssetBalanceSchema,
@@ -3634,12 +3635,14 @@ class PremiumCapabilitiesResource(BaseMethodView):
 
 class MatchAssetMovementsResource(BaseMethodView):
 
+    get_schema = GetUnmatchedAssetMovementsSchema()
     put_schema = MatchAssetMovementsSchema()
     post_schema = FindPossibleMatchesSchema()
 
     @require_loggedin_user()
-    def get(self) -> Response:
-        return self.rest_api.get_unmatched_asset_movements()
+    @use_kwargs(get_schema, location='json_and_query')
+    def get(self, only_ignored: bool) -> Response:
+        return self.rest_api.get_unmatched_asset_movements(only_ignored=only_ignored)
 
     @require_loggedin_user()
     @use_kwargs(put_schema, location='json')
