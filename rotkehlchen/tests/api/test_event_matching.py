@@ -10,6 +10,7 @@ from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.base import HistoryEvent
+from rotkehlchen.history.events.structures.eth2 import EthWithdrawalEvent
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.swap import SwapEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
@@ -362,6 +363,13 @@ def test_get_possible_matches(rotkehlchen_api_server: 'APIServer') -> None:
                 location=Location.EXTERNAL,
                 asset=A_BTC,  # asset not in the same collection as the movement.
                 amount=matched_movement.amount,
+            ), EthWithdrawalEvent(  # ETH staking event that should be ignored.
+                identifier=10,
+                validator_index=12345,
+                timestamp=matched_movement.timestamp,
+                amount=FVal('0.1'),
+                withdrawal_address=make_evm_address(),
+                is_exit=False,
             )],
         )
 
