@@ -32,6 +32,7 @@ from rotkehlchen.types import (
     deserialize_evm_tx_hash,
 )
 from rotkehlchen.utils.hexbytes import hexstring_to_bytes
+from rotkehlchen.utils.misc import ts_sec_to_ms
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
@@ -999,6 +1000,42 @@ def test_failed_transaction(ethereum_inquirer, ethereum_accounts):
         notes=f'Burn {gas} ETH for gas of a failed transaction',
         counterparty=CPT_GAS,
     )]
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('ethereum_accounts', [['0xc37b40ABdB939635068d3c5f13E7faF686F03B65']])
+def test_transaction_to_self_event(ethereum_inquirer, ethereum_accounts):
+    tx_hash = deserialize_evm_tx_hash('0xe950eb35f96ff99ba56504783c0b6f5e66f6b651c847e5cf7e8032b60cbb88d1')  # noqa: E501
+    transaction, _ = ethereum_inquirer.get_transaction_by_hash(tx_hash=tx_hash)
+    assert transaction.to_address == transaction.from_address
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
+    expected_events = [EvmEvent(
+        tx_ref=tx_hash,
+        sequence_index=0,
+        timestamp=(timestamp := ts_sec_to_ms(transaction.timestamp)),
+        location=Location.ETHEREUM,
+        event_type=HistoryEventType.SPEND,
+        event_subtype=HistoryEventSubType.FEE,
+        asset=A_ETH,
+        amount=(gas_amount := FVal('0.0003423')),
+        location_label=ethereum_accounts[0],
+        notes=f'Burn {gas_amount} ETH for gas',
+        counterparty=CPT_GAS,
+    ), EvmEvent(
+        tx_ref=tx_hash,
+        sequence_index=1,
+        timestamp=timestamp,
+        location=Location.ETHEREUM,
+        event_type=HistoryEventType.TRANSACTION_TO_SELF,
+        event_subtype=HistoryEventSubType.NONE,
+        asset=A_ETH,
+        amount=ZERO,
+        location_label=ethereum_accounts[0],
+        notes='No value transaction to self',
+        address=transaction.to_address,
+    ),
+    ]
+    assert events == expected_events
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
