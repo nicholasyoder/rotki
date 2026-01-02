@@ -4,6 +4,7 @@ from unittest.mock import patch
 import pytest
 
 from rotkehlchen.api.websockets.typedefs import WSMessageType
+from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
 from rotkehlchen.constants import HOUR_IN_SECONDS
 from rotkehlchen.constants.assets import A_BTC, A_ETH, A_USD, A_USDC
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
@@ -44,7 +45,7 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
     with database.conn.write_ctx() as write_cursor:
         events_db.add_history_events(
             write_cursor=write_cursor,
-            history=[AssetMovement(  # deposit1, Fiat, should be ignored.
+            history=[(deposit1 := AssetMovement(  # deposit1, Fiat, should appear as unmatched
                 location=Location.GEMINI,
                 event_type=HistoryEventType.DEPOSIT,
                 timestamp=TimestampMS(1500000000000),
@@ -52,7 +53,7 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
                 amount=FVal('100'),
                 unique_id='1',
                 location_label='Gemini 1',
-            ), (deposit2 := AssetMovement(  # deposit2, two matches, one with tx ref
+            )), (deposit2 := AssetMovement(  # deposit2, two matches, one with tx ref
                 location=Location.GEMINI,
                 event_type=HistoryEventType.DEPOSIT,
                 timestamp=TimestampMS(1510000000000),
@@ -70,7 +71,9 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
                 event_subtype=HistoryEventSubType.NONE,
                 asset=A_ETH,
                 amount=FVal('0.1'),
-                location_label=(deposit2_user_address := make_evm_address()),
+                counterparty=CPT_MONERIUM,
+                notes='Important info',
+                location_label=make_evm_address(),
             ), (deposit_2_wrong_ref_event := EvmEvent(  # deposit2 similar event, wrong tx ref
                 tx_ref=make_evm_tx_hash(),
                 sequence_index=0,
@@ -211,7 +214,7 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
     # Corresponding event for deposit2
     assert (deposit2_matched_event := events[0]).event_type == HistoryEventType.WITHDRAWAL
     assert deposit2_matched_event.event_subtype == HistoryEventSubType.REMOVE_ASSET
-    assert deposit2_matched_event.notes == f'Withdraw 0.1 ETH from {deposit2_user_address} to Gemini 2'  # noqa: E501
+    assert deposit2_matched_event.notes == 'Important info'  # Notes shouldn't be updated on monerium events.  # noqa: E501
     assert deposit2_matched_event.counterparty == Location.GEMINI.name.lower()
     # Second event matching deposit2 but with the wrong ref. Unmodified.
     # (except for identifier since its from the db here)
@@ -291,16 +294,18 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
     # Check that the unmatched movements ws message was sent
     assert database.msg_aggregator.rotki_notifier.pop_message() == MockedWsMessage(  # type: ignore  # pop_message will be present since it's a MockRotkiNotifier
         message_type=WSMessageType.UNMATCHED_ASSET_MOVEMENTS,
-        data={'count': 2},
+        data={'count': 3},
     )
 
     # Check that the matching logic is now only run for unmatched asset movements
     with patch('rotkehlchen.tasks.events.find_asset_movement_matches', return_value=[]) as find_match_mock:  # noqa: E501
         match_asset_movements(database=database)
 
-    assert find_match_mock.call_count == 2
-    # With timestamp descending order, withdrawal3 (later) comes before withdrawal2
+    assert find_match_mock.call_count == 3
+    # Processed in order of descending timestamp: withdrawal3, withdrawal2, deposit1
     withdrawal3.identifier = 12
     assert find_match_mock.call_args_list[0].kwargs['asset_movement'] == withdrawal3
     withdrawal2.identifier = 9
     assert find_match_mock.call_args_list[1].kwargs['asset_movement'] == withdrawal2
+    deposit1.identifier = 1
+    assert find_match_mock.call_args_list[2].kwargs['asset_movement'] == deposit1
