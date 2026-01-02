@@ -1,6 +1,7 @@
 import pytest
 
 from rotkehlchen.assets.asset import Asset
+from rotkehlchen.assets.utils import get_evm_token
 from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
 from rotkehlchen.chain.evm.decoding.aura_finance.constants import CPT_AURA_FINANCE
@@ -11,7 +12,7 @@ from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.tests.unit.test_types import LEGACY_TESTS_INDEXER_ORDER
 from rotkehlchen.tests.utils.ethereum import get_decoded_events_of_transaction
-from rotkehlchen.types import Location, TimestampMS, deserialize_evm_tx_hash
+from rotkehlchen.types import ChainID, Location, TimestampMS, deserialize_evm_tx_hash
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
@@ -231,7 +232,19 @@ def test_aura_finance_lock_aura_ethereum(ethereum_inquirer, ethereum_accounts):
 @pytest.mark.parametrize('ethereum_accounts', [['0xB3af0E54426e48D230c97aE837F34345167BE1C6']])
 def test_aura_finance_booster_deposit_ethereum(ethereum_inquirer, ethereum_accounts):
     tx_hash = deserialize_evm_tx_hash('0x4ed0d517c29bfd7d202efb50e7f98fdf1acc78c7f6977b55b56c354efd8275d2')  # noqa: E501
+    assert get_evm_token(
+        evm_address=(pool_token_address := string_to_evm_address('0x4313428170c09ca81117a95f0418aefE3446d935')),  # noqa: E501
+        chain_id=ChainID.ETHEREUM,
+    ) is None  # pool token doesn't exist prior to decoding
     events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
+    assert (pool_token := get_evm_token(
+        evm_address=pool_token_address,
+        chain_id=ChainID.ETHEREUM,
+    )) is not None  # After decoding the pool token should have been added with proper protocol and underlying token  # noqa: E501
+    assert pool_token.protocol == CPT_AURA_FINANCE
+    assert pool_token.underlying_tokens is not None
+    assert len(pool_token.underlying_tokens) == 1
+    assert pool_token.underlying_tokens[0].address == string_to_evm_address('0xfbfaD5fa9E99081da6461F36f229B5cC88A64c63')  # noqa: E501
     user_address, timestamp, gas_str, approval_amount, deposit_amount, receive_amount = ethereum_accounts[0], TimestampMS(1732603247000), '0.004522784347764904', '3046599999999999952014.290938920480356746', '17520.54161498940427181', '17520.54161498940427181'  # noqa: E501
     expected_events = [
         EvmEvent(

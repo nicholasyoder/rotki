@@ -14,8 +14,6 @@ from rotkehlchen.chain.ethereum.modules.makerdao.cache import (
 )
 from rotkehlchen.chain.ethereum.modules.yearn.utils import query_yearn_vaults
 from rotkehlchen.chain.ethereum.utils import should_update_protocol_cache
-from rotkehlchen.chain.evm.decoding.aura_finance.constants import CHAIN_ID_TO_BOOSTER_ADDRESSES
-from rotkehlchen.chain.evm.decoding.aura_finance.utils import query_aura_pools
 from rotkehlchen.chain.evm.decoding.morpho.utils import (
     query_morpho_reward_distributors,
     query_morpho_vaults,
@@ -157,7 +155,6 @@ class TaskManager:
         self.query_morpho_vaults = query_morpho_vaults
         self.query_pendle_yield_tokens = query_pendle_yield_tokens
         self.query_morpho_reward_distributors = query_morpho_reward_distributors
-        self.query_aura_pools = query_aura_pools
         self.last_premium_status_check = ts_now()
         self.last_calendar_reminder_check = Timestamp(0)
         self.last_google_calendar_sync = Timestamp(0)
@@ -179,7 +176,6 @@ class TaskManager:
             self._maybe_update_snapshot_balances,
             self._maybe_update_yearn_vaults,
             self._maybe_update_morpho_cache,
-            self._maybe_update_aura_pools,
             self._maybe_detect_evm_accounts,
             self._maybe_update_ilk_cache,
             self._maybe_query_produced_blocks,
@@ -775,30 +771,6 @@ class TaskManager:
             msg_aggregator=self.msg_aggregator,
             from_ts=stale_from_ts,
         )]
-
-    def _maybe_update_aura_pools(self) -> Optional[list[gevent.Greenlet]]:
-        with self.database.conn.read_ctx() as cursor:
-            account_data = self.database.get_blockchain_accounts(cursor)
-            if (
-                len(account_data.get(SupportedBlockchain.ETHEREUM)) == 0 and
-                len(account_data.get(SupportedBlockchain.BASE)) == 0 and
-                len(account_data.get(SupportedBlockchain.OPTIMISM)) == 0 and
-                len(account_data.get(SupportedBlockchain.POLYGON_POS)) == 0 and
-                len(account_data.get(SupportedBlockchain.ARBITRUM_ONE)) == 0 and
-                len(account_data.get(SupportedBlockchain.GNOSIS)) == 0
-            ):
-                return None
-
-        return [self.greenlet_manager.spawn_and_track(
-                after_seconds=None,
-                task_name=f'Update Aura pools for {chain.to_name()}',
-                exception_is_error=False,
-                method=self.query_aura_pools,
-                evm_inquirer=self.chains_aggregator.get_evm_manager(chain).node_inquirer,  # type: ignore[arg-type]  # chain id is valid
-            )
-            for chain in CHAIN_ID_TO_BOOSTER_ADDRESSES
-            if should_update_protocol_cache(self.database, CacheType.AURA_POOLS, (str(chain.value),)) is True  # noqa: E501
-        ]
 
     def _maybe_check_data_updates(self) -> Optional[list[gevent.Greenlet]]:
         """

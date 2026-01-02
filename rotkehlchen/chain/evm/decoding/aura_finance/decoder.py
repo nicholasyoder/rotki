@@ -2,8 +2,10 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Final
 
+from rotkehlchen.assets.asset import UnderlyingToken
 from rotkehlchen.assets.utils import (
     asset_normalized_value,
+    get_or_create_evm_token,
     token_normalized_value_decimals,
 )
 from rotkehlchen.chain.decoding.types import CounterpartyDetails
@@ -15,7 +17,11 @@ from rotkehlchen.chain.evm.constants import (
     WITHDRAWN_TOPIC,
     ZERO_ADDRESS,
 )
-from rotkehlchen.chain.evm.decoding.aura_finance.constants import CPT_AURA_FINANCE
+from rotkehlchen.chain.evm.contracts import EvmContract
+from rotkehlchen.chain.evm.decoding.aura_finance.constants import (
+    AURA_BOOSTER_ABI,
+    CPT_AURA_FINANCE,
+)
 from rotkehlchen.chain.evm.decoding.balancer.constants import CPT_BALANCER_V2
 from rotkehlchen.chain.evm.decoding.constants import ERC20_OR_ERC721_TRANSFER
 from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
@@ -26,10 +32,14 @@ from rotkehlchen.chain.evm.decoding.structures import (
     EvmDecodingOutput,
 )
 from rotkehlchen.chain.evm.types import string_to_evm_address
+from rotkehlchen.constants.misc import ONE
+from rotkehlchen.errors.misc import InputError, NotERC20Conformant, RemoteError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.types import ChainID, ChecksumEvmAddress
+from rotkehlchen.serialization.deserialize import deserialize_evm_address
+from rotkehlchen.types import ChainID, ChecksumEvmAddress, TokenKind
 from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
@@ -75,6 +85,8 @@ class AuraFinanceCommonDecoder(EvmDecoderInterface):
         )
         self.claim_zap_address = claim_zap_address
         self.base_reward_tokens = base_reward_tokens
+        # Cache to avoid repeated contract calls for the same pool info during a decoding run
+        self.pool_info_cache: dict[int, Any] = {}
 
     def _decode_lock_aura(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decodes locking AURA events on Ethereum and Base (vlAURA)."""
@@ -299,19 +311,73 @@ class AuraFinanceCommonDecoder(EvmDecoderInterface):
             receive_note_suffix='from auraBAL vault',
         )
 
+    def _ensure_aura_tokens_exist(self, booster_address: ChecksumEvmAddress, pool_id: int) -> None:
+        """Ensure that the pool token and underlying token exist in the DB. Queries the pool info
+        for the given pool id from the booster contract and creates/edits the tokens with the
+        proper protocol. This is needed for pool token prices to be calculated correctly.
+        Temporarily caches the pool info to avoid repeated contract calls during a decoding run.
+        """
+        if (pool_info := self.pool_info_cache.get(pool_id)) is None:
+            try:
+                self.pool_info_cache[pool_id] = (pool_info := EvmContract(
+                    address=booster_address,
+                    abi=AURA_BOOSTER_ABI,
+                    deployed_block=0,  # unused in this context
+                ).call(
+                    node_inquirer=self.node_inquirer,
+                    method_name='poolInfo',
+                    arguments=[pool_id],
+                ))
+            except RemoteError as e:
+                log.error(
+                    f'Failed to get pool info for aura pool {pool_id} from {booster_address} on '
+                    f'{self.node_inquirer.chain_name} due to {e!s}.',
+                )
+                return
+
+        try:
+            get_or_create_evm_token(
+                userdb=self.base.database,
+                evm_address=deserialize_evm_address(pool_info[3]),
+                chain_id=self.node_inquirer.chain_id,
+                underlying_tokens=[UnderlyingToken(
+                    address=get_or_create_evm_token(
+                        userdb=self.base.database,
+                        chain_id=self.node_inquirer.chain_id,
+                        evm_address=deserialize_evm_address(pool_info[0]),
+                    ).evm_address,
+                    token_kind=TokenKind.ERC20,
+                    weight=ONE,
+                )],
+                protocol=CPT_AURA_FINANCE,
+            )
+        except (IndexError, DeserializationError, NotERC20Conformant, InputError) as e:
+            log.error(
+                f'Failed to create/edit the token for aura pool {pool_id} on '
+                f'{self.node_inquirer.chain_name} due to {e!s}.',
+            )
+
     def _decode_booster_event(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decodes booster deposit events."""
-        if context.tx_log.topics[0] == DEPOSITED_TOPIC:
+        if not (
+            (is_deposit := context.tx_log.topics[0] == DEPOSITED_TOPIC) or
+            context.tx_log.topics[0] == WITHDRAWN_TOPIC
+        ):
+            return DEFAULT_EVM_DECODING_OUTPUT
+
+        self._ensure_aura_tokens_exist(
+            booster_address=context.tx_log.address,
+            pool_id=int.from_bytes(context.tx_log.topics[2]),
+        )
+
+        if is_deposit:
             return self._decode_deposit_helper(
                 context=context,
                 deposit_note_suffix='into an Aura gauge',
                 receive_note_suffix='from an Aura gauge',
             )
-
-        if context.tx_log.topics[0] == WITHDRAWN_TOPIC:
+        else:
             return self._decode_withdraw(context=context)
-
-        return DEFAULT_EVM_DECODING_OUTPUT
 
     def addresses_to_decoders(self) -> dict[ChecksumEvmAddress, tuple[Any, ...]]:
         if self.node_inquirer.chain_id == ChainID.ETHEREUM:

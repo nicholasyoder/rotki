@@ -9,6 +9,7 @@ import requests
 from rotkehlchen.api.server import APIServer
 from rotkehlchen.constants.misc import USERDB_NAME, USERSDIR_NAME
 from rotkehlchen.db.settings import ROTKEHLCHEN_DB_VERSION
+from rotkehlchen.globaldb.utils import GLOBAL_DB_VERSION
 from rotkehlchen.tests.utils.api import (
     api_url_for,
     assert_error_response,
@@ -43,7 +44,7 @@ def test_query_db_info(
     response = requests.get(api_url_for(rotkehlchen_api_server, 'databaseinforesource'))
     result = assert_proper_sync_response_with_result(response)
     assert len(result) == 2
-    assert result['globaldb'] == {'globaldb_assets_version': 38, 'globaldb_schema_version': 14}
+    assert result['globaldb'] == {'globaldb_assets_version': 38, 'globaldb_schema_version': GLOBAL_DB_VERSION}  # noqa: E501
 
     if start_with_logged_in_user:
         userdb = result['userdb']

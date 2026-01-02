@@ -1332,7 +1332,6 @@ class CacheType(Enum):
     CURVE_LENDING_VAULTS = auto()
     CURVE_LENDING_VAULT_CONTROLLER = auto()
     CURVE_LENDING_VAULT_BORROWED_TOKEN = auto()
-    AURA_POOLS = auto()  # stores count of pools in db + chain_id (stringified)
     BALANCER_V1_GAUGES = auto()  # stores gauges + chain_id
     BALANCER_V2_GAUGES = auto()  # stores gauges + chain_id
     BALANCER_V3_GAUGES = auto()  # stores gauges + chain_id
@@ -1414,7 +1413,6 @@ UniqueCacheType = Literal[
     CacheType.CURVE_LENDING_VAULTS,
     CacheType.CURVE_LENDING_VAULT_CONTROLLER,
     CacheType.CURVE_LENDING_VAULT_BORROWED_TOKEN,
-    CacheType.AURA_POOLS,
     CacheType.CURVE_LENDING_VAULT_GAUGE,
     CacheType.CURVE_CRVUSD_COLLATERAL_TOKEN,
     CacheType.CURVE_CRVUSD_AMM,

@@ -51,6 +51,7 @@ from rotkehlchen.types import (
     Timestamp,
     TokenKind,
 )
+from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.misc import ts_now
 from rotkehlchen.utils.upgrades import UpgradeRecord
 
@@ -1458,6 +1459,41 @@ def test_upgrade_v13_v14(globaldb: GlobalDBHandler, messages_aggregator):
             ('0x67A78f23f3eF0eA2b63d6Fb9d75B493930e5A5Fb', 'balancer-v1'),
             ('0xa2ccad543FBE9332B87910BEABd941b86dD5F762', 'balancer-v2'),
         ]
+
+
+@pytest.mark.parametrize('globaldb_upgrades', [[]])
+@pytest.mark.parametrize('custom_globaldb', ['v14_global.db'])
+@pytest.mark.parametrize('target_globaldb_version', [14])
+@pytest.mark.parametrize('reload_user_assets', [False])
+def test_upgrade_v14_v15(
+        globaldb: GlobalDBHandler,
+        messages_aggregator: MessagesAggregator,
+) -> None:
+    """Test the global DB upgrade from v14 to v15"""
+    assert globaldb.get_setting_value('version', 0) == 14
+    with globaldb.conn.read_ctx() as cursor:
+        assert cursor.execute(
+            "SELECT key, value, last_queried_ts FROM unique_cache WHERE key LIKE 'AURA_POOLS%'",
+        ).fetchall() == [
+            ('AURA_POOLS8453', '29', 1767375960),
+            ('AURA_POOLS42161', '109', 1767375961),
+            ('AURA_POOLS1', '273', 1767375964),
+        ]
+
+    with ExitStack() as stack:
+        patch_for_globaldb_upgrade_to(stack, 15)
+        maybe_upgrade_globaldb(
+            connection=globaldb.conn,
+            global_dir=globaldb._data_directory / GLOBALDIR_NAME,  # type: ignore
+            db_filename=GLOBALDB_NAME,
+            msg_aggregator=messages_aggregator,
+        )
+
+    assert globaldb.get_setting_value('version', 0) == 15
+    with globaldb.conn.read_ctx() as cursor:
+        assert cursor.execute(
+            "SELECT COUNT(*) FROM unique_cache WHERE key LIKE 'AURA_POOLS%'",
+        ).fetchone()[0] == 0
 
 
 @pytest.mark.parametrize('custom_globaldb', ['v2_global.db'])
