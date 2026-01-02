@@ -6575,6 +6575,14 @@ class RestAPI:
                     assets=GlobalDBHandler.get_assets_in_same_collection(
                         identifier=asset_movement.asset.identifier,
                     ) if only_expected_assets else None,
+                    entry_types=IncludeExcludeFilterData(
+                        values=[  # Don't include eth staking events
+                            HistoryBaseEntryType.ETH_BLOCK_EVENT,
+                            HistoryBaseEntryType.ETH_DEPOSIT_EVENT,
+                            HistoryBaseEntryType.ETH_WITHDRAWAL_EVENT,
+                        ],
+                        operator='NOT IN',
+                    ),
                 ),
             )
 
