@@ -5982,23 +5982,26 @@ class RestAPI:
             from_timestamp: Timestamp,
             to_timestamp: Timestamp,
     ) -> Response:
-        try:
-            netvalue, missing_prices, last_event_id = HistoricalBalancesManager(self.rotkehlchen.data.db).get_historical_netvalue(  # noqa: E501
-                from_ts=from_timestamp,
-                to_ts=to_timestamp,
-            )
-        except DeserializationError as e:
-            return api_response(wrap_in_fail_result(str(e), status_code=HTTPStatus.INTERNAL_SERVER_ERROR))  # noqa: E501
-        except NotFoundError as e:
-            return api_response(wrap_in_fail_result(str(e), status_code=HTTPStatus.NOT_FOUND))
+        """Gets daily asset balances within a given time range.
 
-        result = {
-            'times': list(netvalue),
-            'missing_prices': missing_prices,
-            'values': [str(x) for x in netvalue.values()],
-        }
-        if last_event_id is not None:
-            result['last_group_identifier'] = last_event_id
+        The processing_required flag indicates whether unprocessed events exist.
+        Balance data is None when no processed data is available in the range.
+        """
+        processing_required, data = HistoricalBalancesManager(
+            db=self.rotkehlchen.data.db,
+        ).get_historical_netvalue(
+            from_ts=from_timestamp,
+            to_ts=to_timestamp,
+        )
+
+        result: dict[str, Any] = {'processing_required': processing_required}
+        if data is not None:
+            times, balances = data
+            result['times'] = times
+            result['values'] = [
+                {asset_id: str(amount) for asset_id, amount in day_balances.items()}
+                for day_balances in balances
+            ]
 
         return api_response(_wrap_in_ok_result(result=result))
 

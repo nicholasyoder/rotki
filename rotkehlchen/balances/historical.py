@@ -5,24 +5,25 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
+from rotkehlchen.accounting.constants import EVENT_CATEGORY_MAPPINGS
 from rotkehlchen.assets.asset import Asset
-from rotkehlchen.constants import DAY_IN_SECONDS, ONE, ZERO
-from rotkehlchen.db.filtering import (
-    HistoryEventFilterQuery,
-)
+from rotkehlchen.constants import DAY_IN_MILLISECONDS, ZERO
+from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.utils import get_query_chunks
 from rotkehlchen.errors.misc import NotFoundError
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
-from rotkehlchen.globaldb.handler import GlobalDBHandler
-from rotkehlchen.history.events.structures.base import HistoryEvent
+from rotkehlchen.history.events.structures.base import (
+    HistoryEvent,
+    get_event_direction,
+)
 from rotkehlchen.history.events.structures.types import (
     EventDirection,
     HistoryEventSubType,
 )
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import EventMetricKey, Timestamp, TimestampMS
-from rotkehlchen.utils.misc import timestamp_to_daystart_timestamp, ts_ms_to_sec, ts_sec_to_ms
+from rotkehlchen.utils.misc import ts_ms_to_sec, ts_sec_to_ms
 
 if TYPE_CHECKING:
     from rotkehlchen.assets.asset import EvmToken
@@ -61,7 +62,7 @@ class HistoricalBalancesManager:
                     SELECT he.asset, em.metric_value, MAX(he.timestamp + he.sequence_index)
                     FROM event_metrics em
                     INNER JOIN history_events he ON em.event_identifier = he.identifier
-                    WHERE em.metric_key = ? AND he.timestamp <= ?
+                    WHERE he.ignored = 0 AND em.metric_key = ? AND he.timestamp <= ?
                     GROUP BY he.location, he.location_label, em.protocol, he.asset
                 ) GROUP BY asset
                 """,
@@ -70,14 +71,15 @@ class HistoricalBalancesManager:
             for asset_id, total in cursor:
                 asset_balances_by_id[asset_id] = FVal(total)
 
-        if len(asset_balances_by_id) == 0:
-            needs_processing = self._has_unprocessed_events(
-                where_clause='timestamp <= ?',
-                bindings=[timestamp_ms],
-            )
-            return needs_processing, None
+        data = {
+            Asset(asset_id): amount
+            for asset_id, amount in asset_balances_by_id.items()
+        } if len(asset_balances_by_id) != 0 else None
 
-        return False, {Asset(asset_id): amount for asset_id, amount in asset_balances_by_id.items()}  # noqa: E501
+        return self._has_unprocessed_events(
+            where_clause='timestamp <= ?',
+            bindings=[timestamp_ms],
+        ), data
 
     def get_erc721_tokens_balances(
             self,
@@ -118,7 +120,7 @@ class HistoricalBalancesManager:
         - processing_required: True if events exist but haven't been processed yet
         - balance: Amount as FVal, or None if no data available
         """
-        timestamp_ms = ts_sec_to_ms(timestamp)
+        data, timestamp_ms = None, ts_sec_to_ms(timestamp)
         with self.db.conn.read_ctx() as cursor:
             if (total_amount := cursor.execute(
                 """SELECT SUM(metric_value) FROM (SELECT em.metric_value, MAX(he.timestamp + he.sequence_index)
@@ -128,14 +130,13 @@ class HistoricalBalancesManager:
                     GROUP BY he.location, he.location_label, em.protocol
                 )""",  # noqa: E501
                 (EventMetricKey.BALANCE.serialize(), timestamp_ms, asset.identifier),
-            ).fetchone()[0]) is None:
-                needs_processing = self._has_unprocessed_events(
-                    where_clause='asset = ? AND timestamp <= ?',
-                    bindings=[asset.identifier, timestamp_ms],
-                )
-                return needs_processing, None
+            ).fetchone()[0]) is not None:
+                data = FVal(total_amount)
 
-        return False, FVal(total_amount)
+        return self._has_unprocessed_events(
+            where_clause='asset = ? AND timestamp <= ?',
+            bindings=[asset.identifier, timestamp_ms],
+        ), data
 
     def get_assets_amounts(
             self,
@@ -189,112 +190,123 @@ class HistoricalBalancesManager:
                 )).height > 0:
                     df.vstack(chunk_df, in_place=True)
 
-        if df.height == 0:
-            for chunk, placeholders in get_query_chunks(data=asset_ids):
-                if self._has_unprocessed_events(
-                    where_clause=f'asset IN ({placeholders}) AND timestamp >= ? AND timestamp <= ?',  # noqa: E501
-                    bindings=[*chunk, from_ts_ms, to_ts_ms],
-                ):
-                    return True, None
-            return False, None
+        data = None
+        if df.height != 0:
+            result_df = (
+                df.rechunk().sort('sort_key')
+                .with_columns(pl.col('delta').cum_sum().alias('amount'))
+                .select(['timestamp', 'amount'])
+            )
+            timestamps = result_df['timestamp'].to_list()
+            amounts = result_df['amount'].to_list()
+            data = {
+                ts_ms_to_sec(ts): FVal(amt)
+                for ts, amt in zip(timestamps, amounts, strict=True)
+            }
 
-        result_df = (
-            df.rechunk().sort('sort_key')
-            .with_columns(pl.col('delta').cum_sum().alias('amount'))
-            .select(['timestamp', 'amount'])
-        )
-
-        timestamps = result_df['timestamp'].to_list()
-        amounts = result_df['amount'].to_list()
-        return False, {
-            ts_ms_to_sec(ts): FVal(amt)
-            for ts, amt in zip(timestamps, amounts, strict=True)
-        }
+        for chunk, placeholders in get_query_chunks(data=asset_ids):
+            if self._has_unprocessed_events(
+                where_clause=f'asset IN ({placeholders}) AND timestamp >= ? AND timestamp <= ?',
+                bindings=[*chunk, from_ts_ms, to_ts_ms],
+            ):
+                return True, data
+        return False, data
 
     def get_historical_netvalue(
             self,
             from_ts: Timestamp,
             to_ts: Timestamp,
-    ) -> tuple[dict[Timestamp, FVal], list[tuple[str, Timestamp]], tuple[str | int | None, str | None] | None]:  # noqa: E501
-        """Calculates historical net worth per day within the given time range.
+    ) -> tuple[bool, tuple[list[Timestamp], list[dict[str, FVal]]] | None]:
+        """Returns daily snapshots of asset balances between the given timestamps.
 
-        Uses asset balances per day combined with historical prices to calculate
-        the total net worth in the user's profit currency for each day. Stops calculation
-        if negative balance would be created for any asset.
+        Computes balance deltas using SQL LAG() over location/protocol buckets, then
+        accumulates them per asset with polars. Days without activity for an asset
+        carry forward the last known balance.
 
-        May raise:
-            - NotFoundError if no events exist in the specified time period.
-            - DeserializationError if there is a problem deserializing an event from DB.
-
-        Returns:
-            - A mapping of timestamps to net worth in main currency for each day
-            - A list of (asset id, timestamp) tuples where price data was missing
-            - A tuple of (identifier, group_identifier) for the event that caused a negative
-              balance if any, else None.
+        Returns a tuple of a boolean representing whether processing is still needed,
+        and either None or a pair of day timestamps and their corresponding balances.
         """
-        events, main_currency = self._get_events_and_currency(from_ts=from_ts, to_ts=to_ts)
-        if len(events) == 0:
-            raise NotFoundError(f'No historical data found within {from_ts=} and {to_ts=}.')
+        from_ts_ms, to_ts_ms = ts_sec_to_ms(from_ts), ts_sec_to_ms(to_ts)
+        with self.db.conn.read_ctx() as cursor:
+            df = pl.DataFrame(
+                cursor.execute(
+                    """
+                    WITH all_events AS (
+                        SELECT he.timestamp, he.asset, CAST(em.metric_value AS REAL) as balance,
+                               he.timestamp + he.sequence_index as sort_key,
+                               he.location || COALESCE(he.location_label, '') || COALESCE(em.protocol, '') || he.asset as bucket
+                        FROM event_metrics em
+                        INNER JOIN history_events he ON em.event_identifier = he.identifier
+                        WHERE em.metric_key = ? AND he.ignored = 0
+                    ), with_delta AS (
+                        SELECT timestamp, sort_key, asset,
+                               balance - COALESCE(LAG(balance) OVER (PARTITION BY bucket ORDER BY sort_key), 0) as delta
+                        FROM all_events
+                    )
+                    SELECT timestamp, sort_key, asset, delta FROM with_delta
+                    WHERE timestamp >= ? AND timestamp <= ?
+                    """,  # noqa: E501
+                    (EventMetricKey.BALANCE.serialize(), from_ts_ms, to_ts_ms),
+                ),
+                schema={'timestamp': pl.Int64, 'sort_key': pl.Int64, 'asset': pl.String, 'delta': pl.Float64},  # noqa: E501
+                orient='row',
+            )
 
-        negative_balance_data = None
-        current_balances: dict[Asset, FVal] = defaultdict(FVal)
-        daily_balances: dict[Timestamp, dict[Asset, FVal]] = {}
-        current_day = timestamp_to_daystart_timestamp(ts_ms_to_sec(events[0].timestamp))
-        daily_balances[current_day] = current_balances.copy()
-        for event in events:
-            if (day_ts := timestamp_to_daystart_timestamp(ts_ms_to_sec(event.timestamp))) > current_day:  # noqa: E501
-                daily_balances[current_day] = current_balances.copy()
-                current_day = day_ts
-
-            if (negative_balance_data := self._update_balances(event=event, current_balances=current_balances)) is not None:  # noqa: E501
-                break
-        else:  # no negative balance happened so update the last day's balance.
-            daily_balances[current_day] = current_balances.copy()
-
-        # For each day, calculate net worth by multiplying non-zero asset
-        # balances with their prices. Store any missing price data in missing_price_points.
-        net_worth_per_day: dict[Timestamp, FVal] = {}
-        missing_price_points: list[tuple[str, Timestamp]] = []
-        for day_ts, asset_balances in daily_balances.items():
-            assets = [
-                asset for asset, balance in asset_balances.items()
-                if balance != ZERO
+        data = None
+        if df.height != 0:
+            # The query returns balance deltas (changes) for each event.
+            # Sum them up in order to reconstruct the running balance for each asset,
+            # then keep only the last balance of each day (the end-of-day snapshot).
+            pivoted = (
+                df.rechunk()
+                .sort('sort_key')
+                .with_columns(
+                    pl.col('delta').cum_sum().over('asset').alias('balance'),
+                    (pl.col('timestamp') // DAY_IN_MILLISECONDS * DAY_IN_MILLISECONDS).alias('day'),  # noqa: E501
+                )
+                .group_by(['day', 'asset'])
+                .agg(pl.col('balance').last())
+                .sort('day')
+                # Pivot so each asset becomes a column. This allows forward-fill to
+                # carry each asset's balance independently to days without activity.
+                .pivot(on='asset', index='day', values='balance')
+                .fill_null(strategy='forward')
+            )
+            timestamps = [ts_ms_to_sec(d) for d in pivoted['day'].to_list()]
+            balances_per_day = [
+                {asset: FVal(val) for asset, val in row.items() if val is not None}
+                for row in pivoted.select(pl.exclude('day')).iter_rows(named=True)
             ]
-            if len(assets) == 0:
-                continue
+            data = (timestamps, balances_per_day)
 
-            prices, missing = self._get_prices(
-                timestamp=day_ts,
-                assets=assets,
-                main_currency=main_currency,
-            )
-            missing_price_points.extend(missing)
-
-            day_total = sum(
-                (
-                    balance * prices[asset]
-                    for asset, balance in asset_balances.items()
-                    if asset in prices and balance != ZERO
-                 ),
-                ZERO,
-            )
-            net_worth_per_day[day_ts] = day_total
-
-        return net_worth_per_day, missing_price_points, negative_balance_data
+        return self._has_unprocessed_events(
+            where_clause='timestamp >= ? AND timestamp <= ?',
+            bindings=[from_ts_ms, to_ts_ms],
+        ), data
 
     def _has_unprocessed_events(
             self,
             where_clause: str,
             bindings: Sequence[str | TimestampMS],
     ) -> bool:
-        """Check if unprocessed history events exist matching the given conditions.
+        """Return True if events that should have metrics are missing them."""
+        neutral_pairs: list[tuple[str, str]] = []
+        for event_type, subtypes in EVENT_CATEGORY_MAPPINGS.items():
+            neutral_pairs.extend(
+                (event_type.serialize(), subtype.serialize())
+                for subtype in subtypes
+                if get_event_direction(event_type, subtype) == EventDirection.NEUTRAL
+            )
 
-        Used to distinguish between "events exist but need processing"
-        vs "no events in this time range at all" when no metrics are found.
-        """
-        query = f'SELECT 1 FROM history_events WHERE {where_clause} LIMIT 1'
+        exclusions = ' OR '.join(['(he.type = ? AND he.subtype = ?)'] * len(neutral_pairs))
         with self.db.conn.read_ctx() as cursor:
-            return cursor.execute(query, bindings).fetchone() is not None
+            return cursor.execute(
+                f"""SELECT 1 FROM history_events he
+                WHERE {where_clause} AND he.ignored = 0 AND NOT ({exclusions})
+                AND NOT EXISTS (SELECT 1 FROM event_metrics em WHERE em.event_identifier = he.identifier) LIMIT 1
+                """,  # noqa: E501
+                [*bindings, *[val for pair in neutral_pairs for val in pair]],
+            ).fetchone() is not None
 
     def _get_events_and_currency(
             self,
@@ -343,52 +355,6 @@ class HistoricalBalancesManager:
                     ) from e
 
         return events, main_currency
-
-    @staticmethod
-    def _get_prices(
-            assets: list[Asset],
-            main_currency: Asset,
-            timestamp: Timestamp,
-    ) -> tuple[dict[Asset, FVal], list[tuple[str, Timestamp]]]:
-        """Gets cached historical prices for multiple assets at once.
-
-        Returns:
-            - A mapping of asset to price in main currency
-            - A list of (asset_id, timestamp) tuples for missing prices
-        """
-        prices: dict[Asset, FVal] = {}
-        missing_prices: list[tuple[str, Timestamp]] = []
-        querystr = """
-        SELECT ph1.from_asset, ph1.price
-        FROM price_history AS ph1
-        LEFT JOIN price_history AS ph2
-            ON ph1.from_asset = ph2.from_asset
-            AND ABS(ph1.timestamp - ?) > ABS(ph2.timestamp - ?)
-        WHERE ph1.from_asset IN ({})
-            AND ph1.to_asset = ?
-            AND ph1.timestamp BETWEEN ? AND ?
-            AND ph2.from_asset IS NULL;
-        """.format(','.join('?' * len(assets)))
-        bindings = [
-            timestamp,
-            timestamp,
-            *(asset.identifier for asset in assets),
-            main_currency.identifier,
-            timestamp - DAY_IN_SECONDS,
-            timestamp + DAY_IN_SECONDS,
-        ]
-
-        with GlobalDBHandler().conn.read_ctx() as cursor:
-            found_prices = {row[0]: FVal(row[1]) for row in cursor.execute(querystr, bindings)}
-            for asset in assets:
-                if asset.identifier in found_prices:
-                    prices[asset] = found_prices[asset.identifier]
-                elif asset == main_currency:
-                    prices[asset] = ONE
-                else:
-                    missing_prices.append((asset.identifier, timestamp))
-
-        return prices, missing_prices
 
     @staticmethod
     def _update_balances(

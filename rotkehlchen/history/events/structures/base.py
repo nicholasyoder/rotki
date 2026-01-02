@@ -42,6 +42,32 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
+def get_event_direction(
+        event_type: HistoryEventType,
+        event_subtype: HistoryEventSubType,
+        location: Location | None = None,
+) -> EventDirection | None:
+    """
+    Get direction based on type, subtype.
+
+    If the combination of type/subtype is invalid return `None`.
+    """
+    if event_type == HistoryEventType.INFORMATIONAL:
+        return EventDirection.NEUTRAL
+
+    try:
+        category_mapping = EVENT_CATEGORY_MAPPINGS[event_type][event_subtype]
+        if (
+            location is not None and
+            EXCHANGE in category_mapping and
+            location in ALL_SUPPORTED_EXCHANGES
+        ):
+            return category_mapping[EXCHANGE].direction
+        return category_mapping[DEFAULT].direction
+    except KeyError:
+        return None
+
+
 HISTORY_EVENT_DB_TUPLE_WRITE = tuple[
     int,            # entry type
     str,            # group_identifier
@@ -353,24 +379,7 @@ class HistoryBaseEntry(AccountingEventMixin, ABC, Generic[ExtraDataType]):
         return result
 
     def maybe_get_direction(self) -> EventDirection | None:
-        """
-        Get direction based on type, subtype.
-
-        If the combination of type/subtype is invalid return `None`.
-        """
-        if self.event_type == HistoryEventType.INFORMATIONAL:
-            return EventDirection.NEUTRAL
-
-        try:
-            category_mapping = EVENT_CATEGORY_MAPPINGS[self.event_type][self.event_subtype]
-            if EXCHANGE in category_mapping and self.location in ALL_SUPPORTED_EXCHANGES:
-                return category_mapping[EXCHANGE].direction
-
-            # else
-            return category_mapping[DEFAULT].direction
-
-        except KeyError:
-            return None
+        return get_event_direction(self.event_type, self.event_subtype, self.location)
 
     @classmethod
     def _deserialize_base_history_data(cls, data: dict[str, Any]) -> HistoryBaseEntryData:

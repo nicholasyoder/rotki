@@ -14252,12 +14252,14 @@ Historical Balance Queries
 
   .. http:post:: /api/(version)/balances/historical/netvalue
 
-      Gets historical net worth values within a given time range, calculated by combining historical balances
-      with historical prices in the user's profit currency.
+      Retrieves daily asset balances within a specified time range.
+
+      Balances are aggregated per day, with timestamps normalized to midnight UTC.
+      For queries within a single day, one entry is returned for that day.
 
       .. note::
-          If price data is missing for any asset at any timestamp, those missing data points will be
-          returned separately in the response.
+          Returns raw asset balances. Price conversion and net value calculation
+          are handled by the frontend.
 
       **Example Request:**
 
@@ -14285,26 +14287,24 @@ Historical Balance Queries
           {
             "message": "",
             "result": {
+              "processing_required": false,
               "times": [1672531200, 1673308800, 1674518400],
-              "values": ["50000.5", "48750.25", "52100.75"],
-              "last_group_identifier": [1, "10x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f"],
-              "missing_prices": [
-                ["BTC", 1672531200],
-                ["ETH", 1674518400]
+              "values": [
+                {"BTC": "2.0", "ETH": "10.0", "EUR": "20000"},
+                {"BTC": "2.2", "ETH": "10.0", "EUR": "16800"},
+                {"BTC": "1.7", "ETH": "9.8", "EUR": "17040"}
               ]
             },
             "status_code": 200
           }
 
-        :resjson list[integer] times: Timestamps at which net worth was calculated
-        :resjson list[string] values: Net worth value at each corresponding timestamp in user's profit currency
-        :resjson list last_group_identifier: (Optional) A list containing [identifier, group_identifier] of the event that caused the negative balance.
-        :resjson list[list] missing_prices: List of [asset_identifier, timestamp] pairs where price data was missing
-        :statuscode 200: Historical net worth values returned
+        :resjson bool processing_required: True if events exist but haven't been processed yet. False otherwise.
+        :resjson list[integer] times: Timestamps (day start) at which balances were calculated. Only present when data is available.
+        :resjson list[object] values: Asset balances at each corresponding timestamp. Each object maps asset identifiers to their balance amounts. Only present when data is available.
+        :statuscode 200: Historical balances returned
         :statuscode 400: Malformed query
         :statuscode 401: User is not logged in
         :statuscode 403: User does not have premium access
-        :statuscode 404: No historical data found in the given time range
         :statuscode 500: Internal Rotki error
 
   .. http:post:: /api/(version)/balances/historical/asset/prices
