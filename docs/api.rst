@@ -6391,6 +6391,43 @@ Match exchange asset movements with onchain events
    :statuscode 409: No user is logged in or failure
    :statuscode 500: Internal rotki error
 
+.. http:delete:: /api/(version)/history/events/match/asset_movements
+
+   Unlinks matched asset movements, or resets the asset movement to being simply unmatched if the asset movement is marked as having no corresponding event.
+
+   **Example Request**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      DELETE /api/1/history/events/match/asset_movements HTTP/1.1
+      Host: localhost:5042
+      Content-Type: application/json;charset=UTF-8
+
+      {
+          "asset_movement": 123
+      }
+
+   :reqjson int asset_movement: DB identifier of the asset movement to unlink
+
+   **Example Response**:
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+          "result": true,
+          "message": ""
+      }
+
+   :resjson bool result: A boolean for success or failure
+   :resjson str message: Error message if any errors occurred.
+   :statuscode 200: Events unlinked successfully
+   :statuscode 400: Provided JSON is in some way malformed
+   :statuscode 409: No user is logged in or failure.
+   :statuscode 500: Internal rotki error
+
 Querying messages to show to the user
 =====================================
 
