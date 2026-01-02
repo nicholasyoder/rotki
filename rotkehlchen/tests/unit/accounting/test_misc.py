@@ -1,4 +1,5 @@
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
@@ -8,6 +9,7 @@ from rotkehlchen.accounting.structures.processed_event import ProcessedAccountin
 from rotkehlchen.constants import ONE, ZERO
 from rotkehlchen.constants.assets import A_ETH, A_ETH2, A_EUR, A_KFEE, A_USD, A_USDT
 from rotkehlchen.db.history_events import DBHistoryEvents
+from rotkehlchen.errors.price import NoPriceForGivenTimestamp
 from rotkehlchen.exchanges.data_structures import MarginPosition
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.asset_movement import AssetMovement
@@ -394,3 +396,52 @@ def test_deposit_asset_is_neutral(rotkehlchen_api_server: 'APIServer') -> None:
     assert len(used_acquisitions := rotki.accountant.pots[0].cost_basis.get_events(asset=A_ETH).used_acquisitions) == 1  # noqa: E501
     assert used_acquisitions[0].amount == eth_amount
     assert used_acquisitions[0].timestamp == ts_ms_to_sec(acquisition_ts)
+
+
+@pytest.mark.parametrize('accounting_initialize_parameters', [True])
+def test_get_prices_for_swap_fiat_price_unavailable(accountant: 'Accountant') -> None:
+    """Test that if a fiat asset's price query fails, get_prices_for_swap handles
+    it gracefully instead of crashing.
+
+    Regression test for https://github.com/rotki/rotki/issues/11267
+    """
+    pot, ts = accountant.pots[0], Timestamp(1609537953)
+    eth_price, call_count = Price(FVal('598.26')), 0
+
+    def mock_get_rate(asset, timestamp):
+        """Mock price fetcher that simulates failures based on call_count.
+
+        - call_count 0-1: Fails for EUR (fiat), succeeds for ETH
+        - call_count 2: Fails for all assets (simulates complete price unavailability)
+        - call_count 3+: Succeeds for all assets
+        """
+        if call_count < 2 and asset == A_EUR:
+            raise NoPriceForGivenTimestamp(
+                from_asset=A_EUR,
+                to_asset=pot.profit_currency,
+                time=timestamp,
+            )
+        if call_count == 2:
+            raise NoPriceForGivenTimestamp(
+                from_asset=asset,
+                to_asset=pot.profit_currency,
+                time=timestamp,
+            )
+        return eth_price
+
+    for amount_in, asset_in, amount_out, asset_out, expected_none_result in (
+        (ONE, A_ETH, FVal('598.26'), A_EUR, False),
+        (FVal('598.26'), A_EUR, ONE, A_ETH, False),
+        (ONE, A_ETH, FVal('598.26'), A_EUR, True),
+    ):
+        with patch.object(pot, 'get_rate_in_profit_currency', side_effect=mock_get_rate):
+            result = pot.get_prices_for_swap(
+                timestamp=ts,
+                amount_in=amount_in,
+                asset_in=asset_in,
+                amount_out=amount_out,
+                asset_out=asset_out,
+                fees_info=[],
+            )
+        assert (result is None) == expected_none_result
+        call_count += 1

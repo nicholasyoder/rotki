@@ -416,9 +416,9 @@ class AccountingPot(CustomizableDateMixin):
 
         # Determine whether to use `out_price` or `in_price` for calculations
         price_to_use: Literal['in', 'out']
-        if asset_out.is_fiat() and asset_out is not None:
+        if asset_out.is_fiat() and out_price is not None:
             price_to_use = 'out'  # Use `out_price` if `asset_out` is fiat
-        elif asset_in.is_fiat() and asset_in is not None:
+        elif asset_in.is_fiat() and in_price is not None:
             price_to_use = 'in'  # Use `in_price` if `asset_in` is fiat
         elif out_price is not None:
             price_to_use = 'out'  # Prefer `out_price` over `in_price`
