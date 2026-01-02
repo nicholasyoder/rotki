@@ -4095,6 +4095,7 @@ class RestAPI:
     @staticmethod
     def _serialize_and_group_history_events(
             events: list['HistoryBaseEntry'],
+            aggregate_by_group_ids: bool,
             event_accounting_rule_statuses: list[EventAccountingRuleStatus],
             grouped_events_nums: list[int | None],
             customized_event_ids: list[int],
@@ -4103,11 +4104,15 @@ class RestAPI:
             joined_group_ids: dict[str, str],
     ) -> list[dict[str, Any] | list[dict[str, Any]]]:
         """Serialize and group history events for the api.
-        Groups evm & solana swap and multi trade events into sub-lists. Uses the order defined in
-        EVENT_GROUPING_ORDER to decide which events belong in which group.
+        Groups onchain swaps, multi trades, and matched asset movement events into sub-lists.
+        Uses the order defined in EVENT_GROUPING_ORDER as well as some custom logic for matched
+        asset movements to decide which events belong in which group.
 
         Args:
         - events: list of events to serialize and group
+        - aggregate_by_group_ids: flag indicating whether the current request is aggregating
+           by group ids. When this is true, no sublist grouping is needed since there is
+           only a single event per group id.
         - event_accounting_rule_statuses and grouped_events_nums: lists with each element
            corresponding to an event.
         - customized_event_ids, ignored_ids, and hidden_event_ids: arguments applying to all events
@@ -4120,7 +4125,9 @@ class RestAPI:
         """
         entries: list[dict[str, Any] | list[dict[str, Any]]] = []
         current_group: list[dict[str, Any]] = []
+        current_asset_movement_group_id: str | None = None
         last_subtype_index: int | None = None
+        already_grouped_event_count = 0
         for event, event_accounting_rule_status, grouped_events_num in zip(
             events,
             event_accounting_rule_statuses,
@@ -4134,11 +4141,45 @@ class RestAPI:
                 event_accounting_rule_status=event_accounting_rule_status,
                 grouped_events_num=grouped_events_num,
             )
+            if aggregate_by_group_ids:
+                # no need to group into lists when aggregating by group_identifier since only
+                # a single event is returned for each group_identifier
+                entries.append(serialized)
+                continue
+
             if (replacement_group_id := joined_group_ids.get(event.group_identifier)) is not None:
                 serialized['entry']['group_identifier'] = replacement_group_id
                 serialized['entry']['actual_group_identifier'] = event.group_identifier
 
-            if event.entry_type in (HistoryBaseEntryType.EVM_SWAP_EVENT, HistoryBaseEntryType.SOLANA_SWAP_EVENT):  # noqa: E501
+            if (
+                replacement_group_id is not None and
+                event.group_identifier != current_asset_movement_group_id and
+                ((  # this is the matched event
+                    event.extra_data is not None and
+                    (current_asset_movement_group_id := event.extra_data.get('matched_asset_movement', {}).get('group_identifier')) is not None  # noqa: E501
+                ) or (  # or the matched event was an asset movement and this is its fee event
+                    event.entry_type == HistoryBaseEntryType.ASSET_MOVEMENT_EVENT and
+                    event.event_subtype == HistoryEventSubType.FEE
+                ))
+            ):  # This event is part of the matched event for an asset movement.
+                if len(current_group) != already_grouped_event_count:
+                    # This is the beginning of an asset movement group coming immediately after
+                    # another asset movement group. Add the current group to entries and reset
+                    # to begin a new group.
+                    entries.append(current_group)
+                    current_group, already_grouped_event_count, last_subtype_index = [], 0, None
+
+                # Append to current_group and increment already_grouped_event_count so the logic
+                # below using the EVENT_GROUPING_ORDER works correctly for the asset movement.
+                current_group.append(serialized)
+                already_grouped_event_count += 1
+            elif (event.entry_type in (
+                HistoryBaseEntryType.EVM_SWAP_EVENT,
+                HistoryBaseEntryType.SOLANA_SWAP_EVENT,
+            ) or (
+                event.group_identifier == current_asset_movement_group_id and
+                event.entry_type == HistoryBaseEntryType.ASSET_MOVEMENT_EVENT
+            )):
                 if (event_subtype_index := EVENT_GROUPING_ORDER[event.event_type].get(event.event_subtype)) is None:  # noqa: E501
                     log.error(
                         'Unable to determine group order for event type/subtype '
@@ -4147,7 +4188,7 @@ class RestAPI:
                     event_subtype_index = 0
 
                 if (
-                    len(current_group) == 0 or
+                    len(current_group) == already_grouped_event_count or
                     (last_subtype_index is not None and event_subtype_index >= last_subtype_index)
                 ):
                     current_group.append(serialized)
@@ -4155,12 +4196,15 @@ class RestAPI:
                     if len(current_group) > 0:
                         entries.append(current_group)
                     current_group = [serialized]
+                    already_grouped_event_count = 0
+                    current_asset_movement_group_id = None
 
                 last_subtype_index = event_subtype_index
             else:  # Non-groupable event
                 if len(current_group) > 0:
                     entries.append(current_group)
-                    current_group, last_subtype_index = [], None
+                    current_group, already_grouped_event_count = [], 0
+                    last_subtype_index = current_asset_movement_group_id = None
                 entries.append(serialized)
 
         if len(current_group) > 0:  # Append any remaining group
@@ -4223,6 +4267,7 @@ class RestAPI:
         result = {
             'entries': self._serialize_and_group_history_events(
                 events=events,
+                aggregate_by_group_ids=aggregate_by_group_ids,
                 event_accounting_rule_statuses=query_missing_accounting_rules(
                     db=self.rotkehlchen.data.db,
                     accounting_pot=accountant_pot,
