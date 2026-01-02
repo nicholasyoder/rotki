@@ -316,30 +316,71 @@ pub async fn get_icon(
     asset_id: &str,
     match_header: Option<String>,
     asset_path: PathBuf,
+    globaldb: &globaldb::GlobalDB,
 ) -> (
     StatusCode,
     Option<[(&'static str, &'static str); 2]>,
     Option<Bytes>,
 ) {
-    match find_icon(&data_dir, &asset_path, asset_id).await {
-        Some(found_path) => match retrieve_icon_bytes(found_path).await {
-            Some((bytes, extension)) => {
-                let headers = match get_headers(&extension) {
-                    Err(FileTypeError::UnsupportedFileType) => {
-                        return (StatusCode::NOT_FOUND, None, None);
-                    }
-                    Ok(headers) => headers,
-                };
-                let hash = format!("{:x}", md5::compute(&bytes));
-                if match_header.as_ref().is_none_or(|h| hash != *h) {
-                    return (StatusCode::OK, Some(headers), Some(bytes));
-                }
-                (StatusCode::NOT_MODIFIED, Some(headers), None)
-            }
-            _ => (StatusCode::NOT_FOUND, None, None),
-        },
-        _ => (StatusCode::NOT_FOUND, None, None),
+    let Some((bytes, extension)) = resolve_icon_bytes(
+        data_dir.as_path(),
+        asset_id,
+        &asset_path,
+        globaldb,
+    )
+    .await else {
+        return (StatusCode::NOT_FOUND, None, None);
+    };
+    let headers = match get_headers(&extension) {
+        Err(FileTypeError::UnsupportedFileType) => {
+            return (StatusCode::NOT_FOUND, None, None);
+        }
+        Ok(headers) => headers,
+    };
+    let hash = format!("{:x}", md5::compute(&bytes));
+    if match_header.as_ref().is_none_or(|h| hash != *h) {
+        return (StatusCode::OK, Some(headers), Some(bytes));
     }
+    (StatusCode::NOT_MODIFIED, Some(headers), None)
+}
+
+async fn resolve_icon_bytes(
+    data_dir: &Path,
+    asset_id: &str,
+    asset_path: &Path,
+    globaldb: &globaldb::GlobalDB,
+) -> Option<(Bytes, String)> {
+    if let Some(result) = read_icon_bytes(data_dir, asset_path, asset_id).await {
+        if !result.0.is_empty() {
+            return Some(result);
+        }
+    }
+
+    let underlying_id = match globaldb
+        .get_single_underlying_token_with_protocol(asset_id)
+        .await
+    {
+        Ok(Some(underlying_id)) => underlying_id,
+        Ok(None) => return None,
+        Err(e) => {
+            error!(
+                "Failed to query underlying token for {} due to {}",
+                asset_id, e
+            );
+            return None;
+        }
+    };
+    let underlying_path = get_asset_path(&underlying_id, data_dir, false, globaldb).await;
+    read_icon_bytes(data_dir, &underlying_path, &underlying_id).await
+}
+
+async fn read_icon_bytes(
+    data_dir: &Path,
+    asset_path: &Path,
+    asset_id: &str,
+) -> Option<(Bytes, String)> {
+    let found_path = find_icon(data_dir, asset_path, asset_id).await?;
+    retrieve_icon_bytes(found_path).await
 }
 
 /// Writes icon bytes to a file with the specified extension and logs any errors.

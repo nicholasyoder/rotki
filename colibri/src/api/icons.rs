@@ -54,6 +54,7 @@ pub async fn get_icon(
         &payload.asset_id,
         payload.match_header,
         path,
+        state.globaldb.as_ref(),
     )
     .await
     {
@@ -86,72 +87,80 @@ pub async fn check_icon(
     )
     .await;
 
-    match icons::find_icon(state.data_dir.as_path(), &path, &payload.asset_id).await {
-        Some(found_path) => {
-            match fs::metadata(found_path.clone()).await {
-                Ok(metadata) => {
-                    // if file is non-empty then everything is okey
-                    if metadata.len() > 0 {
-                        return match payload.force_refresh {
-                            // check if we need to repull it
-                            Some(true) => {
-                                if let Err(error) = fs::remove_file(found_path).await {
-                                    error!(
-                                        "Failed to delete file {} when force refresh was set due to {}",
-                                        path.display(),
-                                        error,
-                                    );
-                                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-                                };
-                                query_icon_from_payload(state, payload, path)
-                                    .await
-                                    .into_response()
-                            }
-                            None | Some(false) => StatusCode::OK.into_response(),
-                        };
-                    }
-
-                    // check when was the last time that the file got updated
-                    if let Ok(time) = metadata.modified() {
-                        if let Ok(duration) = SystemTime::now().duration_since(time) {
-                            if duration.as_secs() < MAX_ICON_RECHECK_PERIOD {
-                                // It was queried recently so don't try again
-                                StatusCode::NOT_FOUND.into_response()
-                            } else {
-                                let _ = fs::remove_file(found_path).await;
-                                // Since we tried long ago enough retry again
-                                tokio::spawn(icons::query_icon_remotely(
-                                    payload.asset_id,
-                                    path,
-                                    state.coingecko.clone(),
-                                    state.evm_manager.clone(),
-                                ));
-                                StatusCode::ACCEPTED.into_response()
-                            }
-                        } else {
-                            error!("Error calculating elapsed duration");
-                            StatusCode::INTERNAL_SERVER_ERROR.into_response()
-                        }
-                    } else {
-                        // This shouldn't happen as we ship to platforms with metadata on files
-                        error!("Platform doesn't support last modified ts");
-                        StatusCode::INTERNAL_SERVER_ERROR.into_response()
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to query icon for {} due to {}", payload.asset_id, e);
-                    StatusCode::NOT_FOUND.into_response()
+    if let Some(found_path) = icons::find_icon(state.data_dir.as_path(), &path, &payload.asset_id).await
+    {
+        return match fs::metadata(found_path.clone()).await {
+            Ok(metadata) => {
+                if metadata.len() > 0 {
+                    handle_non_empty_icon(
+                        state,
+                        payload.asset_id,
+                        path,
+                        found_path,
+                        payload.force_refresh,
+                    )
+                    .await
+                    .into_response()
+                } else if let Some(underlying_id) =
+                    get_underlying_id(&state, &payload.asset_id).await
+                {
+                    let underlying_path = icons::get_asset_path(
+                        &underlying_id,
+                        state.data_dir.as_path(),
+                        false,
+                        state.globaldb.as_ref(),
+                    )
+                    .await;
+                    check_icon_for_asset_id(
+                        state,
+                        underlying_id,
+                        underlying_path,
+                        payload.force_refresh,
+                    )
+                    .await
+                    .into_response()
+                } else {
+                    handle_empty_icon(
+                        state,
+                        payload.asset_id,
+                        path,
+                        found_path,
+                        metadata,
+                    )
+                    .await
+                    .into_response()
                 }
             }
-        }
-        None => {
-            // There is no local reference to the file, query it. Ensure that if it is requested
-            // again only one task handles it.
-            query_icon_from_payload(state, payload, path)
-                .await
-                .into_response()
-        }
+            Err(e) => {
+                error!("Failed to query icon for {} due to {}", payload.asset_id, e);
+                StatusCode::NOT_FOUND.into_response()
+            }
+        };
     }
+
+    if let Some(underlying_id) = get_underlying_id(&state, &payload.asset_id).await {
+        let underlying_path = icons::get_asset_path(
+            &underlying_id,
+            state.data_dir.as_path(),
+            false,
+            state.globaldb.as_ref(),
+        )
+        .await;
+        return check_icon_for_asset_id(
+            state,
+            underlying_id,
+            underlying_path,
+            payload.force_refresh,
+        )
+        .await
+        .into_response();
+    }
+
+    // There is no local reference to the file, query it. Ensure that if it is requested
+    // again only one task handles it.
+    query_icon_from_payload(state, payload, path)
+        .await
+        .into_response()
 }
 
 /// Helper function to update the status of the query in the shared state
@@ -161,7 +170,11 @@ async fn query_icon_from_payload(
     payload: AssetIconCheck,
     path: std::path::PathBuf,
 ) -> StatusCode {
-    let task_name = format!("{}_{}", QUERY_ICONS_TASK_PREFIX, payload.asset_id);
+    query_icon(state, payload.asset_id, path).await
+}
+
+async fn query_icon(state: Arc<AppState>, asset_id: String, path: std::path::PathBuf) -> StatusCode {
+    let task_name = format!("{}_{}", QUERY_ICONS_TASK_PREFIX, asset_id);
     let mut tasks_guard = state.active_tasks.lock().await;
     if !tasks_guard.insert(task_name.clone()) {
         return StatusCode::ACCEPTED;
@@ -173,7 +186,7 @@ async fn query_icon_from_payload(
         let task_key = task_name.clone();
         async move {
             icons::query_icon_remotely(
-                payload.asset_id,
+                asset_id,
                 path,
                 state.coingecko.clone(),
                 state.evm_manager.clone(),
@@ -183,4 +196,101 @@ async fn query_icon_from_payload(
         }
     });
     StatusCode::ACCEPTED
+}
+
+async fn handle_non_empty_icon(
+    state: Arc<AppState>,
+    asset_id: String,
+    path: std::path::PathBuf,
+    found_path: std::path::PathBuf,
+    force_refresh: Option<bool>,
+) -> StatusCode {
+    if force_refresh != Some(true) {
+        return StatusCode::OK;
+    }
+
+    if let Err(error) = fs::remove_file(found_path).await {
+        error!(
+            "Failed to delete file {} when force refresh was set due to {}",
+            path.display(),
+            error,
+        );
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
+
+    query_icon(state, asset_id, path).await
+}
+
+async fn handle_empty_icon(
+    state: Arc<AppState>,
+    asset_id: String,
+    path: std::path::PathBuf,
+    found_path: std::path::PathBuf,
+    metadata: std::fs::Metadata,
+) -> StatusCode {
+    let Ok(time) = metadata.modified() else {
+        // This shouldn't happen as we ship to platforms with metadata on files
+        error!("Platform doesn't support last modified ts");
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    };
+
+    let Ok(duration) = SystemTime::now().duration_since(time) else {
+        error!("Error calculating elapsed duration");
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    };
+
+    if duration.as_secs() < MAX_ICON_RECHECK_PERIOD {
+        // It was queried recently so don't try again
+        return StatusCode::NOT_FOUND;
+    }
+
+    // Since we tried long ago enough retry again
+    let _ = fs::remove_file(found_path).await;
+    tokio::spawn(icons::query_icon_remotely(
+        asset_id,
+        path,
+        state.coingecko.clone(),
+        state.evm_manager.clone(),
+    ));
+    StatusCode::ACCEPTED
+}
+
+async fn check_icon_for_asset_id(
+    state: Arc<AppState>,
+    asset_id: String,
+    path: std::path::PathBuf,
+    force_refresh: Option<bool>,
+) -> StatusCode {
+    let Some(found_path) = icons::find_icon(state.data_dir.as_path(), &path, &asset_id).await else {
+        return query_icon(state, asset_id, path).await;
+    };
+    let metadata = match fs::metadata(found_path.clone()).await {
+        Ok(m) => m,
+        Err(e) => {
+            error!("Failed to query icon for {} due to {}", asset_id, e);
+            return StatusCode::NOT_FOUND;
+        }
+    };
+    if metadata.len() > 0 {
+        handle_non_empty_icon(state, asset_id, path, found_path, force_refresh).await
+    } else {
+        handle_empty_icon(state, asset_id, path, found_path, metadata).await
+    }
+}
+
+async fn get_underlying_id(state: &Arc<AppState>, asset_id: &str) -> Option<String> {
+    match state
+        .globaldb
+        .get_single_underlying_token_with_protocol(asset_id)
+        .await
+    {
+        Ok(result) => result,
+        Err(e) => {
+            error!(
+                "Failed to query underlying token for {} due to {}",
+                asset_id, e
+            );
+            None
+        }
+    }
 }

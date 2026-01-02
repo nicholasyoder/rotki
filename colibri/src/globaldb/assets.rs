@@ -43,6 +43,8 @@ pub struct AssetMappings {
     pub evm_chain: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_asset_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<String>,
     #[serde(skip_serializing_if = "<&bool as std::ops::Not>::not")]
     pub is_spam: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -110,6 +112,7 @@ impl GlobalDB {
                     .unwrap_or_default()
                     .and_then(|id| ChainID::deserialize_from_db(id).ok())
                     .map(|chain| chain.to_name());
+                let protocol: Option<String> = row.get("protocol").unwrap_or_default();
 
                 AssetMappings {
                     name: row.get("name").unwrap_or_default(),
@@ -118,9 +121,8 @@ impl GlobalDB {
                     asset_type,
                     evm_chain,
                     custom_asset_type: custom_type,
-                    is_spam: row.get::<_, Option<String>>("protocol")
-                        .unwrap_or_default()
-                        .as_deref() == Some("spam"),
+                    protocol: protocol.clone(),
+                    is_spam: protocol.as_deref() == Some("spam"),
                     coingecko: row.get("coingecko").unwrap_or_default(),
                     cryptocompare: row.get("cryptocompare").unwrap_or_default(),
                 }

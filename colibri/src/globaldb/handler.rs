@@ -64,6 +64,31 @@ impl GlobalDB {
         })
     }
 
+    pub async fn get_single_underlying_token_with_protocol(
+        &self,
+        asset_id: &str,
+    ) -> Result<Option<String>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT ut.identifier
+             FROM underlying_tokens_list ut
+             JOIN evm_tokens et ON et.identifier = ut.parent_token_entry
+             WHERE ut.parent_token_entry = ?
+               AND et.protocol IS NOT NULL
+               AND et.protocol != ''",
+        )?;
+        let mut rows = stmt.query([asset_id])?;
+        let mut underlying: Option<String> = None;
+        while let Some(row) = rows.next()? {
+            let identifier: String = row.get(0)?;
+            if underlying.is_some() {
+                return Ok(None);
+            }
+            underlying = Some(identifier);
+        }
+        Ok(underlying)
+    }
+
     /// Get all active RPC endpoints for a specific blockchain.
     pub async fn get_rpc_nodes(&self, blockchain: SupportedBlockchain) -> Result<Vec<RpcNode>> {
         let conn = self.conn.lock().await;
