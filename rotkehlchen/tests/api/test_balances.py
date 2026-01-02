@@ -1213,6 +1213,7 @@ def test_query_liquity_balances(
     assert account_balances['liabilities'] == {A_LUSD: {CPT_LIQUITY: {'amount': '2188.673572189031978055', 'value': '3283.0103582835479670825'}}}  # noqa: E501
 
 
+@pytest.mark.freeze_time('2026-01-01 00:00:00 GMT')
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
 @pytest.mark.parametrize('number_of_eth_accounts', [1])
@@ -1275,6 +1276,7 @@ def test_balance_snapshot_saves_manual_prices_as_historical(
         assert FVal(price_str) == ONE
 
 
+@pytest.mark.freeze_time('2026-01-01 00:00:00 GMT')
 @pytest.mark.vcr
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
 @pytest.mark.parametrize('number_of_eth_accounts', [0])
@@ -1295,7 +1297,7 @@ def test_solana_balances_multiple_accounts(
     ))
     assert result['assets']['solana/token:EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v']['amount'] == '160556.002808'  # USDC  # noqa: E501
     assert result['assets']['solana/token:2zMMhcVQEXDtdE6vsFS7S7D5oUodfJHE8vd1gnBouauv']['amount'] == '370905.247021'  # PENGU  # noqa: E501
-    assert result['assets']['solana/token:WLFinEv6ypjkczcS83FZqFpgFZYwQXutRbxGe7oC16g']['amount'] == '100122.11'  # WLFI  # noqa: E501
+    assert result['assets']['solana/token:Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB']['amount'] == '21787'  # USDT  # noqa: E501
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])

@@ -132,7 +132,7 @@ from rotkehlchen.constants.timing import ENS_AVATARS_REFRESH
 from rotkehlchen.data_import.manager import DataImportSource
 from rotkehlchen.db.accounting_rules import DBAccountingRules, query_missing_accounting_rules
 from rotkehlchen.db.addressbook import DBAddressbook
-from rotkehlchen.db.cache import ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE, DBCacheDynamic
+from rotkehlchen.db.cache import ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE, DBCacheDynamic, DBCacheStatic
 from rotkehlchen.db.calendar import CalendarEntry, CalendarFilterQuery, DBCalendar, ReminderEntry
 from rotkehlchen.db.constants import (
     HISTORY_MAPPING_KEY_STATE,
@@ -259,6 +259,7 @@ from rotkehlchen.tasks.events import (
     get_unmatched_asset_movements,
     update_asset_movement_matched_event,
 )
+from rotkehlchen.tasks.historical_balances import process_historical_balances
 from rotkehlchen.types import (
     AVAILABLE_MODULES_MAP,
     BLOCKSCOUT_TO_CHAINID,
@@ -310,6 +311,7 @@ from rotkehlchen.types import (
     SubstrateAddress,
     SupportedBlockchain,
     Timestamp,
+    TimestampMS,
     UserNote,
 )
 from rotkehlchen.utils.misc import combine_dicts, ts_ms_to_sec, ts_now
@@ -5896,34 +5898,30 @@ class RestAPI:
         """Query historical balances for all assets at a given timestamp
         by processing historical events
         """
-        try:
-            balances = HistoricalBalancesManager(self.rotkehlchen.data.db).get_balances(timestamp)
-        except DeserializationError as e:
-            return wrap_in_fail_result(str(e), status_code=HTTPStatus.INTERNAL_SERVER_ERROR)
-        except NotFoundError as e:
-            return wrap_in_fail_result(str(e), status_code=HTTPStatus.NOT_FOUND)
+        processing_required, balances = HistoricalBalancesManager(
+            self.rotkehlchen.data.db,
+        ).get_balances(timestamp)
 
-        return _wrap_in_ok_result(
-            result=process_result(balances),
-            status_code=HTTPStatus.OK,
-        )
+        result: dict[str, Any] = {'processing_required': processing_required}
+        if balances is not None:
+            result['entries'] = process_result(balances)
+
+        return _wrap_in_ok_result(result=result, status_code=HTTPStatus.OK)
 
     @async_api_call()
     def get_historical_asset_balance(self, asset: Asset, timestamp: Timestamp) -> dict[str, Any]:
         """Query historical balance of a specific asset at a given timestamp
         by processing historical events
         """
-        try:
-            balance = HistoricalBalancesManager(self.rotkehlchen.data.db).get_asset_balance(
-                asset=asset,
-                timestamp=timestamp,
-            )
-        except DeserializationError as e:
-            return wrap_in_fail_result(str(e), status_code=HTTPStatus.INTERNAL_SERVER_ERROR)
-        except NotFoundError as e:
-            return wrap_in_fail_result(str(e), status_code=HTTPStatus.NOT_FOUND)
+        processing_required, balance = HistoricalBalancesManager(
+            self.rotkehlchen.data.db,
+        ).get_asset_balance(asset=asset, timestamp=timestamp)
 
-        return _wrap_in_ok_result(result=balance)
+        result: dict[str, Any] = {'processing_required': processing_required}
+        if balance is not None:
+            result['entries'] = balance
+
+        return _wrap_in_ok_result(result=result)
 
     def get_historical_asset_amounts(
             self,
@@ -5933,35 +5931,43 @@ class RestAPI:
             to_timestamp: Timestamp,
     ) -> Response:
         assets: tuple[Asset, ...]
-        try:
-            if asset is not None:
-                assets = (asset,)
-            else:  # collection_id is present due to validation.
-                with GlobalDBHandler().conn.read_ctx() as cursor:
-                    cursor.execute(
-                        'SELECT asset FROM multiasset_mappings WHERE collection_id=?',
-                        (collection_id,),
-                    )
-                    assets = tuple(Asset(row[0]) for row in cursor)
+        if asset is not None:
+            assets = (asset,)
+        else:  # collection_id is present due to validation.
+            with GlobalDBHandler().conn.read_ctx() as cursor:
+                cursor.execute(
+                    'SELECT asset FROM multiasset_mappings WHERE collection_id=?',
+                    (collection_id,),
+                )
+                assets = tuple(Asset(row[0]) for row in cursor)
 
-            balances, last_group_identifier = HistoricalBalancesManager(self.rotkehlchen.data.db).get_assets_amounts(  # noqa: E501
-                assets=assets,
-                from_ts=from_timestamp,
-                to_ts=to_timestamp,
-            )
-        except DeserializationError as e:
-            return api_response(wrap_in_fail_result(str(e), status_code=HTTPStatus.INTERNAL_SERVER_ERROR))  # noqa: E501
-        except NotFoundError as e:
-            return api_response(wrap_in_fail_result(str(e), status_code=HTTPStatus.NOT_FOUND))
+        processing_required, amounts = HistoricalBalancesManager(self.rotkehlchen.data.db).get_assets_amounts(  # noqa: E501
+            assets=assets,
+            from_ts=from_timestamp,
+            to_ts=to_timestamp,
+        )
 
-        result = {
-            'times': list(balances),
-            'values': [str(x) for x in balances.values()],
-        }
-        if last_group_identifier is not None:
-            result['last_group_identifier'] = last_group_identifier
-
+        result: dict[str, Any] = {'processing_required': processing_required}
+        if amounts is not None:
+            result['times'] = list(amounts)
+            result['values'] = [str(x) for x in amounts.values()]
         return api_response(_wrap_in_ok_result(result=result))
+
+    @async_api_call()
+    def trigger_historical_balance_processing(self) -> dict[str, Any]:
+        """Trigger historical balance processing, bypassing the cache check."""
+        with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
+            stale_from_ts = TimestampMS(value) if (value := self.rotkehlchen.data.db.get_static_cache(  # noqa: E501
+                cursor=cursor,
+                name=DBCacheStatic.STALE_BALANCES_FROM_TS,
+            )) is not None else None
+
+        process_historical_balances(
+            database=self.rotkehlchen.data.db,
+            msg_aggregator=self.rotkehlchen.msg_aggregator,
+            from_ts=stale_from_ts,
+        )
+        return OK_RESULT
 
     def get_historical_netvalue(
             self,

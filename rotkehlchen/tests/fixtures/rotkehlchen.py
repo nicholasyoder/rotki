@@ -23,6 +23,7 @@ from rotkehlchen.tests.utils.api import create_api_server
 from rotkehlchen.tests.utils.args import default_args
 from rotkehlchen.tests.utils.blockchain import maybe_modify_rpc_nodes
 from rotkehlchen.tests.utils.constants import (
+    DEFAULT_TESTS_MAIN_CURRENCY,
     TEST_PREMIUM_DB_SIZE_LIMIT,
     TEST_PREMIUM_DEVICE_LIMIT,
     TEST_PREMIUM_ETH_STAKED_LIMIT,
@@ -245,6 +246,7 @@ def patch_and_enter_before_unlock(
             return DBSettings(
                 active_modules=ethereum_modules,
                 ksm_rpc_endpoint=ksm_rpc_endpoint,
+                main_currency=DEFAULT_TESTS_MAIN_CURRENCY,
             )
         settings_patch = patch.object(rotki, 'get_settings', side_effect=mock_get_settings)
         stack.enter_context(settings_patch)
