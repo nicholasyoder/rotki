@@ -725,7 +725,8 @@ Sent when historical balance processing detects a negative balance for an asset,
             "event_identifier": 12345,
             "group_identifier": "0xabc123...",
             "asset": "eip155:1/erc20:0x6B175474E89094C44Da98b954EesdedfFE3F46F5D",
-            "balance_before": "100.5"
+            "balance_before": "100.5",
+            "last_run_ts": 1672531200
         }
     }
 
@@ -734,3 +735,4 @@ Sent when historical balance processing detects a negative balance for an asset,
 - ``group_identifier``: Group identifier (usually transaction hash) of the problematic event
 - ``asset``: Asset identifier that went negative
 - ``balance_before``: The balance before processing the event that caused it to go negative
+- ``last_run_ts``: Unix timestamp of the last successful historical balance processing run, or ``null`` if this is the first run

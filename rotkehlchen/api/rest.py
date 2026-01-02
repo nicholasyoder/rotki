@@ -5904,7 +5904,10 @@ class RestAPI:
 
         result: dict[str, Any] = {'processing_required': processing_required}
         if balances is not None:
-            result['entries'] = process_result(balances)
+            result['entries'] = {
+                asset.identifier: str(amount)
+                for asset, amount in balances.items()
+            }
 
         return _wrap_in_ok_result(result=result, status_code=HTTPStatus.OK)
 
@@ -5913,13 +5916,13 @@ class RestAPI:
         """Query historical balance of a specific asset at a given timestamp
         by processing historical events
         """
-        processing_required, balance = HistoricalBalancesManager(
+        processing_required, amount = HistoricalBalancesManager(
             self.rotkehlchen.data.db,
         ).get_asset_balance(asset=asset, timestamp=timestamp)
 
         result: dict[str, Any] = {'processing_required': processing_required}
-        if balance is not None:
-            result['entries'] = balance
+        if amount is not None:
+            result['entries'] = {asset.identifier: str(amount)}
 
         return _wrap_in_ok_result(result=result)
 

@@ -119,6 +119,10 @@ def process_historical_balances(
         bucket_balances = _load_bucket_balances_before_ts(database, from_ts)
 
     with database.conn.read_ctx() as cursor:
+        last_run_ts = database.get_static_cache(
+            cursor=cursor,
+            name=DBCacheStatic.LAST_HISTORICAL_BALANCE_PROCESSING_TS,
+        )
         events = DBHistoryEvents(database).get_history_events_internal(
             cursor=cursor,
             filter_query=HistoryEventFilterQuery.make(
@@ -153,6 +157,7 @@ def process_historical_balances(
                         'group_identifier': event.group_identifier,
                         'asset': event.asset.identifier,
                         'balance_before': str(current_balance_in_bucket),
+                        'last_run_ts': last_run_ts,
                     },
                 )
                 log.warning(

@@ -112,9 +112,7 @@ def fixture_setup_historical_data(rotkehlchen_api_server: 'APIServer') -> None:
     )
 
 
-@pytest.mark.vcr(filter_query_parameters=['api_key'])
 @pytest.mark.parametrize('start_with_valid_premium', [True])
-@pytest.mark.parametrize('should_mock_price_queries', [False])
 def test_get_historical_balance(
         rotkehlchen_api_server: 'APIServer',
         setup_historical_data: None,
@@ -129,10 +127,8 @@ def test_get_historical_balance(
 
     result = assert_proper_sync_response_with_result(response)
     assert result['processing_required'] is False
-    assert result['entries']['BTC']['amount'] == '1.5'
-    assert result['entries']['BTC']['price'] == '15806.226022787'
-    assert result['entries']['ETH']['amount'] == '10'
-    assert result['entries']['ETH']['price'] == '1151.10913718085'
+    assert result['entries']['BTC'] == '1.5'
+    assert result['entries']['ETH'] == '10'
 
     # try retrieving the balance of a day without event and
     # see that the balance of the previous day is used.
@@ -153,13 +149,11 @@ def test_get_historical_balance(
     )
     # Balances(amount) should be same as day 1
     assert outcome['result']['processing_required'] is False
-    assert outcome['result']['entries']['BTC']['amount'] == '2'
-    assert outcome['result']['entries']['ETH']['amount'] == '10'
+    assert outcome['result']['entries']['BTC'] == '2'
+    assert outcome['result']['entries']['ETH'] == '10'
 
 
-@pytest.mark.vcr(filter_query_parameters=['api_key'])
 @pytest.mark.parametrize('start_with_valid_premium', [True])
-@pytest.mark.parametrize('should_mock_price_queries', [False])
 def test_get_historical_asset_balance(
         rotkehlchen_api_server: 'APIServer',
         setup_historical_data: None,
@@ -194,9 +188,7 @@ def test_get_historical_asset_balance(
 
     result = assert_proper_sync_response_with_result(response)
     assert result['processing_required'] is False
-    # Should show post-withdrawal balance
-    assert result['entries']['amount'] == '1.7'  # 2 - 0.5 + 0.2
-    assert result['entries']['price'] == '15806.226022787'
+    assert result['entries']['BTC'] == '1.7'  # 2 - 0.5 + 0.2
 
 
 @pytest.mark.parametrize('start_with_valid_premium', [True])
@@ -371,7 +363,6 @@ def test_get_historical_assets_in_collection_amounts_over_time(
 
 
 @pytest.mark.parametrize('start_with_valid_premium', [True])
-@pytest.mark.parametrize('should_mock_price_queries', [False])
 def test_get_historical_balance_before_first_event(
         rotkehlchen_api_server: 'APIServer',
         setup_historical_data: None,
@@ -391,7 +382,6 @@ def test_get_historical_balance_before_first_event(
 
 
 @pytest.mark.parametrize('start_with_valid_premium', [True])
-@pytest.mark.parametrize('should_mock_price_queries', [False])
 def test_get_historical_balance_unknown_asset(rotkehlchen_api_server: 'APIServer') -> None:
     response = requests.post(
         api_url_for(
