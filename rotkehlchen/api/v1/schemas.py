@@ -204,7 +204,7 @@ from .fields import (
     TimestampUntilNowField,
     XpubField,
 )
-from .types import IncludeExcludeFilterData, ModuleWithBalances, ModuleWithStats
+from .types import IncludeExcludeFilterData, ModuleWithBalances, ModuleWithStats, TaskName
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.aggregator import ChainsAggregator
@@ -4575,3 +4575,7 @@ class FindPossibleMatchesSchema(Schema):
 
 class UnlinkMatchedAssetMovementSchema(Schema):
     asset_movement = fields.Integer(required=True)
+
+
+class TriggerTaskSchema(AsyncQueryArgumentSchema):
+    task = SerializableEnumField(enum_class=TaskName, required=True)

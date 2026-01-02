@@ -180,6 +180,7 @@ from rotkehlchen.api.v1.schemas import (
     TransactionDecodingSchema,
     TransactionQuerySchema,
     TransactionReferenceAdditionSchema,
+    TriggerTaskSchema,
     UnlinkMatchedAssetMovementSchema,
     UpdateCalendarReminderSchema,
     UpdateCalendarSchema,
@@ -283,7 +284,7 @@ from rotkehlchen.types import (
     UserNote,
 )
 
-from .types import ModuleWithBalances, ModuleWithStats
+from .types import ModuleWithBalances, ModuleWithStats, TaskName
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.bitcoin.hdkey import HDKey
@@ -3529,14 +3530,14 @@ class HistoricalNetValueResource(BaseMethodView):
         )
 
 
-class HistoricalBalanceProcessingResource(BaseMethodView):
+class TriggerTaskResource(BaseMethodView):
 
-    post_schema = AsyncQueryArgumentSchema()
+    post_schema = TriggerTaskSchema()
 
     @require_loggedin_user()
     @use_kwargs(post_schema, location='json')
-    def post(self, async_query: bool) -> Response:
-        return self.rest_api.trigger_historical_balance_processing(async_query=async_query)
+    def post(self, async_query: bool, task: TaskName) -> Response:
+        return self.rest_api.trigger_task(async_query=async_query, task=task)
 
 
 class HistoricalPricesPerAssetResource(BaseMethodView):

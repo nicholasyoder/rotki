@@ -27,3 +27,8 @@ class ModuleWithStats(SerializableEnumNameMixin):
     UNISWAP = auto()
     SUSHISWAP = auto()
     BALANCER = auto()
+
+
+class TaskName(SerializableEnumNameMixin):
+    HISTORICAL_BALANCE_PROCESSING = auto()
+    ASSET_MOVEMENT_MATCHING = auto()

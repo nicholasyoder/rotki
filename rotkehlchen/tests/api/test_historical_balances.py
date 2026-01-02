@@ -5,6 +5,7 @@ from unittest.mock import patch
 import pytest
 import requests
 
+from rotkehlchen.api.v1.types import TaskName
 from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.assets.utils import get_or_create_evm_token
@@ -1052,9 +1053,9 @@ def test_get_historical_asset_amounts_processing_required(
     response = requests.post(
         api_url_for(
             rotkehlchen_api_server,
-            'historicalbalanceprocessingresource',
+            'triggertaskresource',
         ),
-        json={'async_query': False},
+        json={'async_query': False, 'task': TaskName.HISTORICAL_BALANCE_PROCESSING.serialize()},
     )
     assert_proper_sync_response_with_result(response)
 

@@ -7,6 +7,15 @@ This changelog documents API changes, schema modifications, and other developer-
 Unreleased
 ==========
 
+Trigger Async Task
+------------------
+
+Bypasses the normal background task scheduling and runs a task immediately. Only supports triggering the historical balance processing and the asset movement matching tasks currently.
+
+* **New Endpoint**: ``POST /api/(version)/tasks/trigger``
+
+  - Required ``task`` parameter specifying which task to run. Valid values are ``historical_balance_processing`` and ``asset_movement_matching``.
+
 Matching Asset Movements With Onchain Events
 --------------------------------------------
 
