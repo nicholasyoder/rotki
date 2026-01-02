@@ -2,7 +2,7 @@
 Changelog
 =========
 
-
+* :bug:`11258` 1inch v6 limit order swaps will now be understood properly.
 * :feature:`-` Users can now search blockchain accounts by either address or label using a single unified filter.
 * :bug:`11267` PnL report generation will no longer crash when a fiat asset's price is unavailable for a swap event.
 * :bug:`11197` rotki will now group the notifications for Beaconcha.in rate-limited messages to avoid annoying users.
