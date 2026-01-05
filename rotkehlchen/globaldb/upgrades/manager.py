@@ -34,6 +34,7 @@ from .v10_v11 import migrate_to_v11
 from .v11_v12 import migrate_to_v12
 from .v12_v13 import migrate_to_v13
 from .v13_v14 import migrate_to_v14
+from .v14_v15 import migrate_to_v15
 
 if TYPE_CHECKING:
     from rotkehlchen.db.drivers.gevent import DBConnection
@@ -46,54 +47,19 @@ log = RotkehlchenLogsAdapter(logger)
 
 
 UPGRADES_LIST = [
-    UpgradeRecord(
-        from_version=2,
-        function=migrate_to_v3,
-    ),
-    UpgradeRecord(
-        from_version=3,
-        function=migrate_to_v4,
-    ),
-    UpgradeRecord(
-        from_version=4,
-        function=migrate_to_v5,
-    ),
-    UpgradeRecord(
-        from_version=5,
-        function=migrate_to_v6,
-    ),
-    UpgradeRecord(
-        from_version=6,
-        function=migrate_to_v7,
-    ),
-    UpgradeRecord(
-        from_version=7,
-        function=migrate_to_v8,
-    ),
-    UpgradeRecord(
-        from_version=8,
-        function=migrate_to_v9,
-    ),
-    UpgradeRecord(
-        from_version=9,
-        function=migrate_to_v10,
-    ),
-    UpgradeRecord(
-        from_version=10,
-        function=migrate_to_v11,
-    ),
-    UpgradeRecord(
-        from_version=11,
-        function=migrate_to_v12,
-    ),
-    UpgradeRecord(
-        from_version=12,
-        function=migrate_to_v13,
-    ),
-    UpgradeRecord(
-        from_version=13,
-        function=migrate_to_v14,
-    ),
+    UpgradeRecord(from_version=2, function=migrate_to_v3),
+    UpgradeRecord(from_version=3, function=migrate_to_v4),
+    UpgradeRecord(from_version=4, function=migrate_to_v5),
+    UpgradeRecord(from_version=5, function=migrate_to_v6),
+    UpgradeRecord(from_version=6, function=migrate_to_v7),
+    UpgradeRecord(from_version=7, function=migrate_to_v8),
+    UpgradeRecord(from_version=8, function=migrate_to_v9),
+    UpgradeRecord(from_version=9, function=migrate_to_v10),
+    UpgradeRecord(from_version=10, function=migrate_to_v11),
+    UpgradeRecord(from_version=11, function=migrate_to_v12),
+    UpgradeRecord(from_version=12, function=migrate_to_v13),
+    UpgradeRecord(from_version=13, function=migrate_to_v14),
+    UpgradeRecord(from_version=14, function=migrate_to_v15),
 ]
 
 
