@@ -50,7 +50,8 @@ class FVal:
             ) from e
 
     def __str__(self) -> str:
-        return f'{self.num:f}'
+        s = format(self.num.normalize(), 'f')
+        return '0' if s == '-0' else s
 
     def __repr__(self) -> str:
         return f'FVal({self.num!s})'
