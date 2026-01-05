@@ -1396,6 +1396,48 @@ Cancel ongoing async tasks
       :statuscode 500: Internal rotki error
 
 
+Trigger an async task
+=====================
+
+.. http:post:: /api/(version)/tasks/trigger
+
+      Triggers an async task. This endpoint bypasses the normal background task scheduling
+      and runs the task immediately.
+
+      .. note::
+          This endpoint can be queried asynchronously by using ``"async_query": true``.
+
+      **Example Request:**
+
+        .. http:example:: curl wget httpie python-requests
+
+          POST /api/(version)/tasks/trigger HTTP/1.1
+          Host: localhost:5042
+          Content-Type: application/json;charset=UTF-8
+
+          {"task": "historical_balance_processing"}
+
+        :reqjson str task: Name of the task to run. Valid values are ``historical_balance_processing`` and ``asset_movement_matching``.
+
+      **Example Response:**
+
+        .. sourcecode:: http
+
+          HTTP/1.1 200 OK
+          Content-Type: application/json
+
+          {
+            "message": "",
+            "result": true,
+            "status_code": 200
+          }
+
+        :resjson bool result: True on success
+        :statuscode 200: Task started successfully
+        :statuscode 401: User is not logged in
+        :statuscode 500: Internal Rotki error
+
+
 Query the latest price of assets
 ===================================
 
@@ -14272,44 +14314,6 @@ Historical Balance Queries
         :statuscode 401: User is not logged in
         :statuscode 403: User does not have premium access
         :statuscode 404: No historical data found in the given time range
-        :statuscode 500: Internal Rotki error
-
-  .. http:post:: /api/(version)/balances/historical/process
-
-      Triggers historical balance processing. This endpoint bypasses the normal background task scheduling
-      and immediately processes historical events to populate the event_metrics table.
-
-      .. note::
-          This endpoint can be queried asynchronously by using ``"async_query": true``.
-
-      **Example Request:**
-
-        .. http:example:: curl wget httpie python-requests
-
-          POST /api/(version)/balances/historical/process HTTP/1.1
-          Host: localhost:5042
-          Content-Type: application/json;charset=UTF-8
-
-          {"async_query": false}
-
-        :reqjsonarr bool async_query: Whether to run the processing asynchronously
-
-      **Example Response:**
-
-        .. sourcecode:: http
-
-          HTTP/1.1 200 OK
-          Content-Type: application/json
-
-          {
-            "message": "",
-            "result": true,
-            "status_code": 200
-          }
-
-        :resjson bool result: True on success
-        :statuscode 200: Processing completed successfully
-        :statuscode 401: User is not logged in
         :statuscode 500: Internal Rotki error
 
   .. http:post:: /api/(version)/balances/historical/asset/prices

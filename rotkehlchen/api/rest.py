@@ -43,7 +43,7 @@ from rotkehlchen.accounting.structures.processed_event import AccountingEventExp
 from rotkehlchen.accounting.types import EventAccountingRuleStatus
 from rotkehlchen.api.rest_helpers.history_events import edit_grouped_events_with_optional_fee
 from rotkehlchen.api.rest_helpers.wrap import calculate_wrap_score
-from rotkehlchen.api.v1.types import IncludeExcludeFilterData
+from rotkehlchen.api.v1.types import IncludeExcludeFilterData, TaskName
 from rotkehlchen.api.websockets.typedefs import ProgressUpdateSubType, WSMessageType
 from rotkehlchen.assets.asset import (
     Asset,
@@ -257,6 +257,7 @@ from rotkehlchen.tasks.assets import (
 from rotkehlchen.tasks.events import (
     find_asset_movement_matches,
     get_unmatched_asset_movements,
+    match_asset_movements,
     update_asset_movement_matched_event,
 )
 from rotkehlchen.tasks.historical_balances import process_historical_balances
@@ -5954,19 +5955,23 @@ class RestAPI:
         return api_response(_wrap_in_ok_result(result=result))
 
     @async_api_call()
-    def trigger_historical_balance_processing(self) -> dict[str, Any]:
-        """Trigger historical balance processing, bypassing the cache check."""
-        with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
-            stale_from_ts = TimestampMS(value) if (value := self.rotkehlchen.data.db.get_static_cache(  # noqa: E501
-                cursor=cursor,
-                name=DBCacheStatic.STALE_BALANCES_FROM_TS,
-            )) is not None else None
+    def trigger_task(self, task: TaskName) -> dict[str, Any]:
+        """Trigger the specified async task."""
+        if task == TaskName.HISTORICAL_BALANCE_PROCESSING:
+            with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
+                stale_from_ts = TimestampMS(value) if (value := self.rotkehlchen.data.db.get_static_cache(  # noqa: E501
+                    cursor=cursor,
+                    name=DBCacheStatic.STALE_BALANCES_FROM_TS,
+                )) is not None else None
 
-        process_historical_balances(
-            database=self.rotkehlchen.data.db,
-            msg_aggregator=self.rotkehlchen.msg_aggregator,
-            from_ts=stale_from_ts,
-        )
+            process_historical_balances(
+                database=self.rotkehlchen.data.db,
+                msg_aggregator=self.rotkehlchen.msg_aggregator,
+                from_ts=stale_from_ts,
+            )
+        else:  # task == TaskName.ASSET_MOVEMENT_MATCHING
+            match_asset_movements(database=self.rotkehlchen.data.db)
+
         return OK_RESULT
 
     def get_historical_netvalue(

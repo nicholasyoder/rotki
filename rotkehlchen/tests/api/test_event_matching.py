@@ -1,8 +1,10 @@
 from http import HTTPStatus
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import requests
 
+from rotkehlchen.api.v1.types import TaskName
 from rotkehlchen.constants.assets import A_BTC, A_ETH, A_WETH
 from rotkehlchen.db.cache import ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE, DBCacheDynamic
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
@@ -23,8 +25,10 @@ from rotkehlchen.tests.unit.test_eth2 import HOUR_IN_MILLISECONDS
 from rotkehlchen.tests.utils.api import (
     api_url_for,
     assert_error_response,
+    assert_ok_async_response,
     assert_proper_response_with_result,
     assert_simple_ok_response,
+    wait_for_async_task,
 )
 from rotkehlchen.tests.utils.factories import make_evm_address, make_evm_tx_hash
 from rotkehlchen.types import Location, TimestampMS
@@ -556,3 +560,29 @@ def test_get_history_events_with_matched_asset_movements(
         ),
         rotkehlchen_api_server=rotkehlchen_api_server,
     )['entries'] == [unrelated_event_entry, match1_sublist, match2_sublist]
+
+
+def test_trigger_matching_task(rotkehlchen_api_server: 'APIServer') -> None:
+    """Test that triggering the matching task works as expected."""
+    for async_query in (True, False):
+        with patch(
+            target='rotkehlchen.tasks.events.get_unmatched_asset_movements',
+            return_value=([], []),
+        ) as match_mock:
+            response = requests.post(
+                api_url_for(rotkehlchen_api_server, 'triggertaskresource'),
+                json={
+                    'async_query': async_query,
+                    'task': TaskName.ASSET_MOVEMENT_MATCHING.serialize(),
+                },
+            )
+
+        if async_query:
+            wait_for_async_task(
+                server=rotkehlchen_api_server,
+                task_id=assert_ok_async_response(response),
+            )
+        else:
+            assert_simple_ok_response(response)
+
+        assert match_mock.call_count == 1
