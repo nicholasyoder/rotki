@@ -1,20 +1,17 @@
 import logging
 from collections import defaultdict
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING
 
 import polars as pl
 
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.constants import DAY_IN_SECONDS, ONE, ZERO
-from rotkehlchen.constants.prices import ZERO_PRICE
 from rotkehlchen.db.filtering import (
     HistoryEventFilterQuery,
 )
-from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.db.utils import get_query_chunks
-from rotkehlchen.errors.misc import NotFoundError, RemoteError
-from rotkehlchen.errors.price import NoPriceForGivenTimestamp
+from rotkehlchen.errors.misc import NotFoundError
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.handler import GlobalDBHandler
@@ -23,7 +20,6 @@ from rotkehlchen.history.events.structures.types import (
     EventDirection,
     HistoryEventSubType,
 )
-from rotkehlchen.history.price import PriceHistorian
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import EventMetricKey, Timestamp, TimestampMS
 from rotkehlchen.utils.misc import timestamp_to_daystart_timestamp, ts_ms_to_sec, ts_sec_to_ms
@@ -37,11 +33,6 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class HistoricalBalance(TypedDict):
-    amount: FVal
-    price: FVal
-
-
 class HistoricalBalancesManager:
     """Processes historical events and calculates balances"""
 
@@ -51,7 +42,7 @@ class HistoricalBalancesManager:
     def get_balances(
             self,
             timestamp: Timestamp,
-    ) -> tuple[bool, dict[Asset, HistoricalBalance] | None]:
+    ) -> tuple[bool, dict[Asset, FVal] | None]:
         """Get historical balances for all assets at a given timestamp.
 
         The inner query gets the latest balance per bucket via MAX(timestamp + sequence_index),
@@ -60,7 +51,7 @@ class HistoricalBalancesManager:
 
         Returns a tuple of (processing_required, balances):
         - processing_required: True if events exist but haven't been processed yet
-        - balances: Dict of asset to balance info, or None if no data available
+        - balances: Dict of asset to amount, or None if no data available
         """
         asset_balances_by_id: dict[str, FVal] = {}
         timestamp_ms = ts_sec_to_ms(timestamp)
@@ -86,22 +77,7 @@ class HistoricalBalancesManager:
             )
             return needs_processing, None
 
-        result: dict[Asset, HistoricalBalance] = {}
-        main_currency = CachedSettings().main_currency
-        for asset_id, amount in asset_balances_by_id.items():
-            asset = Asset(asset_id)
-            try:
-                price = PriceHistorian.query_historical_price(
-                    from_asset=asset,
-                    to_asset=main_currency,
-                    timestamp=timestamp,
-                )
-            except (RemoteError, NoPriceForGivenTimestamp):
-                price = ZERO_PRICE
-
-            result[asset] = {'amount': amount, 'price': price}
-
-        return False, result
+        return False, {Asset(asset_id): amount for asset_id, amount in asset_balances_by_id.items()}  # noqa: E501
 
     def get_erc721_tokens_balances(
             self,
@@ -131,7 +107,7 @@ class HistoricalBalancesManager:
             self,
             asset: Asset,
             timestamp: Timestamp,
-    ) -> tuple[bool, HistoricalBalance | None]:
+    ) -> tuple[bool, FVal | None]:
         """Get historical balance for a single asset at a given timestamp.
 
         The inner query gets the latest balance per bucket via MAX(timestamp + sequence_index),
@@ -140,7 +116,7 @@ class HistoricalBalancesManager:
 
         Returns a tuple of (processing_required, balance):
         - processing_required: True if events exist but haven't been processed yet
-        - balance: Balance info dict, or None if no data available
+        - balance: Amount as FVal, or None if no data available
         """
         timestamp_ms = ts_sec_to_ms(timestamp)
         with self.db.conn.read_ctx() as cursor:
@@ -159,16 +135,7 @@ class HistoricalBalancesManager:
                 )
                 return needs_processing, None
 
-        try:
-            price = PriceHistorian.query_historical_price(
-                from_asset=asset,
-                to_asset=CachedSettings().main_currency,
-                timestamp=timestamp,
-            )
-        except (RemoteError, NoPriceForGivenTimestamp):
-            price = ZERO_PRICE
-
-        return False, {'amount': FVal(total_amount), 'price': price}
+        return False, FVal(total_amount)
 
     def get_assets_amounts(
             self,

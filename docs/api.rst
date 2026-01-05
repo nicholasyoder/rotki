@@ -14118,14 +14118,8 @@ Historical Balance Queries
           "result": {
             "processing_required": false,
             "entries": {
-              "BTC": {
-                "amount": "2.0",
-                "price": "20000"
-              },
-              "ETH": {
-                "amount": "10.0",
-                "price": "1500"
-              }
+              "BTC": "2.0",
+              "ETH": "10.0"
             }
           },
           "status_code": 200
@@ -14143,8 +14137,7 @@ Historical Balance Queries
         "result": {
           "processing_required": false,
           "entries": {
-            "amount": "2.0",
-            "price": "20000"
+            "BTC": "2.0"
           }
         },
         "status_code": 200
@@ -14166,9 +14159,7 @@ Historical Balance Queries
       }
 
       :resjson bool processing_required: Whether historical events exist but need processing. If true, call the processing endpoint and retry.
-      :resjson object entries: (Only present when data is available) Either a mapping of all assets to their balance info, or single asset balance info if asset was provided
-      :resjson string amount: The amount of the asset held at the timestamp
-      :resjson string price: The price of the asset at the timestamp in the user's profit currency
+      :resjson object entries: (Only present when data is available) A mapping of asset identifiers to their amount as string.
       :statuscode 200: Historical balances returned
       :statuscode 400: Malformed query
       :statuscode 403: User does not have premium access
