@@ -406,23 +406,33 @@ def test_update_log_level(
         caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Test updating log level via configuration endpoint"""
-    assert_error_response(  # Test invalid log level
-        response=requests.put(
+    logger = logging.getLogger()
+    initial_loglevel = logger.level
+    try:
+        assert_error_response(  # Test invalid log level
+            response=requests.put(
+                api_url_for(rotkehlchen_api_server, 'configurationsresource'),
+                json={'loglevel': 'invalid'},
+            ),
+            contained_in_msg='Invalid log level',
+            status_code=HTTPStatus.BAD_REQUEST,
+        )
+
+        assert assert_proper_sync_response_with_result(requests.put(  # Switch to trace level
             api_url_for(rotkehlchen_api_server, 'configurationsresource'),
-            json={'loglevel': 'invalid'},
-        ),
-        contained_in_msg='Invalid log level',
-        status_code=HTTPStatus.BAD_REQUEST,
-    )
+            json={'loglevel': (given_loglevel := 'TRACE')},
+        ))['loglevel']['value'] == given_loglevel
 
-    assert assert_proper_sync_response_with_result(requests.put(  # Switch to trace level
-        api_url_for(rotkehlchen_api_server, 'configurationsresource'),
-        json={'loglevel': (given_loglevel := 'TRACE')},
-    ))['loglevel']['value'] == given_loglevel
-
-    logger = logging.getLogger('rotkehlchen.test')
-    logger.trace('Test trace message')  # type: ignore[attr-defined]
-    assert 'Test trace message' in caplog.text
+        test_logger = logging.getLogger('rotkehlchen.test')
+        test_logger.trace('Test trace message')  # type: ignore[attr-defined]
+        assert 'Test trace message' in caplog.text
+        assert 'logger.trace' not in caplog.text
+    finally:
+        # Reset global log level so this test does not affect other tests in the same worker.
+        logger.setLevel(initial_loglevel)
+    caplog.clear()
+    test_logger.trace('Post-reset trace message')  # type: ignore[attr-defined]
+    assert 'Post-reset trace message' not in caplog.text
 
 
 def test_query_all_chain_ids(rotkehlchen_api_server: 'APIServer') -> None:
