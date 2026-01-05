@@ -370,7 +370,7 @@ def test_swap_single_to_multi(ethereum_inquirer, ethereum_accounts):
 def test_swap_multi_to_multi(ethereum_inquirer, ethereum_accounts):
     tx_hash = deserialize_evm_tx_hash('0x2ae9298c00c76fc63df4112a7924a5deb908f095cb9d41d284e890aee31ca114')  # noqa: E501
     events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
-    timestamp, swap_amount_sweth, swap_amount_usdc, received_amount_eth, received_amount_cbeth, odos_fees_eth, odos_fees_cbeth, gas_fees = TimestampMS(1720651511000), '0.300942750197910709', '5.085873', '0.21177820231350276', '0.101348638838421792', '0.000021179938225173', '0.000010135877471590', '0.00194866414'  # noqa: E501
+    timestamp, swap_amount_sweth, swap_amount_usdc, received_amount_eth, received_amount_cbeth, odos_fees_eth, odos_fees_cbeth, gas_fees = TimestampMS(1720651511000), '0.300942750197910709', '5.085873', '0.21177820231350276', '0.101348638838421792', '0.000021179938225173', '0.00001013587747159', '0.00194866414'  # noqa: E501
     expected_events = [EvmEvent(
         tx_ref=tx_hash,
         sequence_index=0,

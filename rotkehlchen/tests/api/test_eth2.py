@@ -506,7 +506,7 @@ def test_add_get_edit_delete_eth2_validators(
         )
         assert_error_response(
             response=response,
-            contained_in_msg='ETH staking limit exceeded. Current staked: 64.007394748 ETH, limit: 128 ETH. Would be: 2112.097368850 ETH',  # noqa: E501
+            contained_in_msg='ETH staking limit exceeded. Current staked: 64.007394748 ETH, limit: 128 ETH. Would be: 2112.09736885 ETH',  # noqa: E501
             status_code=HTTPStatus.FORBIDDEN,
         )
 

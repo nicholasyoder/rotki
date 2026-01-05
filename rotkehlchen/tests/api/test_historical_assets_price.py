@@ -105,7 +105,7 @@ def test_historical_assets_price_future_ts_error(
 def _assert_expected_prices(
         data: list[dict[str, Any]],
         after_deletion: bool,
-        crv_1611166340_price: str = '1.40',
+        crv_1611166340_price: str = '1.4',
 ) -> None:
     assert len(data) == 2 if after_deletion else 3
 
@@ -115,7 +115,7 @@ def _assert_expected_prices(
             'from_asset': A_CRV.identifier,
             'to_asset': 'USD',
             'timestamp': 1611166335,
-            'price': '1.20',
+            'price': '1.2',
         })
 
     expected_data.extend([{
@@ -146,7 +146,7 @@ def test_manual_historical_price(
             'from_asset': A_CRV.identifier,
             'to_asset': 'USD',
             'timestamp': 1611166335,
-            'price': '1.20',
+            'price': '1.2',
         },
     )
     assert_simple_ok_response(response)
@@ -258,7 +258,7 @@ def test_manual_historical_price(
         },
     )
     data = assert_proper_sync_response_with_result(response)
-    _assert_expected_prices(data, after_deletion=False, crv_1611166340_price='1.50')
+    _assert_expected_prices(data, after_deletion=False, crv_1611166340_price='1.5')
     # Check that calling PUT for an existing price replaces the price
     response = requests.put(
         api_url_for(
@@ -269,7 +269,7 @@ def test_manual_historical_price(
             'from_asset': A_CRV.identifier,
             'to_asset': 'USD',
             'timestamp': 1611166340,
-            'price': '1.40',
+            'price': '1.4',
         },
     )
     response = requests.get(
@@ -355,7 +355,7 @@ def test_manual_historical_price(
             'from_asset': A_CRV.identifier,
             'to_asset': 'USD',
             'timestamp': 1611166344,
-            'price': '1.40',
+            'price': '1.4',
         },
     )
     assert_error_response(

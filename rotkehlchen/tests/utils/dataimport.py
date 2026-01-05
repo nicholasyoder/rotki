@@ -93,7 +93,7 @@ def assert_cointracking_import_results(rotki: Rotkehlchen, websocket_connection:
 
     for entry in [AssetMovement(
         identifier=5,
-        group_identifier='7626b5d52eb9c67f2c9d83a0c1a97f38c8d2e0466d055fd23c48a30afe2aa972',
+        group_identifier='f152586c41f5760e06f63987ddfe009d789b4461ac4c2d0f94f5bd85ce872a78',
         location=Location.POLONIEX,
         event_type=HistoryEventType.DEPOSIT,
         timestamp=TimestampMS(1565848624000),
@@ -101,7 +101,7 @@ def assert_cointracking_import_results(rotki: Rotkehlchen, websocket_connection:
         amount=FVal('5.00000000'),
     ), AssetMovement(
         identifier=9,
-        group_identifier='5dfd720e8b362491a663f4440477592a4e5c48bef0166bc42dd138c6e4ff0054',
+        group_identifier='228fcb7f4a396e10479a694d23d349701938114da9b3569bfe8d61010576030c',
         location=Location.COINBASE,
         event_type=HistoryEventType.WITHDRAWAL,
         timestamp=TimestampMS(1566726155000),
@@ -109,7 +109,7 @@ def assert_cointracking_import_results(rotki: Rotkehlchen, websocket_connection:
         amount=FVal('0.05770427'),
     ), AssetMovement(
         identifier=10,
-        group_identifier='5dfd720e8b362491a663f4440477592a4e5c48bef0166bc42dd138c6e4ff0054',
+        group_identifier='228fcb7f4a396e10479a694d23d349701938114da9b3569bfe8d61010576030c',
         location=Location.COINBASE,
         event_type=HistoryEventType.WITHDRAWAL,
         timestamp=TimestampMS(1566726155000),
@@ -188,12 +188,12 @@ def assert_cointracking_import_results(rotki: Rotkehlchen, websocket_connection:
         if event.asset == A_AXS:
             assert event.timestamp == 1641386280000
             assert event.amount == ONE
-            assert event.notes == 'Stake reward of 1.00000000 AXS in binance'
+            assert event.notes == 'Stake reward of 1 AXS in binance'
         else:
             assert event.asset == A_ETH
             assert event.timestamp == 1644319740000
             assert event.amount == FVal('2.12')
-            assert event.notes == 'Stake reward of 2.12000000 ETH in binance'
+            assert event.notes == 'Stake reward of 2.12 ETH in binance'
 
 
 def assert_cryptocom_import_results(rotki: Rotkehlchen):
@@ -329,7 +329,7 @@ def assert_cryptocom_import_results(rotki: Rotkehlchen):
         location_label=CRYPTOCOM_LOCATION_LABEL,
     ), AssetMovement(
         identifier=15,
-        group_identifier='20b719f712a8951eeaa518e6976950c8410028dc974c2b6e72b62e6e8745d355',
+        group_identifier='3b0864bb7b0df437d37da91f646b9211be5494f1fbd809f7abb510200c6ed5c9',
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.DEPOSIT,
         timestamp=TimestampMS(1596992965000),
@@ -338,7 +338,7 @@ def assert_cryptocom_import_results(rotki: Rotkehlchen):
         location_label=CRYPTOCOM_LOCATION_LABEL,
     ), AssetMovement(
         identifier=14,
-        group_identifier='2e2bba27c61cf9d71b8c60e1fce061a59b01d150b294badbb060c940d603594b',
+        group_identifier='4d70a6d7d1652c0a325a9b1a09f414c9fbf20ecc60b06898e33502bfae11a888',
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.WITHDRAWAL,
         timestamp=TimestampMS(1596993025000),
@@ -628,7 +628,7 @@ def assert_cryptocom_special_events_import_results(rotki: Rotkehlchen):
 
     expected_events = [AssetMovement(
         identifier=14,
-        group_identifier='5d81565035faf4f9e3ec74685a4a5c275f6cd3b10a194e9a12e446042910dbcb',
+        group_identifier='e8530948c9de5cb7e5b840e88558d521abecf5ff9d59007754c393040f71db83',
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.DEPOSIT,
         timestamp=TimestampMS(1609534800000),
@@ -637,7 +637,7 @@ def assert_cryptocom_special_events_import_results(rotki: Rotkehlchen):
         location_label=CRYPTOCOM_LOCATION_LABEL,
     ), AssetMovement(
         identifier=13,
-        group_identifier='e973b9453f750c8286fdb718b8211abbd8b9027fea582a4e9365f3d0b5c371dc',
+        group_identifier='58ff366d8c0722539f18e9a0cdd17e0c3b99d4d457653de20a8f9e742c5d4176',
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.WITHDRAWAL,
         timestamp=TimestampMS(1609534860000),
@@ -646,7 +646,7 @@ def assert_cryptocom_special_events_import_results(rotki: Rotkehlchen):
         location_label=CRYPTOCOM_LOCATION_LABEL,
     ), AssetMovement(
         identifier=12,
-        group_identifier='6e7b476f5880af1cea17c22fd8781fc7aa75a67fc7808200f18d20b181589c34',
+        group_identifier='9132eee89da1706621aa20a23c2c4160b71bbe301857b3b5be7dd543af3f8858',
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.DEPOSIT,
         timestamp=TimestampMS(1609538400000),
@@ -655,7 +655,7 @@ def assert_cryptocom_special_events_import_results(rotki: Rotkehlchen):
         location_label=CRYPTOCOM_LOCATION_LABEL,
     ), AssetMovement(
         identifier=11,
-        group_identifier='edfb38684bb8ddfa0cd961a3a1fe0f90bda823f45a2095859b2d0e3c43401e4d',
+        group_identifier='fa6fd0dc55d2a9b6d96d963b2855aadcc9ff435b610562f8d9d31155f1e6d1be',
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.DEPOSIT,
         timestamp=TimestampMS(1609542000000),
@@ -676,7 +676,7 @@ def assert_cryptocom_special_events_import_results(rotki: Rotkehlchen):
         location_label=CRYPTOCOM_LOCATION_LABEL,
     ), AssetMovement(
         identifier=10,
-        group_identifier='dd3b3db7df9d05e2a725bfb2edfd15f55a4d8cd473941735ab863a321ad38d92',
+        group_identifier='786610c51926657b38dda5ad7a84fa55874e84169ab7aebadbab8e0aa537930e',
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.WITHDRAWAL,
         timestamp=TimestampMS(1609624800000),
@@ -685,7 +685,7 @@ def assert_cryptocom_special_events_import_results(rotki: Rotkehlchen):
         location_label=CRYPTOCOM_LOCATION_LABEL,
     ), AssetMovement(
         identifier=9,
-        group_identifier='4944f654c206336187e8df89b7ef8201fe7fdda65133a362166770de9283b6b6',
+        group_identifier='80061355c958162cea938714c41f8064ee808c07bdf273b6d72f85dcd4f5c6f9',
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.DEPOSIT,
         timestamp=TimestampMS(1609714800000),
@@ -706,7 +706,7 @@ def assert_cryptocom_special_events_import_results(rotki: Rotkehlchen):
         location_label=CRYPTOCOM_LOCATION_LABEL,
     ), AssetMovement(
         identifier=8,
-        group_identifier='99e05dba03cbcd7337e453049be2bdaa88814aec73cdcce26f40a0bc98d79f2e',
+        group_identifier='2733925c7790075f4c2b08f84221214b8f7b31cc4ed21af681909074cb7e4875',
         location=Location.CRYPTOCOM,
         event_type=HistoryEventType.WITHDRAWAL,
         timestamp=TimestampMS(1609797600000),
@@ -829,7 +829,7 @@ def assert_blockfi_transactions_import_results(rotki: Rotkehlchen):
 
     expected_events = [AssetMovement(
         identifier=5,
-        group_identifier='f62fb2e0ee8695192ae332e25c4afc3682466ae2d1ef019ed51bc08cfd3aa296',
+        group_identifier='82ba2952942c022bd7260ea564f26b39ff6097ceab2d42627b85ea0f2525b1df',
         location=Location.BLOCKFI,
         event_type=HistoryEventType.DEPOSIT,
         timestamp=TimestampMS(1595247055000),
@@ -848,7 +848,7 @@ def assert_blockfi_transactions_import_results(rotki: Rotkehlchen):
         notes='Bonus Payment from BlockFi',
     ), AssetMovement(
         identifier=3,
-        group_identifier='677c77a20f78f19f2dcc5333e260b16b15b511dbb4e42afab67d02ff907e161a',
+        group_identifier='bcc18d93e5a257b6b66a6c6161ff840c751727092b2e6c40e0379326928e1e0f',
         location=Location.BLOCKFI,
         event_type=HistoryEventType.WITHDRAWAL,
         timestamp=TimestampMS(1605977971000),
@@ -867,15 +867,15 @@ def assert_blockfi_transactions_import_results(rotki: Rotkehlchen):
         notes='Referral Bonus from BlockFi',
     ), AssetMovement(
         identifier=6,
-        group_identifier='7549573fba3392466dbd36b1f7a7e8bac06a276caa615008645d646f025f0b00',
+        group_identifier='c4616caf7c4461fc40a0f9818d5b99fe00c5e646b6665f20bb417ab69708cd0f',
         location=Location.BLOCKFI,
         event_type=HistoryEventType.DEPOSIT,
         timestamp=TimestampMS(1611734258000),
         asset=A_USDC,
-        amount=FVal('3597.48627700'),
+        amount=FVal('3597.486277'),
     ), AssetMovement(
         identifier=7,
-        group_identifier='731be1787656d4aa1e5bdc20f733f288728081884e2a607ccd3dafaca37c8e91',
+        group_identifier='c2403e57043a3aa3e22f8c86bba4d4dad99ed24b7f3bf1eeffd1aeda1fbc2fd5',
         location=Location.BLOCKFI,
         event_type=HistoryEventType.WITHDRAWAL,
         timestamp=TimestampMS(1611820658000),
@@ -1386,7 +1386,7 @@ Activity from uphold with uphold transaction id:
         amount=FVal('24.65'),
     ), AssetMovement(
         identifier=7,
-        group_identifier='c85215d66a23ae39cbf232dd931dafa40006acb065d5314382f623b7bb8ce707',
+        group_identifier='14d5caae922138d0d81187fecb8863f332fb6407b349f95613b948e206f6e60b',
         location=Location.UPHOLD,
         event_type=HistoryEventType.WITHDRAWAL,
         timestamp=TimestampMS(1589376604000),
@@ -1458,15 +1458,15 @@ def assert_custom_cointracking(rotki: Rotkehlchen):
                     )
     assert events == [AssetMovement(
         identifier=1,
-        group_identifier='55220a50d1f1af04042410f6c0223518cd14e1a5ad250dfb65be6404c7b6a01e',
+        group_identifier='4379b63da9c7e0ecc0354611a7af70eeb42f4da8859e14fa5be3b1a03534a6d7',
         location=Location.POLONIEX,
         event_type=HistoryEventType.DEPOSIT,
         timestamp=TimestampMS(1504646040000),
         asset=A_XMR,
-        amount=FVal('5.00000000'),
+        amount=FVal(5),
     ), AssetMovement(
         identifier=2,
-        group_identifier='2bb82301ad9d4b4251e404c11026f53f9f1c5190a943a26aa654e4fa0969ccbd',
+        group_identifier='63b6f9bc5ef0ef135c729822aaf52dcf42caf903fbe33bcdecaef5be845d2594',
         location=Location.COINBASE,
         event_type=HistoryEventType.WITHDRAWAL,
         timestamp=TimestampMS(1504646040000),
@@ -1474,7 +1474,7 @@ def assert_custom_cointracking(rotki: Rotkehlchen):
         amount=FVal('0.05770427'),
     ), AssetMovement(
         identifier=3,
-        group_identifier='2bb82301ad9d4b4251e404c11026f53f9f1c5190a943a26aa654e4fa0969ccbd',
+        group_identifier='63b6f9bc5ef0ef135c729822aaf52dcf42caf903fbe33bcdecaef5be845d2594',
         location=Location.COINBASE,
         event_type=HistoryEventType.WITHDRAWAL,
         timestamp=TimestampMS(1504646040000),
@@ -1810,16 +1810,16 @@ def assert_bitmex_import_wallet_history(rotki: Rotkehlchen):
     expected_events = [
         AssetMovement(
             identifier=3,
-            group_identifier='016035ad3c5a14f733b11d39f19f82cefa1000d0db62d5377548d2e6456a16fc',
+            group_identifier='5513db07af7655fa44222961067b13192f310e3d4225309afb67778225b99434',
             location=Location.BITMEX,
             event_type=HistoryEventType.DEPOSIT,
             timestamp=TimestampMS(1574825791000),
             asset=A_BTC,
-            amount=FVal('0.05000000'),
+            amount=FVal('0.05'),
         ),
         AssetMovement(
             identifier=1,
-            group_identifier='c7ee1cfaa00878d7079cdc2ebf0f15477e9116fc1284f0ebf298db26405e5897',
+            group_identifier='c0b576d4d564dbd7f8b1a0669cceda31ff362c2c9a56ed4045ab5bf11fa13e0a',
             location=Location.BITMEX,
             event_type=HistoryEventType.WITHDRAWAL,
             timestamp=TimestampMS(1577252845000),
@@ -1829,12 +1829,12 @@ def assert_bitmex_import_wallet_history(rotki: Rotkehlchen):
         ),
         AssetMovement(
             identifier=2,
-            group_identifier='c7ee1cfaa00878d7079cdc2ebf0f15477e9116fc1284f0ebf298db26405e5897',
+            group_identifier='c0b576d4d564dbd7f8b1a0669cceda31ff362c2c9a56ed4045ab5bf11fa13e0a',
             location=Location.BITMEX,
             event_type=HistoryEventType.WITHDRAWAL,
             timestamp=TimestampMS(1577252845000),
             asset=A_BTC,
-            amount=FVal('0.00100000'),
+            amount=FVal('0.001'),
             is_fee=True,
         ),
     ]
@@ -2584,7 +2584,7 @@ def assert_binance_import_results(rotki: Rotkehlchen, websocket_connection: Webs
             asset=A_USDT,
             amount=FVal('0.05576000'),
             location_label='CSV import',
-            notes='0.05576000 USDT realized loss on binance USD-MFutures',
+            notes='0.05576 USDT realized loss on binance USD-MFutures',
         ), HistoryEvent(
             identifier=70,
             group_identifier=dummy_event_id,
@@ -2596,7 +2596,7 @@ def assert_binance_import_results(rotki: Rotkehlchen, websocket_connection: Webs
             asset=A_USDT,
             amount=FVal('1.29642000'),
             location_label='CSV import',
-            notes='1.29642000 USDT realized profit on binance USD-MFutures',
+            notes='1.29642 USDT realized profit on binance USD-MFutures',
         ), SwapEvent(
             group_identifier=dummy_event_id,
             timestamp=TimestampMS(1695981386000),
@@ -2881,7 +2881,7 @@ def assert_rotki_generic_trades_import_results(rotki: Rotkehlchen, websocket_con
             'total': 6,
             'processed': 6,
             'messages': [
-                {'msg': 'Skipped duplicate swap event: trade/spend of 4576.6400 ADA at 2022/08/01 09:08:20', 'rows': [-1]},  # noqa: E501
+                {'msg': 'Skipped duplicate swap event: trade/spend of 4576.64 ADA at 2022/08/01 09:08:20', 'rows': [-1]},  # noqa: E501
                 {'msg': 'Skipped duplicate swap event: trade/receive of 16.3444 BCH at 2022/08/01 09:08:20', 'rows': [-1]},  # noqa: E501
                 {'msg': 'Skipped duplicate swap event: trade/fee of 5.1345 USD at 2022/08/01 09:08:20', 'rows': [-1]},  # noqa: E501
             ],
@@ -2895,7 +2895,7 @@ def assert_rotki_generic_trades_import_results(rotki: Rotkehlchen, websocket_con
             filter_query=HistoryEventFilterQuery.make(),
                     )
 
-    trade1_id, trade2_id, trade3_id, trade4_id, trade5_id = '39324bc8b48e567efdfdd8b04709f9681285fae0845f0ae09a9744ac37e71184', '468eefc8785bcb4755fdeab34c259bb90839df4689707918738d81d3d8f0e222', '5c5f3e50672360a5765ce521cac1b01d6acc2e8257350fa84f161493dd07880b', '504e930f842eb62b5e4bbbc319497e4d9d3afa0adf37869b21b2f305b9a2f490', 'd68e17cae1ce5548c320227218b7c984e263be4b4b1ff72a3d1dbdde7b8f5312'  # noqa: E501
+    trade1_id, trade2_id, trade3_id, trade4_id, trade5_id = '99a7a11471a153413b825040bf031e4eaaeff4e4300cb89d8dc5fa0490e594f8', '270f318e1b0afe84367bb23185c4dccb01f11eee59578f57c5aca17117bb1354', 'f40b711eb844420db11770f794142fd1afbbe5573c52b8aa42a5b554f6a8f1fc', '82e3fefb4ccafa0c418bbb26a0b7e6869bdae66fc74a1695220da2bb81e15704', '0aa12919c65abbf8dc3c5704fd6e0bd83da3e296e125559069548e2e5b467af0'  # noqa: E501
     expected_events = [SwapEvent(
         identifier=1,
         timestamp=TimestampMS(1659085200000),

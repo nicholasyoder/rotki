@@ -121,7 +121,7 @@ def test_1input_2output(bitcoin_manager: 'BitcoinManager', btc_accounts: list[BT
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.FEE,
             asset=A_BTC,
-            amount=(fee_amount := FVal('0.01000000')),
+            amount=(fee_amount := FVal('0.01')),
             location_label=address1,
             notes=f'Spend {fee_amount} BTC for fees',
         ), HistoryEvent(
@@ -143,7 +143,7 @@ def test_1input_2output(bitcoin_manager: 'BitcoinManager', btc_accounts: list[BT
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.NONE,
             asset=A_BTC,
-            amount=FVal(amount2 := '0.10000000'),
+            amount=FVal(amount2 := '0.1'),
             notes=f'Send {amount2} BTC to {address3}',
             location_label=address1,
         )]
@@ -169,7 +169,7 @@ def test_op_return(
         event_type=HistoryEventType.SPEND,
         event_subtype=HistoryEventSubType.FEE,
         asset=A_BTC,
-        amount=(fee_amount := FVal('0.00001000')),
+        amount=(fee_amount := FVal('0.00001')),
         location_label=btc_accounts[0],
         notes=f'Spend {fee_amount} BTC for fees',
     ), HistoryEvent(
@@ -203,7 +203,7 @@ def test_op_return_multiple_pushbytes(
         event_type=HistoryEventType.SPEND,
         event_subtype=HistoryEventSubType.FEE,
         asset=A_BTC,
-        amount=(fee_amount := FVal('0.00002000')),
+        amount=(fee_amount := FVal('0.00002')),
         location_label=(user_address := btc_accounts[0]),
         notes=f'Spend {fee_amount} BTC for fees',
     ), HistoryEvent(
@@ -224,9 +224,9 @@ def test_op_return_multiple_pushbytes(
         event_type=HistoryEventType.SPEND,
         event_subtype=HistoryEventSubType.NONE,
         asset=A_BTC,
-        amount=FVal('0.00006000'),
+        amount=FVal('0.00006'),
         location_label=user_address,
-        notes='Send 0.00006000 BTC to bc1qjl5yclpqvqclq4elhl5g2f0fhwytesmk9nqzd0',
+        notes='Send 0.00006 BTC to bc1qjl5yclpqvqclq4elhl5g2f0fhwytesmk9nqzd0',
     )]
 
 
@@ -248,7 +248,7 @@ def test_op_return_pushdata1(
         event_type=HistoryEventType.SPEND,
         event_subtype=HistoryEventSubType.FEE,
         asset=A_BTC,
-        amount=(fee_amount := FVal('0.00002000')),
+        amount=(fee_amount := FVal('0.00002')),
         location_label=(user_address := btc_accounts[0]),
         notes=f'Spend {fee_amount} BTC for fees',
     ), HistoryEvent(
@@ -269,9 +269,9 @@ def test_op_return_pushdata1(
         event_type=HistoryEventType.SPEND,
         event_subtype=HistoryEventSubType.NONE,
         asset=A_BTC,
-        amount=FVal('0.00006000'),
+        amount=FVal('0.00006'),
         location_label=user_address,
-        notes='Send 0.00006000 BTC to bc1qjl5yclpqvqclq4elhl5g2f0fhwytesmk9nqzd0',
+        notes='Send 0.00006 BTC to bc1qjl5yclpqvqclq4elhl5g2f0fhwytesmk9nqzd0',
     )]
 
 
@@ -528,18 +528,18 @@ def test_p2pk(
         bitcoin_manager=bitcoin_manager,
         tx_id=(tx_id := '1db6251a9afce7025a2061a19e63c700dffc3bec368bd1883decfac353357a9d'),
         use_blockcypher=use_blockcypher,
-    ) == [expected_event := HistoryEvent(
-        group_identifier=f'{BTC_GROUP_IDENTIFIER_PREFIX}{tx_id}',
-        sequence_index=0,
-        timestamp=TimestampMS(1313042188000),
-        location=Location.BITCOIN,
-        event_type=HistoryEventType.SPEND,
-        event_subtype=HistoryEventSubType.NONE,
-        asset=A_BTC,
-        amount=FVal('50.00000000'),
-        location_label=btc_accounts[0],
-        notes='Send 50.00000000 BTC to 15WvMGm9qG1wDb54TMcvgzZsfvz9KdxzoN',
-    )]
+        ) == [expected_event := HistoryEvent(
+            group_identifier=f'{BTC_GROUP_IDENTIFIER_PREFIX}{tx_id}',
+            sequence_index=0,
+            timestamp=TimestampMS(1313042188000),
+            location=Location.BITCOIN,
+            event_type=HistoryEventType.SPEND,
+            event_subtype=HistoryEventSubType.NONE,
+            asset=A_BTC,
+            amount=FVal('50'),
+            location_label=btc_accounts[0],
+            notes='Send 50 BTC to 15WvMGm9qG1wDb54TMcvgzZsfvz9KdxzoN',
+        )]
 
     assert expected_event.serialize()['tx_ref'] == tx_id
 

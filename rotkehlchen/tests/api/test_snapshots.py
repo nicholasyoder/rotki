@@ -783,20 +783,20 @@ def test_edit_snapshot(rotkehlchen_api_server: 'APIServer') -> None:
                 'timestamp': ts,
                 'category': 'asset',
                 'asset_identifier': 'AVAX',
-                'amount': '1000.00',
-                'usd_value': '12929.00',
+                'amount': '1000',
+                'usd_value': '12929',
             },
             {
                 'timestamp': ts,
                 'category': 'asset',
                 'asset_identifier': NFT_TOKEN_ID,
-                'amount': '1000.00',
-                'usd_value': '12929.00',
+                'amount': '1000',
+                'usd_value': '12929',
             },
         ],
         'location_data_snapshot': [
-            {'timestamp': ts, 'location': 'external', 'usd_value': '12929.00'},
-            {'timestamp': ts, 'location': 'total', 'usd_value': '12929.00'},
+            {'timestamp': ts, 'location': 'external', 'usd_value': '12929'},
+            {'timestamp': ts, 'location': 'total', 'usd_value': '12929'},
         ],
     }
     response = requests.patch(
@@ -829,20 +829,20 @@ def test_edit_snapshot(rotkehlchen_api_server: 'APIServer') -> None:
                 'timestamp': ts,
                 'category': 'asset',
                 'asset_identifier': 'MEME',
-                'amount': '1000.00',
-                'usd_value': '100.00',
+                'amount': '1000',
+                'usd_value': '100',
             },
             {
                 'timestamp': ts,
                 'category': 'asset',
                 'asset_identifier': 'MEME',
-                'amount': '1000.00',
-                'usd_value': '100.00',
+                'amount': '1000',
+                'usd_value': '100',
             },
         ],
         'location_data_snapshot': [
-            {'timestamp': ts, 'location': 'external', 'usd_value': '200.00'},
-            {'timestamp': ts, 'location': 'total', 'usd_value': '200.00'},
+            {'timestamp': ts, 'location': 'external', 'usd_value': '200'},
+            {'timestamp': ts, 'location': 'total', 'usd_value': '200'},
         ],
     }
     response = requests.patch(

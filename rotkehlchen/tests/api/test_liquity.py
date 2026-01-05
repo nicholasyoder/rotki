@@ -76,12 +76,12 @@ def test_trove_position(rotkehlchen_api_server: APIServer, inquirer: Inquirer) -
         '0x063c26fF1592688B73d8e2A18BA4C23654e2792E': {
             'collateral': {
                 'amount': '0',
-                'value': '0.0',
+                'value': '0',
                 'asset': 'ETH',
             },
             'debt': {
                 'amount': '0',
-                'value': '0.0',
+                'value': '0',
                 'asset': 'eip155:1/erc20:0x5f98805A4E8be255a32880FDeC7F6728C6568bA0',
             },
             'collateralization_ratio': None,
@@ -122,7 +122,7 @@ def test_trove_staking(rotkehlchen_api_server: APIServer, inquirer: Inquirer, et
             'staked': {
                 'asset': A_LQTY.identifier,
                 'amount': '613.102214311218459876',
-                'value': '919.6533214668276898140',
+                'value': '919.653321466827689814',
             },
             'lusd_rewards': {
                 'asset': A_LUSD.identifier,
@@ -137,16 +137,16 @@ def test_trove_staking(rotkehlchen_api_server: APIServer, inquirer: Inquirer, et
         },
         'proxies': {
             '0xD29d5Db21CD29BC5aA35FB071a0d5E3526b513BC': {
-                'eth_rewards': {'amount': '0', 'asset': 'ETH', 'value': '0.0'},
+                'eth_rewards': {'amount': '0', 'asset': 'ETH', 'value': '0'},
                 'lusd_rewards': {
                     'amount': '0',
                     'asset': 'eip155:1/erc20:0x5f98805A4E8be255a32880FDeC7F6728C6568bA0',
-                    'value': '0.0',
+                    'value': '0',
                 },
                 'staked': {
                     'amount': '0',
                     'asset': 'eip155:1/erc20:0x6DEA81C8171D0bA574754EF6F8b412F2Ed88c54D',
-                    'value': '0.0',
+                    'value': '0',
                 },
             },
         },
@@ -214,12 +214,12 @@ def test_account_with_proxy(rotkehlchen_api_server: APIServer, inquirer: Inquire
         '0x063c26fF1592688B73d8e2A18BA4C23654e2792E': {
             'collateral': {
                 'amount': '0',
-                'value': '0.0',
+                'value': '0',
                 'asset': 'ETH',
             },
             'debt': {
                 'amount': '0',
-                'value': '0.0',
+                'value': '0',
                 'asset': 'eip155:1/erc20:0x5f98805A4E8be255a32880FDeC7F6728C6568bA0',
             },
             'collateralization_ratio': None,
@@ -230,12 +230,12 @@ def test_account_with_proxy(rotkehlchen_api_server: APIServer, inquirer: Inquire
         '0x9476832d4687c14b2c1a04E2ee4693162a7340B6': {
             'collateral': {
                 'amount': '0',
-                'value': '0.0',
+                'value': '0',
                 'asset': 'ETH',
             },
             'debt': {
                 'amount': '0',
-                'value': '0.0',
+                'value': '0',
                 'asset': 'eip155:1/erc20:0x5f98805A4E8be255a32880FDeC7F6728C6568bA0',
             },
             'collateralization_ratio': None,

@@ -999,7 +999,7 @@ def test_balances_behaviour_with_manual_current_prices(
         # (3 ETH) * (10 BTC per ETH) * (1,5 USD per BTC) = 45 USD of ETH
         eth_result = result['assets'][A_ETH.identifier]
         assert eth_result['amount'] == '3'
-        assert eth_result['value'] == '45.0'
+        assert eth_result['value'] == '45'
         # (5 RDN) * (2 ETH per RDN) * (10 BTC per RDN) * (1,5 USD per BTC) = 150 USD of RDN
         rdn_result = result['assets']['eip155:1/erc20:0x255Aa6DF07540Cb5d3d297f0D0D4D84cb52bc8e6']
         assert rdn_result['amount'] == '5'

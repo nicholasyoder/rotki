@@ -626,7 +626,7 @@ def assert_binance_asset_movements_result(
 def assert_poloniex_balances_result(balances: dict[str, Any]) -> None:
     assert balances['BTC']['amount'] == '5.5'
     assert balances['BTC']['value'] is not None
-    assert balances['ETH']['amount'] == '11.0'
+    assert balances['ETH']['amount'] == '11'
     assert balances['ETH']['value'] is not None
 
 

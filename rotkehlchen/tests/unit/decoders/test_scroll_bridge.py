@@ -188,7 +188,7 @@ def test_deposit_erc20_from_ethereum_to_scroll(ethereum_inquirer, ethereum_accou
     events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     user_address = ethereum_accounts[0]
     timestamp = TimestampMS(1711698851000)
-    gas, fee, amount = '0.005582179923194343', '0.000122880', '100'
+    gas, fee, amount = '0.005582179923194343', '0.00012288', '100'
     assert events == [
         EvmEvent(
             tx_ref=tx_hash,
@@ -387,7 +387,7 @@ def test_deposit_send_message_ethereum(ethereum_inquirer, ethereum_accounts):
     events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     user_address = ethereum_accounts[0]
     timestamp = TimestampMS(1708771043000)
-    gas, fee, amount = '0.00353129959117221', '0.0000811440', '0.034'
+    gas, fee, amount = '0.00353129959117221', '0.000081144', '0.034'
     assert events == [
         EvmEvent(
             tx_ref=tx_hash,

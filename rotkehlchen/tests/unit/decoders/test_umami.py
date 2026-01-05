@@ -33,7 +33,7 @@ def test_umami_deposit_request(
 ) -> None:
     tx_hash = deserialize_evm_tx_hash('0x228e4ec7b253a3609c4e28638e0281a0458f541e380d39731fb5249cccc115f5')  # noqa: E501
     events, _ = get_decoded_events_of_transaction(evm_inquirer=arbitrum_one_inquirer, tx_hash=tx_hash)  # noqa: E501
-    user_address, timestamp, gas_amount, fee_amount, protocol_fee, deposit_amount = arbitrum_one_accounts[0], TimestampMS(1728996957000), '0.00002373823', '0.00024', '0.0300', '19.9700'  # noqa: E501
+    user_address, timestamp, gas_amount, fee_amount, protocol_fee, deposit_amount = arbitrum_one_accounts[0], TimestampMS(1728996957000), '0.00002373823', '0.00024', '0.03', '19.97'  # noqa: E501
     assert events == [
         EvmEvent(
             sequence_index=0,

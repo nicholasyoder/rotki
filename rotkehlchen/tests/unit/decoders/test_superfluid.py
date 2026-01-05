@@ -310,7 +310,7 @@ def test_start_stream(
         asset=Asset(f'eip155:42161/erc20:{super_token_address}'),
         amount=ZERO,
         location_label=user_address,
-        notes=f'Start Superfluid stream of 43.799999999998248000 USDCx per month from {user_address} to 0x706A70067BE19BdadBea3600Db0626859Ff25D74',  # noqa: E501
+        notes=f'Start Superfluid stream of 43.799999999998248 USDCx per month from {user_address} to 0x706A70067BE19BdadBea3600Db0626859Ff25D74',  # noqa: E501
         counterparty=CPT_SUPERFLUID,
     )]
 

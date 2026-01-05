@@ -516,7 +516,7 @@ def test_nfts_ignoring_works(rotkehlchen_api_server: 'APIServer', endpoint: str)
                 'entries': [],
                 'entries_found': 0,
                 'entries_total': 0,
-                'total_value': '0.0',
+                'total_value': '0',
             }
 
     # remove the nft from the ignored list.
@@ -622,13 +622,13 @@ def test_nft_no_price(rotkehlchen_api_server: 'APIServer') -> None:
                 'manually_input': False,
                 'is_lp': False,
                 'image_url': 'https://resources.smarttokenlabs.com/devcon6/ETH.webp',
-                'price': '0.0',
+                'price': '0',
                 'collection_name': 'Devcon VI Souvenir V4',
             },
         ],
         'entries_found': 1,
         'entries_total': 1,
-        'total_value': '0.0',
+        'total_value': '0',
     }
 
 
