@@ -1,3 +1,4 @@
+import json
 from typing import TYPE_CHECKING, Any
 
 from rotkehlchen.db.filtering import DBMultiStringFilter
@@ -30,6 +31,12 @@ def history_event_to_staking_for_api(event: HistoryBaseEntry) -> dict[str, Any]:
     }
 
 
+def _hash_group_key(payload: dict) -> str:
+    """Create a unique string from a dict with specific keys"""
+    data = json.dumps(payload, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+    return hash_id(data)
+
+
 def create_group_identifier_from_unique_id(
         location: Location,
         unique_id: str,
@@ -52,12 +59,12 @@ def create_group_identifier(
     if unique_id:
         return create_group_identifier_from_unique_id(location, unique_id)
 
-    return hash_id(
-        str(location) +
-        str(timestamp) +
-        asset.identifier +
-        str(amount),
-    )
+    return _hash_group_key({
+        'location': str(location),
+        'timestamp': timestamp,
+        'asset': asset.identifier,
+        'amount': str(amount),
+    })
 
 
 def create_group_identifier_from_swap(
@@ -70,14 +77,14 @@ def create_group_identifier_from_swap(
     if unique_id:
         return create_group_identifier_from_unique_id(location, unique_id)
 
-    return hash_id(
-        str(location)
-        + str(timestamp)
-        + spend.asset.identifier
-        + str(spend.amount)
-        + receive.asset.identifier
-        + str(receive.amount),
-    )
+    return _hash_group_key({
+        'location': str(location),
+        'timestamp': timestamp,
+        'spend_asset': spend.asset.identifier,
+        'spend_amount': str(spend.amount),
+        'receive_asset': receive.asset.identifier,
+        'receive_amount': str(receive.amount),
+    })
 
 
 def generate_events_export_filename(filter_query: 'HistoryBaseEntryFilterQuery', use_localtime: bool) -> str:  # noqa: E501

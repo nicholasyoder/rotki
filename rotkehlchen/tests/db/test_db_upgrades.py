@@ -1502,14 +1502,14 @@ def test_upgrade_db_36_to_37(user_data_dir):  # pylint: disable=unused-argument
 
     new_kraken_events = set(cursor.execute("SELECT * FROM history_events WHERE location='B';"))
     updated_kraken_events = {
-        (171, 1, 'SDASD-DSAD-DSAD', 0, 1638706007439, 'B', 'kraken', 'ETH', '10.996', '11843.777435000000', None, 'withdrawal', 'none'),  # noqa: E501
+        (171, 1, 'SDASD-DSAD-DSAD', 0, 1638706007439, 'B', 'kraken', 'ETH', '10.996', '11843.777435', None, 'withdrawal', 'none'),  # noqa: E501
         (172, 1, 'YDASD-YDSAD-YDSAD', 0, 1636553589350, 'B', 'kraken', 'ETH', '5.1', '6145.834', None, 'trade', 'spend'),  # noqa: E501
-        (173, 1, 'TXZSDG-IUSNH2-OOAIE3U', 0, 1679243606179, 'B', 'kraken', 'BTC', '0.0922995600', '1391.564299579200', None, 'trade', 'spend'),  # noqa: E501
-        (174, 1, 'TXZSDG-IUSNH2-OOAIE3U', 1, 1679243606179, 'B', 'kraken', 'EUR', '1100', '1391.564299579200', None, 'trade', 'receive'),  # noqa: E501
+        (173, 1, 'TXZSDG-IUSNH2-OOAIE3U', 0, 1679243606179, 'B', 'kraken', 'BTC', '0.09229956', '1391.5642995792', None, 'trade', 'spend'),  # noqa: E501
+        (174, 1, 'TXZSDG-IUSNH2-OOAIE3U', 1, 1679243606179, 'B', 'kraken', 'EUR', '1100', '1391.5642995792', None, 'trade', 'receive'),  # noqa: E501
         (175, 1, 'TXZSDG-IUSNH2-OOAIE3U', 2, 1679243606179, 'B', 'kraken', 'EUR', '8.00', '8.53312', None, 'trade', 'fee'),  # noqa: E501
         (176, 1, 'KRAKEN-ETH2-EVENT', 0, 1681826144996, 'B', 'kraken', 'ETH2', '0.0032936117', '6.930681228076', 'Automatic virtual conversion of staked ETH rewards to ETH', 'informational', 'none'),  # noqa: E501
         (177, 1, 'KRAKEN-ETH-EVENT-STAKING', 0, 1681967948701, 'B', 'kraken', 'ETH', '0.0000355988', '0.069824910272', None, 'staking', 'reward'),  # noqa: E501
-        (1113, 1, 'TSTLG5', 0, 1621508243539, 'B', 'Kraken 1', 'EUR', '37.7000', '0', '', 'trade', 'spend'),  # noqa: E501
+        (1113, 1, 'TSTLG5', 0, 1621508243539, 'B', 'Kraken 1', 'EUR', '37.7', '0', '', 'trade', 'spend'),  # noqa: E501
         (1114, 1, 'TSTLG5', 2, 1621508243539, 'B', 'Kraken 1', 'EUR', '0.5500', '0', '', 'spend', 'fee'),  # noqa: E501
         (1115, 1, 'TSTLG5', 1, 1621508243543, 'B', 'Kraken 1', 'ETH', '0.0169800000', '0', '', 'trade', 'receive'),  # noqa: E501
     }
@@ -2713,11 +2713,11 @@ def test_upgrade_db_45_to_46(user_data_dir: 'Path', messages_aggregator):
             'timestamp, location, location_label, asset, amount, usd_value, '
             'type, subtype, extra_data FROM history_events WHERE entry_type=6',
         ).fetchall() == [
-            (6, '20522c693bcda4ef646682c6a58bb0349b01f4d7b9168a62ce94b2c8dd1fe639', 0, 1644244023000, 'B', 'kraken', 'ATOM', '3.40000000', '0', 'withdrawal', 'remove asset', '{"reference": "KRAKEN-XXX"}'),  # noqa: E501
-            (6, '20522c693bcda4ef646682c6a58bb0349b01f4d7b9168a62ce94b2c8dd1fe639', 1, 1644244023000, 'B', 'kraken', 'ATOM', '0.10000000', '0', 'withdrawal', 'fee', None),  # noqa: E501
-            (6, '1cf3fc675d4835efe532d18730db35163b07fb5f44956b888d7aaf852b04fd1c', 0, 1727542684000, 'G', None, 'ETH', '0.07126231', '0', 'deposit', 'deposit asset', '{"address": "0xc37b40ABdB939635068d3c5f13E7faF686F03B65", "transaction_id": "0xc8aa60c9f8a93692b66fbc3f57c64f2b1c4afd92f370e12dc7bb23acfa303dbb"}'),  # noqa: E501
-            (6, 'dd253e55b9e3bd672d98f49062a27d6d9946427061b7d36083d78146e6dcce73', 0, 1676524754000, 'B', 'kraken', 'eip155:1/erc20:0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0', '10', '0', 'withdrawal', 'remove asset', '{"reference": "KRAKEN-XXX"}'),  # noqa: E501
-            (6, 'dd253e55b9e3bd672d98f49062a27d6d9946427061b7d36083d78146e6dcce73', 1, 1676524754000, 'B', 'kraken', 'eip155:1/erc20:0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0', '0.0100000000', '0', 'withdrawal', 'fee', None),  # noqa: E501
+            (6, '8aeb154990eb4420e6bd355726cc40bd0030855ed2af3847092397e9ab550128', 0, 1644244023000, 'B', 'kraken', 'ATOM', '3.4', '0', 'withdrawal', 'remove asset', '{"reference": "KRAKEN-XXX"}'),  # noqa: E501
+            (6, '8aeb154990eb4420e6bd355726cc40bd0030855ed2af3847092397e9ab550128', 1, 1644244023000, 'B', 'kraken', 'ATOM', '0.1', '0', 'withdrawal', 'fee', None),  # noqa: E501
+            (6, '4b52130aeed43487ff3ac44fe4ff1c7bbf725ad550e966be8d33d01bc9c7e38d', 0, 1727542684000, 'G', None, 'ETH', '0.07126231', '0', 'deposit', 'deposit asset', '{"address": "0xc37b40ABdB939635068d3c5f13E7faF686F03B65", "transaction_id": "0xc8aa60c9f8a93692b66fbc3f57c64f2b1c4afd92f370e12dc7bb23acfa303dbb"}'),  # noqa: E501
+            (6, '367823930d5caecbb2c90d4aa0516e2774bfc80349079dc2fb800f33e41bc09c', 0, 1676524754000, 'B', 'kraken', 'eip155:1/erc20:0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0', '10', '0', 'withdrawal', 'remove asset', '{"reference": "KRAKEN-XXX"}'),  # noqa: E501
+            (6, '367823930d5caecbb2c90d4aa0516e2774bfc80349079dc2fb800f33e41bc09c', 1, 1676524754000, 'B', 'kraken', 'eip155:1/erc20:0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0', '0.01', '0', 'withdrawal', 'fee', None),  # noqa: E501
         ]
         assert cursor.execute('SELECT COUNT(*) FROM history_events WHERE event_identifier=?', ('KRAKEN-XXX',)).fetchone()[0] == 0  # noqa: E501
 
@@ -3201,30 +3201,30 @@ def test_upgrade_db_47_to_48(user_data_dir, messages_aggregator):
         ).fetchall() == [
             unmodified_adjustment,
             # SwapEvents from the normal trades. The Kraken trade should have its location label set.  # noqa: E501
-            (7, '568667233c36a4975559fc4d105d8dedad6de494e46367740e1b1fc7ec41e1d7', 0, 1731435124000, 'B', kraken_normal_trade_label, 'USD', '25.0000000000000000000000000000000000000000000000000000000000000000000000000000', None, 'trade', 'spend', None),  # noqa: E501
-            (7, '568667233c36a4975559fc4d105d8dedad6de494e46367740e1b1fc7ec41e1d7', 1, 1731435124000, 'B', kraken_normal_trade_label, 'BTC', '0.0002857200', None, 'trade', 'receive', None),  # noqa: E501
-            (7, '568667233c36a4975559fc4d105d8dedad6de494e46367740e1b1fc7ec41e1d7', 2, 1731435124000, 'B', kraken_normal_trade_label, 'USD', '0.1000', None, 'trade', 'fee', None),  # noqa: E501
-            (7, '3e13e1b5594292787b80dd12e80fec0035ff18892dc219790aaee697a55c3fc9', 0, 1739820693000, 'S', None, 'ETH', '0.00800000', None, 'trade', 'spend', None),  # noqa: E501
-            (7, '3e13e1b5594292787b80dd12e80fec0035ff18892dc219790aaee697a55c3fc9', 1, 1739820693000, 'S', None, 'eip155:1/erc20:0xdAC17F958D2ee523a2206206994597C13D831ec7', '21.6762400000000000', None, 'trade', 'receive', None),  # noqa: E501
-            (7, '3e13e1b5594292787b80dd12e80fec0035ff18892dc219790aaee697a55c3fc9', 2, 1739820693000, 'S', None, 'ETH', '0.00004800', None, 'trade', 'fee', None),  # noqa: E501
-            (7, 'd0db33d8ad340e99e717ab103fb4e6009c0797c0ffa94ff30a8d12e54a7b9767', 0, 1703082904000, 'G', None, 'USD', '30.0000000000000000000000000000000000000000000000000000000000000000000000000000', None, 'trade', 'spend', None),  # noqa: E501
+            (7, '568667233c36a4975559fc4d105d8dedad6de494e46367740e1b1fc7ec41e1d7', 0, 1731435124000, 'B', kraken_normal_trade_label, 'USD', '25', None, 'trade', 'spend', None),  # noqa: E501
+            (7, '568667233c36a4975559fc4d105d8dedad6de494e46367740e1b1fc7ec41e1d7', 1, 1731435124000, 'B', kraken_normal_trade_label, 'BTC', '0.00028572', None, 'trade', 'receive', None),  # noqa: E501
+            (7, '568667233c36a4975559fc4d105d8dedad6de494e46367740e1b1fc7ec41e1d7', 2, 1731435124000, 'B', kraken_normal_trade_label, 'USD', '0.1', None, 'trade', 'fee', None),  # noqa: E501
+            (7, '3e13e1b5594292787b80dd12e80fec0035ff18892dc219790aaee697a55c3fc9', 0, 1739820693000, 'S', None, 'ETH', '0.008', None, 'trade', 'spend', None),  # noqa: E501
+            (7, '3e13e1b5594292787b80dd12e80fec0035ff18892dc219790aaee697a55c3fc9', 1, 1739820693000, 'S', None, 'eip155:1/erc20:0xdAC17F958D2ee523a2206206994597C13D831ec7', '21.67624', None, 'trade', 'receive', None),  # noqa: E501
+            (7, '3e13e1b5594292787b80dd12e80fec0035ff18892dc219790aaee697a55c3fc9', 2, 1739820693000, 'S', None, 'ETH', '0.000048', None, 'trade', 'fee', None),  # noqa: E501
+            (7, 'd0db33d8ad340e99e717ab103fb4e6009c0797c0ffa94ff30a8d12e54a7b9767', 0, 1703082904000, 'G', None, 'USD', '30', None, 'trade', 'spend', None),  # noqa: E501
             (7, 'd0db33d8ad340e99e717ab103fb4e6009c0797c0ffa94ff30a8d12e54a7b9767', 1, 1703082904000, 'G', None, 'XRP', '43.764904', None, 'trade', 'receive', None),  # noqa: E501
             # Two SwapEvents from the adjustment trade. Amounts should be the same as the original adjustment history events.  # noqa: E501
             (7, '577f4275b57a9c02b166c10f3ffa3e6c616a3d9d1b68cc1d5b5781cbe8cd8992', 0, 1575784819000, 'B', kraken_adjustment_label, 'BSV', adjustment_spend, None, 'trade', 'spend', None),  # noqa: E501
             (7, '577f4275b57a9c02b166c10f3ffa3e6c616a3d9d1b68cc1d5b5781cbe8cd8992', 1, 1575784819000, 'B', kraken_adjustment_label, 'BTC', adjustment_receive, None, 'trade', 'receive', None),  # noqa: E501
             # regression test: trades at same timestamp with different amounts should generate unique event identifiers even without link field  # noqa: E501
             # identical swap #1
-            (7, '52ffa18967da0d9a29c0cb4c90999f00b578b4f509b674093e881bfd228ae043', 0, 1749566127000, 'A', None, 'USD', '27323.67500096180', None, 'trade', 'spend', None),  # noqa: E501
-            (7, '52ffa18967da0d9a29c0cb4c90999f00b578b4f509b674093e881bfd228ae043', 1, 1749566127000, 'A', None, 'ETH', '10', None, 'trade', 'receive', None),  # noqa: E501
-            (7, '52ffa18967da0d9a29c0cb4c90999f00b578b4f509b674093e881bfd228ae043', 2, 1749566127000, 'A', None, 'USD', '12', None, 'trade', 'fee', None),  # noqa: E501
+            (7, '770f7468bc82e01badc0fa3a1f14e942596b4e5005136043fa365d5147d50e9f', 0, 1749566127000, 'A', None, 'USD', '27323.6750009618', None, 'trade', 'spend', None),  # noqa: E501
+            (7, '770f7468bc82e01badc0fa3a1f14e942596b4e5005136043fa365d5147d50e9f', 1, 1749566127000, 'A', None, 'ETH', '10', None, 'trade', 'receive', None),  # noqa: E501
+            (7, '770f7468bc82e01badc0fa3a1f14e942596b4e5005136043fa365d5147d50e9f', 2, 1749566127000, 'A', None, 'USD', '12', None, 'trade', 'fee', None),  # noqa: E501
             # identical swap #2
-            (7, '58848cc2b8c6f3085a228f4f85777826e81879f43c3e8a6838ed67c5b54a5c45', 0, 1749566127000, 'A', None, 'USD', '13661.83750048090', '', 'trade', 'spend', None),  # noqa: E501
-            (7, '58848cc2b8c6f3085a228f4f85777826e81879f43c3e8a6838ed67c5b54a5c45', 1, 1749566127000, 'A', None, 'ETH', '5', None, 'trade', 'receive', None),  # noqa: E501
+            (7, 'a7ea7e46207b89e3d6b0067fa764de13a94203ec73cac18882bbf2de426cfecd', 0, 1749566127000, 'A', None, 'USD', '13661.8375004809', '', 'trade', 'spend', None),  # noqa: E501
+            (7, 'a7ea7e46207b89e3d6b0067fa764de13a94203ec73cac18882bbf2de426cfecd', 1, 1749566127000, 'A', None, 'ETH', '5', None, 'trade', 'receive', None),  # noqa: E501
             # regular swap.
             (7, 'effef56a55330e3f4bf893757ea7c71d06078303ae09bcb93950a33a09f4aaac', 0, 1749566154000, 'A', None, 'USD', '108659.316521703', '', 'trade', 'spend', None),  # noqa: E501
             (7, 'effef56a55330e3f4bf893757ea7c71d06078303ae09bcb93950a33a09f4aaac', 1, 1749566154000, 'A', None, 'BTC', '1', None, 'trade', 'receive', None),  # noqa: E501
             # regular swap.
-            (7, 'c43d6b367aa214ac327ccafff42b88717167b78ff8a989af8433f6ac96b2235b', 0, 1749566193000, 'A', None, 'USD', '9265.416118770420', '', 'trade', 'spend', None),  # noqa: E501
+            (7, 'c43d6b367aa214ac327ccafff42b88717167b78ff8a989af8433f6ac96b2235b', 0, 1749566193000, 'A', None, 'USD', '9265.41611877042', '', 'trade', 'spend', None),  # noqa: E501
             (7, 'c43d6b367aa214ac327ccafff42b88717167b78ff8a989af8433f6ac96b2235b', 1, 1749566193000, 'A', None, 'eip155:1/erc20:0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9', '30', None, 'trade', 'receive', None),  # noqa: E501
             # regular swap.
             (7, '858c767c41df3e1a8d4a29bb9e9a8303f0e06efde643bb677f493ea4f1aa4f95', 0, 1749566160000, 'A', None, 'USD', '217318.633043406', '', 'trade', 'spend', None),  # noqa: E501

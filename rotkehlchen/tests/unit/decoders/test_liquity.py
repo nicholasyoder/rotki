@@ -23,7 +23,7 @@ from rotkehlchen.types import Location, TimestampMS, deserialize_evm_tx_hash
 def test_deposit_eth_borrow_lusd(ethereum_inquirer, ethereum_accounts):
     tx_hash = deserialize_evm_tx_hash('0xdb9a541a4af7d5d46d7ea5fe4a2a752dcb731d64d052f86f630e97362063602c')  # noqa: E501
     events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
-    gas_str, fee_str, debt_str, timestamp, user_address = '0.013622314246080246', '23.795404790091371686', '4774.957410610241615030', TimestampMS(1650878514000), ethereum_accounts[0]  # noqa: E501
+    gas_str, fee_str, debt_str, timestamp, user_address = '0.013622314246080246', '23.795404790091371686', '4774.95741061024161503', TimestampMS(1650878514000), ethereum_accounts[0]  # noqa: E501
     expected_events = [EvmEvent(
         tx_ref=tx_hash,
         sequence_index=0,

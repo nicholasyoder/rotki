@@ -249,9 +249,9 @@ def test_route_v2_with_multiple_underlying_swaps(
         event_type=HistoryEventType.TRADE,
         event_subtype=HistoryEventSubType.SPEND,
         asset=Asset('solana/token:EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'),
-        amount=FVal(spend_amount := '1.99800'),
+        amount=FVal(spend_amount := '1.998'),
         location_label=user_address,
-        notes=f'Swap {spend_amount} USDC in Jupiter',
+        notes=f'Swap {spend_amount!s} USDC in Jupiter',
         counterparty=CPT_JUPITER,
         address=SolanaAddress('6n9VhCwQ7EwK6NqFDjnHPzEk6wZdRBTfh43RFgHQWHuQ'),
     ), SolanaSwapEvent(

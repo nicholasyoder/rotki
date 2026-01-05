@@ -450,7 +450,7 @@ def test_hop_magic_bridge_l2_to_l1_arbitrum_one(arbitrum_one_inquirer: 'Arbitrum
         tx_hash=tx_hash,
     )
     timestamp = TimestampMS(1715564239000)
-    bridge_amount, gas_fee, bridge_fee, user_address = '690.640743549100305130', '0.00000257294', '5.136762511171047454', arbitrum_one_accounts[0]  # noqa: E501
+    bridge_amount, gas_fee, bridge_fee, user_address = '690.64074354910030513', '0.00000257294', '5.136762511171047454', arbitrum_one_accounts[0]  # noqa: E501
     approval_amount = '115792089237316195423570985008687907853269984665640563953113.341386879395299329'  # noqa: E501
     expected_events = [
         EvmEvent(

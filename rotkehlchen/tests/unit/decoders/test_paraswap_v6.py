@@ -295,7 +295,7 @@ def test_swap_amount_in_on_curve_v1(
     tx_hash = deserialize_evm_tx_hash('0xf9a632e9cdf86b0af99d38b3bb83d8e73c115c181ca111b917f189851b7e0191')  # noqa: E501
     events, _ = get_decoded_events_of_transaction(evm_inquirer=arbitrum_one_inquirer, tx_hash=tx_hash)  # noqa: E501
     user_address, timestamp = arbitrum_one_accounts[0], TimestampMS(1735558953000)
-    gas_amount, spend_amount, receive_amount, fee_amount = '0.00000448282', '1000', '1001.870050', '0.000294'  # noqa: E501
+    gas_amount, spend_amount, receive_amount, fee_amount = '0.00000448282', '1000', '1001.87005', '0.000294'  # noqa: E501
     a_bridged_usdc = Asset('eip155:42161/erc20:0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8')
     a_usdt = Asset('eip155:42161/erc20:0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9')
     assert events == [EvmEvent(

@@ -205,7 +205,7 @@ def test_adding_user_tokens(
         response=response,
         contained_in_msg=(
             f'The sum of underlying token weights for {bad_token.evm_address} is '
-            f'121.1000 and exceeds 100%'
+            f'121.1 and exceeds 100%'
         ),
         status_code=HTTPStatus.BAD_REQUEST,
     )
@@ -236,7 +236,7 @@ def test_adding_user_tokens(
         response=response,
         contained_in_msg=(
             f'The sum of underlying token weights for {bad_token.evm_address} is '
-            f'31.1000 and does not add up to 100%'
+            f'31.1 and does not add up to 100%'
         ),
         status_code=HTTPStatus.BAD_REQUEST,
     )
@@ -721,12 +721,12 @@ def test_adding_evm_token_with_underlying_token(
         {
             'address': '0xB2FdD60AD80ca7bA89B9BAb3b5336c2601C020b4',
             'token_kind': 'erc20',
-            'weight': '50.0',
+            'weight': '50',
         },
         {
             'address': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
             'token_kind': 'erc20',
-            'weight': '50.0',
+            'weight': '50',
         },
     ]
     expected_result = [
@@ -785,11 +785,11 @@ def test_adding_evm_token_with_underlying_token(
         {
             'address': underlying_token_1,
             'token_kind': 'erc20',
-            'weight': '50.0',
+            'weight': '50',
         },
         {
             'address': underlying_token_2,
             'token_kind': 'erc20',
-            'weight': '50.0',
+            'weight': '50',
         },
     ]

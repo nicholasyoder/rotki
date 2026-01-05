@@ -137,7 +137,7 @@ def test_query_btc_transactions(
         event_type=HistoryEventType.RECEIVE,
         event_subtype=HistoryEventSubType.NONE,
         asset=A_BTC,
-        amount=FVal(receive_amount := '0.00009310'),
+        amount=FVal(receive_amount := '0.0000931'),
         location_label=user_address,
         notes=f'Receive {receive_amount} BTC from 3QrkDXwdkmQgDk9kKSNCv4KrQFgegna5ym',
     )

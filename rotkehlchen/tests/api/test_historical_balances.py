@@ -240,7 +240,7 @@ def test_get_historical_asset_amounts_over_time(
     assert len(result['times']) == len(result['values'])
     for ts, amount in zip(result['times'], result['values'], strict=True):
         assert ts in {START_TS, START_TS + DAY_IN_SECONDS * 2, START_TS + DAY_IN_SECONDS * 3}
-        assert amount in {'2.0', '1.5', '3.5'}
+        assert amount in {'2', '1.5', '3.5'}
 
 
 @pytest.mark.parametrize('start_with_valid_premium', [True])
@@ -303,7 +303,7 @@ def test_get_historical_asset_amounts_over_time_with_negative_amount(
     assert len(result['times']) == 2
     assert result['times'][0] == START_TS  # Initial timestamp
     assert result['times'][1] == START_TS + DAY_IN_SECONDS * 2  # First spend
-    assert result['values'][0] == '2.0'  # Initial balance
+    assert result['values'][0] == '2'  # Initial balance
     assert result['values'][1] == '1.5'  # Balance after first spend
 
 
@@ -366,7 +366,7 @@ def test_get_historical_assets_in_collection_amounts_over_time(
     assert len(result['times']) == 2
     assert result['times'][0] == START_TS  # Initial timestamp
     assert result['times'][1] == START_TS + DAY_IN_SECONDS * 2  # First spend
-    assert result['values'][0] == '2.0'  # Initial balance
+    assert result['values'][0] == '2'  # Initial balance
     assert result['values'][1] == '1.5'  # Balance after first spend
 
 
