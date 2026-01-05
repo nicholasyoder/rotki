@@ -53,7 +53,7 @@ class ExchangeManager:
         return str(location)
 
     def connected_and_syncing_exchanges_num(self) -> int:
-        return len(list(self.iterate_exchanges()))
+        return sum(1 for _ in self.iterate_exchanges())
 
     def get_exchange(self, name: str, location: Location) -> ExchangeInterface | None:
         """Get the exchange object for an exchange with a given name and location

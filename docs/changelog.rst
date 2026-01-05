@@ -25,7 +25,9 @@ Changelog
 * :feature:`-` rotki will now be able to decode Sushiswap RedSnwap router transactions.
 * :feature:`10599` Users will now be able to bulk ignore assets, or mark assets as spam, from the account page.
 * :bug:`11208` Users will now be able to use contract addresses to filter assets in asset selection fields.
+* :bug:`11258` 1inch v6 limit order swaps will now be understood properly.
 * :feature:`-` Users can now search blockchain accounts by either address or label using a single unified filter.
+* :bug:`11267` PnL report generation will no longer crash when a fiat asset's price is unavailable for a swap event.
 * :bug:`11197` rotki will now group the notifications for Beaconcha.in rate-limited messages to avoid annoying users.
 * :bug:`-` Deposits in Curve's TwoCrypto and Tricrypto pools are now decoded properly.
 
