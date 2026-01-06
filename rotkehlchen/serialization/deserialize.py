@@ -14,7 +14,7 @@ from rotkehlchen.chain.optimism.constants import OP_BEDROCK_UPGRADE
 from rotkehlchen.constants import ZERO
 from rotkehlchen.errors.asset import UnprocessableTradePair
 from rotkehlchen.errors.serialization import ConversionError, DeserializationError
-from rotkehlchen.externalapis.utils import maybe_read_integer, read_hash, read_integer
+from rotkehlchen.externalapis.utils import read_hash, read_integer
 from rotkehlchen.fval import AcceptableFValInitInput, FVal
 from rotkehlchen.history.events.structures.types import HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -36,7 +36,6 @@ from rotkehlchen.types import (
 from rotkehlchen.utils.misc import convert_to_int, create_timestamp, iso8601ts_to_timestamp
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.l2_with_l1_fees.node_inquirer import L2WithL1FeesInquirer
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
 
 
@@ -548,7 +547,7 @@ def deserialize_evm_transaction(
         data: dict[str, Any],
         internal: Literal[False],
         chain_id: L2ChainIdsWithL1FeesType,
-        evm_inquirer: 'L2WithL1FeesInquirer',
+        evm_inquirer: 'EvmNodeInquirer',
         parent_tx_hash: Optional['EVMTxHash'] = None,
 ) -> tuple[L2WithL1FeesTransaction, dict[str, Any]]:
     ...
@@ -676,9 +675,10 @@ def deserialize_evm_transaction(
                             evm_inquirer=evm_inquirer,
                         )
                     try:
-                        l1_fee = maybe_read_integer(raw_receipt_data, 'l1Fee', source)
-                    except DeserializationError as e:  # Fall back to etherscan (via txlist)
-                        log.warning(f'Failed to get L1 fee from receipt due to {e!s}. Falling back to indexers.')  # noqa: E501
+                        l1_fee = read_integer(raw_receipt_data, 'l1Fee', source)
+                    except (DeserializationError, KeyError) as e:  # Fall back to indexers
+                        msg = f'missing key {e!s}' if isinstance(e, KeyError) else str(e)
+                        log.warning(f'Failed to get L1 fee from receipt due to {msg}. Falling back to indexers.')  # noqa: E501
                         l1_fee = evm_inquirer.maybe_get_l1_fees(
                             account=from_address,
                             tx_hash=tx_hash,

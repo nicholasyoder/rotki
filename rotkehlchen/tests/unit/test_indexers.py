@@ -1,43 +1,64 @@
 import json
 from collections.abc import Iterator
 from contextlib import ExitStack
-from typing import TYPE_CHECKING
-from unittest.mock import patch
+from typing import TYPE_CHECKING, Final
+from unittest.mock import _patch, patch
 
 import pytest
 
+from rotkehlchen.chain.evm.l2_with_l1_fees.types import L2WithL1FeesTransaction
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.externalapis.etherscan_like import HasChainActivity
 from rotkehlchen.types import deserialize_evm_tx_hash
 
 if TYPE_CHECKING:
+    from rotkehlchen.chain.base.node_inquirer import BaseInquirer
     from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
 
 
+ETHERSCAN_PATCH: Final = patch(
+    target='rotkehlchen.externalapis.etherscan.Etherscan._query',
+    side_effect=RemoteError('BOOM'),
+)
+BLOCKSCOUT_PATCH: Final = patch(
+    target='rotkehlchen.externalapis.blockscout.Blockscout._query_and_process',
+    side_effect=RemoteError('BOOM'),
+)
+ROUTESCAN_PATCH: Final = patch(
+    target='rotkehlchen.externalapis.routescan.Routescan._query',
+    side_effect=RemoteError('BOOM'),
+)
+
+
+def _patch_indexers(patches: list[_patch]) -> Iterator[None]:
+    with ExitStack() as stack:
+        for indexer_patch in patches:
+            stack.enter_context(indexer_patch)
+        yield
+
+
 @pytest.fixture(name='check_all_indexers', params=[
-    [(blockscout_patch := patch(
-        target='rotkehlchen.externalapis.blockscout.Blockscout._query_and_process',
-        side_effect=RemoteError('BOOM'),
-    )), (routescan_patch := patch(
-        target='rotkehlchen.externalapis.routescan.Routescan._query',
-        side_effect=RemoteError('BOOM'),
-    ))],  # blockscout and routescan patched, uses etherscan
-    [(etherscan_patch := patch(
-        target='rotkehlchen.externalapis.etherscan.Etherscan._query',
-        side_effect=RemoteError('BOOM'),
-    )), routescan_patch],  # etherscan and routescan patched, uses blockscout
-    [etherscan_patch, blockscout_patch],  # etherscan and blockscout patched, uses routescan.
+    [BLOCKSCOUT_PATCH, ROUTESCAN_PATCH],  # Uses etherscan
+    [ETHERSCAN_PATCH, ROUTESCAN_PATCH],  # Uses blockscout
+    [ETHERSCAN_PATCH, BLOCKSCOUT_PATCH],  # Uses routescan.
 ])
 def fixture_check_all_indexers(request: pytest.FixtureRequest) -> Iterator[None]:
     """Run the test once for each indexer (etherscan, blockscout, routescan).
-    Each run patches the all the other indexers to fail, forcing fallback to the target indexer,
+    Each run patches all the other indexers to fail, forcing fallback to the target indexer,
     and ensuring a failure if the target indexer fails.
     """
-    with ExitStack() as stack:
-        for indexer_patch in request.param:
-            stack.enter_context(indexer_patch)
-        yield
+    yield from _patch_indexers(request.param)
+
+
+@pytest.fixture(name='check_all_indexers_excluding_etherscan', params=[
+    [ETHERSCAN_PATCH, ROUTESCAN_PATCH],  # Uses blockscout
+    [ETHERSCAN_PATCH, BLOCKSCOUT_PATCH],  # Uses routescan.
+])
+def fixture_check_all_indexers_excluding_etherscan(request: pytest.FixtureRequest) -> Iterator[None]:  # noqa: E501
+    """Run the test once for each indexer except for etherscan. Used for chains that etherscan
+    doesn't support."""
+    yield from _patch_indexers(request.param)
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
@@ -160,6 +181,22 @@ def test_get_transaction_by_hash(
     assert tx.timestamp == 1633128954
     assert tx.value == 33000000000000000
     assert tx.gas == 294144
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+def test_get_transaction_by_hash_l1_fee(
+        base_inquirer: 'BaseInquirer',
+        check_all_indexers_excluding_etherscan,
+) -> None:
+    """Check that we can properly retrieve the gas amount for a chain that has an L1 fee."""
+    tx, _ = base_inquirer.get_transaction_by_hash(
+        tx_hash=(tx_hash := deserialize_evm_tx_hash('0xf1bfb66819293de78d82ccf1d076ef4987114d01716ddc1d846f4c806df200c0')),  # noqa: E501
+    )
+    assert isinstance(tx, L2WithL1FeesTransaction)
+    assert tx.tx_hash == tx_hash
+    assert tx.gas == 632652
+    assert tx.gas_used == 509264
+    assert tx.l1_fee == 133239428144
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])

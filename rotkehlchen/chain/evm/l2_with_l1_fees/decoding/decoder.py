@@ -13,8 +13,8 @@ from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.utils.misc import from_wei
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.l2_with_l1_fees.node_inquirer import L2WithL1FeesInquirer
     from rotkehlchen.chain.evm.l2_with_l1_fees.transactions import L2WithL1FeesTransactions
+    from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.db.dbhandler import DBHandler
     from rotkehlchen.premium.premium import Premium
 
@@ -30,7 +30,7 @@ class L2WithL1FeesTransactionDecoder(EVMTransactionDecoder, ABC):
     def __init__(
             self,
             database: 'DBHandler',
-            node_inquirer: 'L2WithL1FeesInquirer',
+            node_inquirer: 'EvmNodeInquirer',
             transactions: 'L2WithL1FeesTransactions',
             value_asset: AssetWithOracles,
             event_rules: list[EventDecoderFunction],

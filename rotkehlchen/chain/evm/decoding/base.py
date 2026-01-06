@@ -1,6 +1,6 @@
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional
 
 from rotkehlchen.assets.asset import CryptoAsset, EvmToken
 from rotkehlchen.assets.utils import (
@@ -32,9 +32,6 @@ from rotkehlchen.utils.misc import bytes_to_address, ts_sec_to_ms
 if TYPE_CHECKING:
     from rotkehlchen.assets.asset import Asset
     from rotkehlchen.assets.utils import TokenEncounterInfo
-    from rotkehlchen.chain.evm.l2_with_l1_fees.node_inquirer import (
-        DSProxyL2WithL1FeesInquirerWithCacheData,
-    )
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer, EvmNodeInquirerWithProxies
     from rotkehlchen.db.dbhandler import DBHandler
 
@@ -325,7 +322,7 @@ class BaseEvmDecoderToolsWithProxy(BaseEvmDecoderTools):
     def __init__(
             self,
             database: 'DBHandler',
-            evm_inquirer: Union['EvmNodeInquirerWithProxies', 'DSProxyL2WithL1FeesInquirerWithCacheData'],  # noqa: E501
+            evm_inquirer: 'EvmNodeInquirerWithProxies',
             is_non_conformant_erc721_fn: Callable[[ChecksumEvmAddress], bool],
             address_is_exchange_fn: Callable[[ChecksumEvmAddress], str | None],
             exceptions_mappings: dict[str, 'Asset'] | None = None,
