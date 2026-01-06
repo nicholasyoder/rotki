@@ -93,6 +93,12 @@ def query_balancer_data(
     for pool in query_balancer_pools(chain=inquirer.chain_id, version=version):
         try:
             underlying_tokens = [token for token in pool['poolTokens'] if pool['address'] != token['address']]  # noqa: E501
+            if len(underlying_tokens) == 0:
+                log.error(
+                    f'Balancer pool {pool.get("id", pool.get("address", "unknown"))} on '
+                    f'{inquirer.chain_name} has no underlying tokens. Skipping...',
+                )
+                continue
             default_weight = ONE / len(underlying_tokens)
             pool_token = get_or_create_evm_token(
                 userdb=inquirer.database,

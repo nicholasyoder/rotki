@@ -1255,7 +1255,6 @@ class Inquirer:
         """
         if (
             token.underlying_tokens is None or
-            len(token.underlying_tokens) == 0 or
             token.protocol != CPT_YEARN_STAKING
         ):
             log.error(f'Logic to query staked yearn vault price with a malformed token {token}')

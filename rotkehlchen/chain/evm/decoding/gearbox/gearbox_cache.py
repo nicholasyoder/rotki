@@ -157,7 +157,7 @@ def register_token(
         evm_inquirer=evm_inquirer,
         underlying_tokens=(
             [UnderlyingToken(address=pool.underlying_token, token_kind=TokenKind.ERC20, weight=ONE)]  # noqa: E501
-            if pool.underlying_token is not None else []
+            if pool.underlying_token is not None else None
         ),
         encounter=encounter,
     )

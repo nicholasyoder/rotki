@@ -41,7 +41,7 @@ def get_umami_vault_token_price(
         token_amount=price_per_share,
         token_decimals=vault_token.decimals,
     )
-    if not vault_token.underlying_tokens:
+    if vault_token.underlying_tokens is None:
         log.error(f'Umami vault token {vault_token.evm_address} missing underlying tokens')
         return ZERO_PRICE
 
