@@ -3,17 +3,17 @@ from typing import TYPE_CHECKING, Any
 
 from rotkehlchen.db.filtering import DBMultiStringFilter
 from rotkehlchen.exchanges.data_structures import hash_id
-from rotkehlchen.history.events.structures.base import HistoryBaseEntry
 from rotkehlchen.types import AssetAmount, Location
 from rotkehlchen.utils.misc import timestamp_to_date, ts_ms_to_sec
 
 if TYPE_CHECKING:
     from rotkehlchen.db.filtering import HistoryBaseEntryFilterQuery
     from rotkehlchen.fval import FVal
+    from rotkehlchen.history.events.structures.base import HistoryBaseEntry
     from rotkehlchen.types import Asset, TimestampMS
 
 
-def history_event_to_staking_for_api(event: HistoryBaseEntry) -> dict[str, Any]:
+def history_event_to_staking_for_api(event: 'HistoryBaseEntry') -> dict[str, Any]:
     """This is a utility function to be used by kraken staking and binance savings
     rotki api endpoints. It just serves to reduce the returned data by the api
     for those endpoints.

@@ -423,30 +423,8 @@ def test_get_historical_asset_balance_without_premium(rotkehlchen_api_server: 'A
 @pytest.mark.parametrize('start_with_valid_premium', [True])
 def test_get_historical_netvalue(
         rotkehlchen_api_server: 'APIServer',
-        globaldb: 'GlobalDBHandler',
         setup_historical_data: None,
 ) -> None:
-    main_currency = A_EUR
-    btc_price = Price(FVal('16000.0'))
-    eth_price = Price(FVal('1200.0'))
-    for offset in range(3):
-        globaldb.add_historical_prices(entries=[
-            HistoricalPrice(
-                from_asset=A_BTC,
-                to_asset=main_currency,
-                source=HistoricalPriceOracle.CRYPTOCOMPARE,
-                timestamp=(ts := Timestamp(START_TS + (DAY_IN_SECONDS * offset))),
-                price=btc_price,
-            ),
-            HistoricalPrice(
-                from_asset=A_ETH,
-                to_asset=main_currency,
-                source=HistoricalPriceOracle.CRYPTOCOMPARE,
-                timestamp=ts,
-                price=eth_price,
-            ),
-        ])
-
     db = rotkehlchen_api_server.rest_api.rotkehlchen.data.db
     with db.user_write() as write_cursor:
         DBHistoryEvents(database=db).add_history_events(
@@ -454,162 +432,112 @@ def test_get_historical_netvalue(
             history=[HistoryEvent(
                 group_identifier='eur_receive_1',
                 sequence_index=0,
-                timestamp=ts_sec_to_ms(START_TS),  # Day 1
+                timestamp=ts_sec_to_ms(START_TS),
                 event_type=HistoryEventType.RECEIVE,
                 event_subtype=HistoryEventSubType.NONE,
                 location=Location.BLOCKCHAIN,
                 asset=A_EUR,
-                amount=FVal('20000'),  # Enough EUR to buy BTC
+                amount=FVal('20000'),
                 notes='Receive EUR',
             ), *create_swap_events(
-                timestamp=ts_sec_to_ms(DAY_AFTER_START_TS),  # Day 2,
-                location=Location.EXTERNAL,
+                timestamp=ts_sec_to_ms(DAY_AFTER_START_TS),
+                location=Location.BLOCKCHAIN,
                 group_identifier='1xyz',
                 spend=AssetAmount(asset=A_EUR, amount=FVal('3200.0')),
                 receive=AssetAmount(asset=A_BTC, amount=FVal('0.2')),
             ), *create_swap_events(
-                timestamp=ts_sec_to_ms(Timestamp(START_TS + DAY_IN_SECONDS * 2)),  # Day 3,
-                location=Location.EXTERNAL,
+                timestamp=ts_sec_to_ms(Timestamp(START_TS + DAY_IN_SECONDS * 2)),
+                location=Location.BLOCKCHAIN,
                 group_identifier='2xyz',
                 spend=AssetAmount(asset=A_ETH, amount=FVal('0.2')),
                 receive=AssetAmount(asset=A_EUR, amount=FVal('240.0')),
             )],
         )
 
+    process_historical_balances(database=db, msg_aggregator=db.msg_aggregator)
+
     response = requests.post(
-        api_url_for(
-            rotkehlchen_api_server,
-            'historicalnetvalueresource',
-        ),
-        json={
-            'from_timestamp': START_TS,
-            'to_timestamp': START_TS + DAY_IN_SECONDS * 3,
-        },
+        api_url_for(rotkehlchen_api_server, 'historicalnetvalueresource'),
+        json={'from_timestamp': START_TS, 'to_timestamp': START_TS + DAY_IN_SECONDS * 3},
     )
     result = assert_proper_sync_response_with_result(response)
 
-    assert len(result['missing_prices']) == 0
-    assert 'last_group_identifier' not in result
+    assert result['processing_required'] is False
     assert len(result['times']) == len(result['values']) == 3
-    assert all(ts in result['times'] for ts in (
-        timestamp_to_daystart_timestamp(START_TS),
-        timestamp_to_daystart_timestamp(Timestamp(START_TS + DAY_IN_SECONDS * 2)),
-    ))
 
     expected_timestamps = [
         timestamp_to_daystart_timestamp(START_TS),  # Day 1
         timestamp_to_daystart_timestamp(DAY_AFTER_START_TS),  # Day 2
         timestamp_to_daystart_timestamp(Timestamp(START_TS + DAY_IN_SECONDS * 2)),  # Day 3
     ]
-    expected_values = [
-        FVal('64000'),  # Day 1: (2 BTC * 16000) + (10 ETH * 1200) + 20000 EUR
-        FVal('64000'),  # Day 2: (2.2 BTC * 16000) + (10 ETH * 1200) + 16800 EUR
-        FVal('56000'),  # Day 3: (1.7 BTC * 16000) + (9.8 ETH * 1200) + 17040 EUR
+    expected_balances = [
+        {  # Day 1: Initial balances (2 BTC, 10 ETH from fixture) + 20000 EUR receive
+            A_BTC.identifier: '2',
+            A_ETH.identifier: '10',
+            A_EUR.identifier: '20000',
+        },
+        {  # Day 2: After EUR -> BTC swap (+0.2 BTC, -3200 EUR)
+            A_BTC.identifier: '2.2',
+            A_ETH.identifier: '10',
+            A_EUR.identifier: '16800',
+        },
+        {  # Day 3: After BTC spend (-0.5) and ETH -> EUR swap (-0.2 ETH, +240 EUR)
+            A_BTC.identifier: '1.7',
+            A_ETH.identifier: '9.8',
+            A_EUR.identifier: '17040',
+        },
     ]
 
-    for timestamp, value, expected_ts, expected_val in zip(
+    for timestamp, balances, expected_ts, expected_bal in zip(
         result['times'],
         result['values'],
         expected_timestamps,
-        expected_values,
+        expected_balances,
         strict=True,
     ):
         assert timestamp == expected_ts
-        assert FVal(value) == expected_val
+        assert balances == expected_bal
 
     # now, ignore an asset and see the result is expected.
     with db.user_write() as write_cursor:
-        db.add_to_ignored_assets(
-            write_cursor=write_cursor,
-            asset=A_BTC,
-        )
+        db.add_to_ignored_assets(write_cursor=write_cursor, asset=A_BTC)
 
     response = requests.post(
-        api_url_for(
-            rotkehlchen_api_server,
-            'historicalnetvalueresource',
-        ),
-        json={
-            'from_timestamp': START_TS,
-        },
+        api_url_for(rotkehlchen_api_server, 'historicalnetvalueresource'),
+        json={'from_timestamp': START_TS},
     )
     result = assert_proper_sync_response_with_result(response)
-    assert len(result['missing_prices']) == 0
-    assert 'last_group_identifier' not in result
-    assert len(result['times']) == len(result['values']) == 3
-    assert all(ts in result['times'] for ts in expected_timestamps[::2])
 
-    # Expected values after ignoring BTC
-    expected_values_ignored = [
-        FVal('32000'),  # Day 1: (10 ETH * 1200) + 20000 EUR
-        FVal('28800.0'),  # Day 2: (10 ETH * 1200) + (20000 - 3200) EUR = 28800
-        FVal('28800.0'),  # Day 3: (9.8 ETH * 1200 = 11760) + (16800 + 240 = 17040) EUR = 28800
+    assert result['processing_required'] is False
+    assert len(result['times']) == len(result['values']) == 3
+
+    expected_balances_ignored = [
+        {A_ETH.identifier: '10', A_EUR.identifier: '20000'},
+        {A_ETH.identifier: '10', A_EUR.identifier: '16800'},
+        {A_ETH.identifier: '9.8', A_EUR.identifier: '17040'},
     ]
-    for timestamp, value, expected_ts, expected_val in zip(
+
+    for timestamp, balances, expected_ts, expected_bal in zip(
         result['times'],
         result['values'],
         expected_timestamps,
-        expected_values_ignored,
+        expected_balances_ignored,
         strict=True,
     ):
         assert timestamp == expected_ts
-        assert FVal(value) == expected_val
+        assert balances == expected_bal
 
 
 @pytest.mark.parametrize('start_with_valid_premium', [True])
-def test_get_historical_netvalue_missing_prices(
-        rotkehlchen_api_server: 'APIServer',
-        globaldb: 'GlobalDBHandler',
-        setup_historical_data: None,
-) -> None:
-    main_currency = A_EUR
-    eth_price = Price(FVal('1200.0'))
-
-    for offset in range(3):
-        day_ts = timestamp_to_daystart_timestamp(Timestamp(START_TS + DAY_IN_SECONDS * offset))
-        globaldb.add_historical_prices(entries=[
-            HistoricalPrice(
-                from_asset=A_ETH,
-                to_asset=main_currency,
-                source=HistoricalPriceOracle.CRYPTOCOMPARE,
-                timestamp=day_ts,
-                price=eth_price,
-            ),
-        ])
-
-    response = requests.post(
-        api_url_for(
-            rotkehlchen_api_server,
-            'historicalnetvalueresource',
-        ),
-        json={
-            'from_timestamp': START_TS,
-            'to_timestamp': START_TS + DAY_IN_SECONDS * 3,
-        },
-    )
-    result = assert_proper_sync_response_with_result(response)
-
-    # Check missing prices are reported
-    assert 'last_group_identifier' not in result
-    assert len(result['missing_prices']) > 0
-    assert all(
-        entry[0] == A_BTC.identifier
-        for entry in result['missing_prices']
-    )
-
-    # Net value should only include ETH
-    day1_ts = timestamp_to_daystart_timestamp(START_TS)
-    assert result['times'][0] == day1_ts
-    assert FVal(result['values'][0]) == FVal('10') * eth_price
-
-
-@pytest.mark.parametrize('start_with_valid_premium', [True])
-def test_get_historical_netvalue_with_negative_amount(
+def test_get_historical_netvalue_with_negative_balance_events(
         rotkehlchen_api_server: 'APIServer',
         setup_historical_data: None,
-        globaldb: 'GlobalDBHandler',
 ) -> None:
+    """Test that get_historical_netvalue handles negative balance scenarios properly."""
     db = rotkehlchen_api_server.rest_api.rotkehlchen.data.db
+    db.msg_aggregator.rotki_notifier = MockRotkiNotifier()  # type: ignore[assignment]
+
+    # Add events that would create negative balance
     events = [
         HistoryEvent(
             group_identifier='btc_spend_2',
@@ -619,19 +547,8 @@ def test_get_historical_netvalue_with_negative_amount(
             event_subtype=HistoryEventSubType.NONE,
             location=Location.BLOCKCHAIN,
             asset=A_BTC,
-            amount=FVal('1.6'),  # spending more than remaining balance
-            notes='BTC first overspend attempt',
-        ),
-        HistoryEvent(
-            group_identifier='btc_spend_3',
-            sequence_index=4,
-            timestamp=ts_sec_to_ms(Timestamp(START_TS + DAY_IN_SECONDS * 4)),
-            event_type=HistoryEventType.SPEND,
-            event_subtype=HistoryEventSubType.NONE,
-            location=Location.BLOCKCHAIN,
-            asset=A_BTC,
-            amount=FVal('0.7'),
-            notes='BTC second overspend attempt',
+            amount=FVal('1.6'),  # spending more than remaining balance (1.5)
+            notes='BTC overspend',
         ),
     ]
     with db.user_write() as write_cursor:
@@ -640,47 +557,40 @@ def test_get_historical_netvalue_with_negative_amount(
             history=events,
         )
 
-    main_currency = A_EUR
-    btc_price = Price(FVal('16000.0'))
-    eth_price = Price(FVal('1200.0'))
+    process_historical_balances(database=db, msg_aggregator=db.msg_aggregator)
 
-    for offset in range(3):
-        globaldb.add_historical_prices(entries=[
-            HistoricalPrice(
-                from_asset=A_BTC,
-                to_asset=main_currency,
-                source=HistoricalPriceOracle.CRYPTOCOMPARE,
-                timestamp=(ts := Timestamp(START_TS + (DAY_IN_SECONDS * offset))),
-                price=btc_price,
-            ),
-            HistoricalPrice(
-                from_asset=A_ETH,
-                to_asset=main_currency,
-                source=HistoricalPriceOracle.CRYPTOCOMPARE,
-                timestamp=ts,
-                price=eth_price,
-            ),
-        ])
+    # Verify negative balance was detected via WS message
+    messages = db.msg_aggregator.rotki_notifier.messages  # type: ignore[union-attr]
+    assert any(m.message_type == WSMessageType.NEGATIVE_BALANCE_DETECTED for m in messages)
 
     response = requests.post(
-        api_url_for(
-            rotkehlchen_api_server,
-            'historicalnetvalueresource',
-        ),
-        json={
-            'from_timestamp': START_TS,
-            'to_timestamp': START_TS + DAY_IN_SECONDS * 6,
-        },
+        api_url_for(rotkehlchen_api_server, 'historicalnetvalueresource'),
+        json={'from_timestamp': START_TS, 'to_timestamp': START_TS + DAY_IN_SECONDS * 4},
     )
     result = assert_proper_sync_response_with_result(response)
 
-    assert 'last_group_identifier' in result
-    assert len(result['missing_prices']) == 0
-    assert len(result['times']) == len(result['values']) == 2
-    assert all(ts in result['times'] for ts in (
-        timestamp_to_daystart_timestamp(START_TS),
-        timestamp_to_daystart_timestamp(Timestamp(START_TS + DAY_IN_SECONDS * 2)),
-    ))
+    # Should still return data up to the point before negative balance
+    assert result['processing_required'] is True
+    expected_timestamps = [
+        timestamp_to_daystart_timestamp(START_TS),  # Day 1
+        timestamp_to_daystart_timestamp(Timestamp(START_TS + DAY_IN_SECONDS * 2)),  # Day 3
+    ]
+    expected_balances = [
+        {A_BTC.identifier: '2', A_ETH.identifier: '10'},  # Day 1: Initial receives from fixture
+        {A_BTC.identifier: '1.5', A_ETH.identifier: '10'},  # Day 3: After partial BTC spend
+    ]
+
+    assert len(result['times']) == len(expected_timestamps)
+    assert len(result['values']) == len(expected_balances)
+    for timestamp, balances, expected_ts, expected_bal in zip(
+        result['times'],
+        result['values'],
+        expected_timestamps,
+        expected_balances,
+        strict=True,
+    ):
+        assert timestamp == expected_ts
+        assert balances == expected_bal
 
 
 @pytest.mark.vcr(filter_query_parameters=['api_key'])
