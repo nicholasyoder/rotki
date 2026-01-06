@@ -675,6 +675,7 @@ class DBHandler:
             name: Literal[
                 DBCacheStatic.DOCKER_DEVICE_INFO,
                 DBCacheStatic.MONERIUM_OAUTH_CREDENTIALS,
+                DBCacheStatic.STALE_BALANCES_FROM_TS,
             ],
     ) -> str | None:
         ...
@@ -701,7 +702,6 @@ class DBHandler:
                 DBCacheStatic.LAST_GNOSISPAY_QUERY_TS,
                 DBCacheStatic.LAST_SPARK_ASSETS_UPDATE,
                 DBCacheStatic.LAST_DB_UPGRADE,
-                DBCacheStatic.STALE_BALANCES_FROM_TS,
                 DBCacheStatic.LAST_HISTORICAL_BALANCE_PROCESSING_TS,
             ],
     ) -> Timestamp | None:
@@ -727,10 +727,11 @@ class DBHandler:
         ).fetchone()) is None:
             return None
 
-        # Return string for DOCKER_DEVICE_INFO & MONERIUM_OAUTH_CREDENTIALS, timestamp for all others  # noqa: E501
+        # Return string for these cache entries, timestamp for all others
         if name in (
             DBCacheStatic.DOCKER_DEVICE_INFO,
             DBCacheStatic.MONERIUM_OAUTH_CREDENTIALS,
+            DBCacheStatic.STALE_BALANCES_FROM_TS,  # format: "{event_ts},{modification_ts}"
         ):
             return value[0]
 

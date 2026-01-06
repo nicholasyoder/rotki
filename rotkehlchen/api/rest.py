@@ -5962,7 +5962,7 @@ class RestAPI:
         """Trigger the specified async task."""
         if task == TaskName.HISTORICAL_BALANCE_PROCESSING:
             with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
-                stale_from_ts = TimestampMS(value) if (value := self.rotkehlchen.data.db.get_static_cache(  # noqa: E501
+                stale_from_ts = TimestampMS(int(value)) if (value := self.rotkehlchen.data.db.get_static_cache(  # noqa: E501
                     cursor=cursor,
                     name=DBCacheStatic.STALE_BALANCES_FROM_TS,
                 )) is not None else None

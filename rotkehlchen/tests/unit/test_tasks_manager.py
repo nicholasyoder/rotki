@@ -48,6 +48,7 @@ from rotkehlchen.premium.premium import (
 )
 from rotkehlchen.serialization.deserialize import deserialize_timestamp
 from rotkehlchen.tasks.assets import _find_missing_tokens
+from rotkehlchen.tasks.historical_balances import process_historical_balances
 from rotkehlchen.tasks.manager import PREMIUM_STATUS_CHECK, TaskManager
 from rotkehlchen.tasks.utils import should_run_periodic_task
 from rotkehlchen.tests.fixtures.websockets import WebsocketReader
@@ -86,6 +87,7 @@ if TYPE_CHECKING:
     from rotkehlchen.exchanges.exchange import ExchangeInterface
     from rotkehlchen.exchanges.manager import ExchangeManager
     from rotkehlchen.rotkehlchen import Rotkehlchen
+    from rotkehlchen.user_messages import MessagesAggregator
 
 
 def test_potential_maybe_schedule_task(task_manager: TaskManager):
@@ -1674,3 +1676,43 @@ def test_process_historical_balances(
             (event6_id, CPT_AAVE_V3, '500', a_ethdai_asset.identifier),
             (event7_id, None, '700', A_DAI.identifier),
         ]
+
+
+def test_process_historical_balances_clears_stale_marker(
+        database: 'DBHandler',
+        messages_aggregator: 'MessagesAggregator',
+) -> None:
+    cache_key = DBCacheStatic.STALE_BALANCES_FROM_TS.value
+    db_events = DBHistoryEvents(database)
+
+    with database.user_write() as write_cursor:
+        db_events.add_history_event(
+            write_cursor=write_cursor,
+            event=EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                group_identifier='grp1',
+                sequence_index=0,
+                timestamp=TimestampMS(1000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=FVal('10'),
+                location_label=TEST_ADDR1,
+            ),
+        )
+
+    with database.conn.read_ctx() as cursor:
+        assert cursor.execute(
+            'SELECT value FROM key_value_cache WHERE name = ?',
+            (cache_key,),
+        ).fetchone() is not None
+
+    gevent.sleep(0.01)  # ensure modification_ts < processing_started_at
+    process_historical_balances(database, messages_aggregator)
+
+    with database.conn.read_ctx() as cursor:
+        assert cursor.execute(
+            'SELECT value FROM key_value_cache WHERE name = ?',
+            (cache_key,),
+        ).fetchone() is None

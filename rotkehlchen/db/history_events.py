@@ -74,7 +74,7 @@ from rotkehlchen.types import (
     Timestamp,
     TimestampMS,
 )
-from rotkehlchen.utils.misc import ts_ms_to_sec, ts_sec_to_ms
+from rotkehlchen.utils.misc import ts_ms_to_sec, ts_now_in_ms, ts_sec_to_ms
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
@@ -94,12 +94,16 @@ class DBHistoryEvents:
             write_cursor: 'DBCursor',
             timestamp: TimestampMS,
     ) -> None:
-        """Track earliest modified event timestamp for balance cache invalidation."""
+        """Track earliest modified event timestamp and when modification occurred."""
         write_cursor.execute(
             'INSERT INTO key_value_cache (name, value) VALUES (?, ?) '
             'ON CONFLICT(name) DO UPDATE SET value = '
             'MIN(CAST(value AS INTEGER), CAST(excluded.value AS INTEGER))',
             (DBCacheStatic.STALE_BALANCES_FROM_TS.value, str(timestamp)),
+        )
+        write_cursor.execute(
+            'INSERT OR REPLACE INTO key_value_cache (name, value) VALUES (?, ?)',
+            (DBCacheStatic.STALE_BALANCES_MODIFICATION_TS.value, str(ts_now_in_ms())),
         )
 
     def _execute_and_track_modified(
