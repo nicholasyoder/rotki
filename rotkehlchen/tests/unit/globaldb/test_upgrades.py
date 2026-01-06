@@ -1383,7 +1383,7 @@ def test_upgrade_v13_v14(globaldb: GlobalDBHandler, messages_aggregator):
         ]
         assert globaldb_get_unique_cache_value(
             cursor=cursor,
-            key_parts=(CacheType.MORPHO_VAULTS,),
+            key_parts=(CacheType.MORPHO_VAULTS,),  # type: ignore[arg-type]  # MORPHO_VAULTS was a unique cache key at the time of this upgrade
         ) == '123'
         assert cursor.execute("SELECT address, protocol FROM evm_tokens WHERE protocol LIKE 'balancer-%' ORDER BY address").fetchall() == [  # noqa: E501
             ('0x3C4D5E6F7890ABCDEF1234567890ABCDEF123456', 'balancer-v1'),  # should become balancer-v2  # noqa: E501
@@ -1447,7 +1447,7 @@ def test_upgrade_v13_v14(globaldb: GlobalDBHandler, messages_aggregator):
         ]
         assert globaldb_get_unique_cache_value(
             cursor=cursor,
-            key_parts=(CacheType.MORPHO_VAULTS,),
+            key_parts=(CacheType.MORPHO_VAULTS,),  # type: ignore[arg-type]  # MORPHO_VAULTS was a unique cache key at the time of this upgrade
         ) is None
         assert cursor.execute("SELECT address, protocol FROM evm_tokens WHERE protocol LIKE 'balancer-%' ORDER BY address").fetchall() == [  # noqa: E501
             ('0x3C4D5E6F7890ABCDEF1234567890ABCDEF123456', 'balancer-v2'),
@@ -1479,6 +1479,13 @@ def test_upgrade_v14_v15(
             ('AURA_POOLS42161', '109', 1767375961),
             ('AURA_POOLS1', '273', 1767375964),
         ]
+        assert cursor.execute(
+            "SELECT key, value, last_queried_ts FROM unique_cache WHERE key LIKE 'MORPHO_VAULTS%'",
+        ).fetchall() == [
+            ('MORPHO_VAULTSpolygon_pos', '53', 1767365352),
+            ('MORPHO_VAULTSethereum', '389', 1767375981),
+            ('MORPHO_VAULTSbase', '413', 1767375982),
+        ]
 
     with ExitStack() as stack:
         patch_for_globaldb_upgrade_to(stack, 15)
@@ -1492,7 +1499,7 @@ def test_upgrade_v14_v15(
     assert globaldb.get_setting_value('version', 0) == 15
     with globaldb.conn.read_ctx() as cursor:
         assert cursor.execute(
-            "SELECT COUNT(*) FROM unique_cache WHERE key LIKE 'AURA_POOLS%'",
+            "SELECT COUNT(*) FROM unique_cache WHERE key LIKE 'AURA_POOLS%' OR key LIKE 'MORPHO_VAULTS%'",  # noqa: E501
         ).fetchone()[0] == 0
 
 
