@@ -606,8 +606,6 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
                         location='etherscan tx receipt',
                     )
                     receipt_log['transactionIndex'] = tx_index
-                # This is only implemented for some evm chains
-                self._additional_receipt_processing(tx_receipt)
             except (DeserializationError, Web3Exception, ValueError, KeyError) as e:
                 msg = str(e)
                 if isinstance(e, KeyError):
@@ -1221,9 +1219,6 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
         decide the block range for a specific logquery.
         """
         return WEB3_LOGQUERY_BLOCK_RANGE
-
-    def _additional_receipt_processing(self, tx_receipt: dict[str, Any]) -> None:
-        """Performs additional tx_receipt processing where necessary"""
 
     @protect_with_lock()
     def ensure_cache_data_is_updated(
