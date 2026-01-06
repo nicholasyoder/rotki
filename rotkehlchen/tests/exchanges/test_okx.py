@@ -57,7 +57,7 @@ def test_okx_api_signature(mock_okx: Okx):
 
 
 def test_okx_query_balances(mock_okx: Okx):
-    def mock_okx_balances(method, url):     # pylint: disable=unused-argument
+    def mock_okx_balances(method, url, **_kwargs):     # pylint: disable=unused-argument
         if '/api/v5/asset/balances' in url:
             return MockResponse(200, '{"code":"0","data":[{"availBal":"25","bal":"25","ccy":"USDT","frozenBal":"0"},{"availBal":"30","bal":"30","ccy":"USDC","frozenBal":"0"}],"msg":""}')  # noqa: E501
 
@@ -185,7 +185,7 @@ def test_okx_query_balances(mock_okx: Okx):
 
 
 def test_okx_query_trades(mock_okx: 'Okx') -> None:
-    def mock_okx_trades(method, url):  # pylint: disable=unused-argument
+    def mock_okx_trades(method, url, **_kwargs):  # pylint: disable=unused-argument
         if 'trade/orders-history-archive' in url:
             data = """
 {
@@ -807,7 +807,7 @@ def test_okx_query_trades(mock_okx: 'Okx') -> None:
 
 
 def test_okx_query_deposits_withdrawals(mock_okx: 'Okx') -> None:
-    def mock_okx_deposits_withdrawals(method, url):     # pylint: disable=unused-argument
+    def mock_okx_deposits_withdrawals(method, url, **_kwargs):     # pylint: disable=unused-argument
         if 'deposit' in url:
             data = """
 {

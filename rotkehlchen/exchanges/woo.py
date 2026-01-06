@@ -260,10 +260,10 @@ class Woo(ExchangeInterface, SignatureGeneratorMixin):
         parameters = urllib.parse.urlencode(call_options)
         normalized_content = f'{timestamp}{method}/{endpoint}{parameters}' if endpoint.startswith('v3') else f'{parameters}|{timestamp}'  # noqa: E501
         signature = self.generate_hmac_signature(normalized_content)
-        self.session.headers.update({
+        headers = {
             'x-api-signature': signature,
             'x-api-timestamp': timestamp,
-        })
+        }
         log.debug('Woo API request', request_url=request_url, options=options)
         error_prefix = f'Woo {method} request at {request_url}'
         try:
@@ -272,7 +272,7 @@ class Woo(ExchangeInterface, SignatureGeneratorMixin):
                 url=request_url,
                 data=call_options if method == 'POST' else {},
                 params=call_options if method == 'GET' else {},
-                headers=self.session.headers,
+                headers=headers,
             )
             response_dict: dict = response.json()
         except requests.exceptions.RequestException as e:

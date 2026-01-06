@@ -223,16 +223,21 @@ class Poloniex(ExchangeInterface, SignatureGeneratorMixin):
         else:
             timestamp = ts_now_in_ms()
             sign = self._create_sign(timestamp=timestamp, params=req, method='GET', path=path)
-            self.session.headers.update({
+            headers = {
                 'signTimestamp': str(timestamp),
                 'signature': sign,
-            })
+            }
             params = urlencode(req)
             if params == '':
                 url = f'{self.uri}{path}'
             else:
                 url = f'{self.uri}{path}?{params}'
-            response = self.session.get(url, params={}, timeout=CachedSettings().get_timeout_tuple())  # noqa: E501
+            response = self.session.get(
+                url,
+                params={},
+                timeout=CachedSettings().get_timeout_tuple(),
+                headers=headers,
+            )
 
         if response.status_code == 504:
             # backoff and repeat

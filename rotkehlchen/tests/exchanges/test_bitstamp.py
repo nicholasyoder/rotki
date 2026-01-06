@@ -1275,33 +1275,44 @@ def test_api_query_request_headers_checks(mock_bitstamp):
     uuid.uuid4.return_value = 'hijklm'
 
     session = mock_bitstamp.session
-    with patch('rotkehlchen.exchanges.bitstamp.uuid', new=uuid):
-        mock_bitstamp._api_query(endpoint='balance')
-        assert session.headers['X-Auth'] == 'BITSTAMP 123456'
-        assert session.headers['X-Auth-Version'] == 'v2'
-        assert session.headers['X-Auth-Signature'] == (
-            'eb84d115027532cba9ebab8c692c488284c54551ab4601aa9ce6280187dc9c86'
-        )
-        assert session.headers['X-Auth-Nonce'] == 'hijklm'
-        assert session.headers['X-Auth-Timestamp'] == '1606996800000'
-        assert 'Content-Type' not in session.headers
+    request_calls = []
 
+    def mock_request(method, url, data=None, headers=None, **_kwargs):  # pylint: disable=unused-argument
+        request_calls.append(headers or {})
+        return MockResponse(HTTPStatus.OK, '{}')
+
+    with (
+        patch('rotkehlchen.exchanges.bitstamp.uuid', new=uuid),
+        patch.object(session, 'request', side_effect=mock_request),
+    ):
+        mock_bitstamp._api_query(endpoint='balance')
         mock_bitstamp._api_query(endpoint='balance', options=options.copy())
-        assert session.headers['X-Auth'] == 'BITSTAMP 123456'
-        assert session.headers['X-Auth-Version'] == 'v2'
-        assert session.headers['X-Auth-Signature'] == (
-            '29728913d776144f0c8d522a58e77bb6c4492b25dbf7b3ebd41c4eb64c28cf0c'
-        )
-        assert session.headers['X-Auth-Nonce'] == 'hijklm'
-        assert session.headers['X-Auth-Timestamp'] == '1606996800000'
-        assert session.headers['Content-Type'] == 'application/x-www-form-urlencoded'
-
         mock_bitstamp._api_query(endpoint='balance')
-        assert session.headers['X-Auth'] == 'BITSTAMP 123456'
-        assert session.headers['X-Auth-Version'] == 'v2'
-        assert session.headers['X-Auth-Signature'] == (
-            'eb84d115027532cba9ebab8c692c488284c54551ab4601aa9ce6280187dc9c86'
-        )
-        assert session.headers['X-Auth-Nonce'] == 'hijklm'
-        assert session.headers['X-Auth-Timestamp'] == '1606996800000'
-        assert 'Content-Type' not in session.headers
+
+    assert session.headers['X-Auth'] == 'BITSTAMP 123456'
+    assert session.headers['X-Auth-Version'] == 'v2'
+    assert len(request_calls) == 3
+
+    first_headers = request_calls[0]
+    assert first_headers['X-Auth-Signature'] == (
+        'eb84d115027532cba9ebab8c692c488284c54551ab4601aa9ce6280187dc9c86'
+    )
+    assert first_headers['X-Auth-Nonce'] == 'hijklm'
+    assert first_headers['X-Auth-Timestamp'] == '1606996800000'
+    assert 'Content-Type' not in first_headers
+
+    second_headers = request_calls[1]
+    assert second_headers['X-Auth-Signature'] == (
+        '29728913d776144f0c8d522a58e77bb6c4492b25dbf7b3ebd41c4eb64c28cf0c'
+    )
+    assert second_headers['X-Auth-Nonce'] == 'hijklm'
+    assert second_headers['X-Auth-Timestamp'] == '1606996800000'
+    assert second_headers['Content-Type'] == 'application/x-www-form-urlencoded'
+
+    third_headers = request_calls[2]
+    assert third_headers['X-Auth-Signature'] == (
+        'eb84d115027532cba9ebab8c692c488284c54551ab4601aa9ce6280187dc9c86'
+    )
+    assert third_headers['X-Auth-Nonce'] == 'hijklm'
+    assert third_headers['X-Auth-Timestamp'] == '1606996800000'
+    assert 'Content-Type' not in third_headers

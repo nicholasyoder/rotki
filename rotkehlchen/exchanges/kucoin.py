@@ -195,8 +195,6 @@ class Kucoin(ExchangeInterface, SignatureGeneratorMixin):
         May raise RemoteError
         """
         call_options = options.copy() if options else {}
-        for header in ('KC-API-SIGN', 'KC-API-TIMESTAMP', 'KC-API-PASSPHRASE'):
-            self.session.headers.pop(header, None)
 
         if case == KucoinCase.BALANCES:
             api_path = 'api/v1/accounts'
@@ -236,14 +234,14 @@ class Kucoin(ExchangeInterface, SignatureGeneratorMixin):
 
             signature = self.generate_hmac_b64_signature(message)
             passphrase = self.generate_hmac_b64_signature(self.api_passphrase)
-            self.session.headers.update({
+            headers = {
                 'KC-API-SIGN': signature,
                 'KC-API-TIMESTAMP': timestamp,
                 'KC-API-PASSPHRASE': passphrase,
-            })
+            }
             log.debug('Kucoin API request', request_url=request_url)
             try:
-                response = self.session.get(url=request_url, timeout=timeout)
+                response = self.session.get(url=request_url, timeout=timeout, headers=headers)
             except requests.exceptions.RequestException as e:
                 raise RemoteError(
                     f'Kucoin {method} request at {request_url} connection error: {e!s}.',

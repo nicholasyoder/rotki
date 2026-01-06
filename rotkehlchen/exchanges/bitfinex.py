@@ -159,8 +159,7 @@ class Bitfinex(ExchangeInterface, SignatureGeneratorMixin):
         """Request a Bitfinex API v2 endpoint (from `endpoint`).
         """
         call_options = options.copy() if options else {}
-        for header in ('Content-Type', 'bfx-nonce', 'bfx-signature'):
-            self.session.headers.pop(header, None)
+        headers = None
 
         if endpoint == 'configs_list_currency':
             method = 'get'
@@ -199,17 +198,18 @@ class Bitfinex(ExchangeInterface, SignatureGeneratorMixin):
                     message.encode('utf-8'),
                     digest_algorithm=hashlib.sha384,
                 )
-                self.session.headers.update({
+                headers = {
                     'Content-Type': 'application/json',
                     'bfx-nonce': nonce,
                     'bfx-signature': signature,
-                })
+                }
 
             log.debug(f'{self.name} API request', request_url=request_url)
             try:
                 response = self.session.request(
                     method=method,
                     url=request_url,
+                    headers=headers,
                 )
             except requests.exceptions.RequestException as e:
                 raise RemoteError(

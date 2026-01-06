@@ -536,15 +536,13 @@ class Bitstamp(ExchangeInterface, SignatureGeneratorMixin):
         )
         signature = self.generate_hmac_signature(message)
 
-        self.session.headers.update({
+        headers = {
             'X-Auth-Signature': signature,
             'X-Auth-Nonce': nonce,
             'X-Auth-Timestamp': timestamp,
-        })
+        }
         if content_type:
-            self.session.headers.update({'Content-Type': content_type})
-        else:
-            self.session.headers.pop('Content-Type', None)
+            headers['Content-Type'] = content_type
 
         log.debug('Bitstamp API request', request_url=request_url, options=options)
         try:
@@ -552,6 +550,7 @@ class Bitstamp(ExchangeInterface, SignatureGeneratorMixin):
                 method=method,
                 url=request_url,
                 data=data,
+                headers=headers,
             )
         except requests.exceptions.RequestException as e:
             raise RemoteError(

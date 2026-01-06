@@ -47,7 +47,7 @@ def test_coinbase_query_balances(function_scope_coinbase):
     """Test that coinbase balance query works fine for the happy path"""
     coinbase = function_scope_coinbase
 
-    def mock_coinbase_accounts(url, timeout):  # pylint: disable=unused-argument
+    def mock_coinbase_accounts(url, timeout, **_kwargs):  # pylint: disable=unused-argument
         return MockResponse(
             200,
             """
@@ -159,7 +159,7 @@ def test_coinbase_query_balances_unexpected_data(function_scope_coinbase):
             expected_balances_for_no_warnings=1,
             contains_expected_msg=None,
     ):
-        def mock_coinbase_accounts(url, timeout):  # pylint: disable=unused-argument
+        def mock_coinbase_accounts(url, timeout, **_kwargs):  # pylint: disable=unused-argument
             return MockResponse(200, response_str)
 
         with patch.object(coinbase.session, 'get', side_effect=mock_coinbase_accounts):
