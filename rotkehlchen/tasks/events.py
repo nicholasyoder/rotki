@@ -39,7 +39,8 @@ def process_events(
         eth2.combine_block_with_tx_events()
         eth2.refresh_activated_validators_deposits()
 
-    match_asset_movements(database)
+    with database.match_asset_movements_lock:
+        match_asset_movements(database)
 
     with database.user_write() as write_cursor:
         database.set_static_cache(  # update last event processing timestamp
