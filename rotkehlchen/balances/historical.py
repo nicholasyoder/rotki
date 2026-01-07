@@ -8,19 +8,14 @@ import polars as pl
 from rotkehlchen.accounting.constants import EVENT_CATEGORY_MAPPINGS
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.constants import DAY_IN_MILLISECONDS, ZERO
+from rotkehlchen.db.cache import DBCacheStatic
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.utils import get_query_chunks
 from rotkehlchen.errors.misc import NotFoundError
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
-from rotkehlchen.history.events.structures.base import (
-    HistoryEvent,
-    get_event_direction,
-)
-from rotkehlchen.history.events.structures.types import (
-    EventDirection,
-    HistoryEventSubType,
-)
+from rotkehlchen.history.events.structures.base import HistoryEvent, get_event_direction
+from rotkehlchen.history.events.structures.types import EventDirection, HistoryEventSubType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import EventMetricKey, Timestamp, TimestampMS
 from rotkehlchen.utils.misc import ts_ms_to_sec, ts_sec_to_ms
@@ -36,6 +31,13 @@ log = RotkehlchenLogsAdapter(logger)
 
 class HistoricalBalancesManager:
     """Processes historical events and calculates balances"""
+
+    _neutral_balance_tracking_pairs: tuple[tuple[str, str], ...] = tuple(
+        (event_type.serialize(), subtype.serialize())
+        for event_type, subtypes in EVENT_CATEGORY_MAPPINGS.items()
+        for subtype in subtypes
+        if get_event_direction(event_type=event_type, event_subtype=subtype, for_balance_tracking=True) == EventDirection.NEUTRAL  # noqa: E501
+    )
 
     def __init__(self, db: 'DBHandler') -> None:
         self.db = db
@@ -289,23 +291,33 @@ class HistoricalBalancesManager:
             where_clause: str,
             bindings: Sequence[str | TimestampMS],
     ) -> bool:
-        """Return True if events that should have metrics are missing them."""
-        neutral_pairs: list[tuple[str, str]] = []
-        for event_type, subtypes in EVENT_CATEGORY_MAPPINGS.items():
-            neutral_pairs.extend(
-                (event_type.serialize(), subtype.serialize())
-                for subtype in subtypes
-                if get_event_direction(event_type, subtype) == EventDirection.NEUTRAL
-            )
+        """Return True if events that should have metrics are missing them.
 
-        exclusions = ' OR '.join(['(he.type = ? AND he.subtype = ?)'] * len(neutral_pairs))
+        Uses the stale marker to determine which events need checking:
+        - If stale marker is None: all events were evaluated (including negative balance skips)
+        - If stale marker exists and processing ran: only check events >= stale_event_ts
+        - If stale marker exists but never processed: check all events matching where_clause
+        """
         with self.db.conn.read_ctx() as cursor:
+            if (stale_value := self.db.get_static_cache(
+                cursor=cursor,
+                name=DBCacheStatic.STALE_BALANCES_FROM_TS,
+            )) is None:
+                return False  # All events evaluated (including negative balance skips)
+
+            if self.db.get_static_cache(
+                cursor=cursor,
+                name=DBCacheStatic.LAST_HISTORICAL_BALANCE_PROCESSING_TS,
+            ) is not None:  # events before stale_event_ts were already evaluated
+                where_clause = f'({where_clause}) AND he.timestamp >= {stale_value}'
+
+            exclusions = ' OR '.join(['(he.type = ? AND he.subtype = ?)'] * len(self._neutral_balance_tracking_pairs))  # noqa: E501
             return cursor.execute(
                 f"""SELECT 1 FROM history_events he
                 WHERE {where_clause} AND he.ignored = 0 AND NOT ({exclusions})
                 AND NOT EXISTS (SELECT 1 FROM event_metrics em WHERE em.event_identifier = he.identifier) LIMIT 1
                 """,  # noqa: E501
-                [*bindings, *[val for pair in neutral_pairs for val in pair]],
+                [*bindings, *[v for pair in self._neutral_balance_tracking_pairs for v in pair]],
             ).fetchone() is not None
 
     def _get_events_and_currency(

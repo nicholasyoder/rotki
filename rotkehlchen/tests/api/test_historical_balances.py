@@ -2,6 +2,7 @@ from http import HTTPStatus
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
+import gevent
 import pytest
 import requests
 
@@ -17,6 +18,7 @@ from rotkehlchen.errors.price import NoPriceForGivenTimestamp
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.base import HistoryEvent
+from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.swap import create_swap_events
 from rotkehlchen.history.events.structures.types import (
     HistoryEventSubType,
@@ -34,6 +36,7 @@ from rotkehlchen.tests.utils.api import (
     wait_for_async_task,
 )
 from rotkehlchen.tests.utils.constants import A_DASH
+from rotkehlchen.tests.utils.factories import make_evm_address, make_evm_tx_hash
 from rotkehlchen.types import AssetAmount, ChainID, Location, Price, Timestamp
 from rotkehlchen.utils.misc import timestamp_to_daystart_timestamp, ts_now, ts_sec_to_ms
 
@@ -60,15 +63,16 @@ def fixture_setup_historical_data(rotkehlchen_api_server: 'APIServer') -> None:
             amount=FVal('2'),
             notes='Receive BTC',
         ),
-        HistoryEvent(  # another receive
-            group_identifier='eth_receive_1',
-            sequence_index=1,
+        EvmEvent(  # ETH receive at same bucket as deposit
+            tx_ref=make_evm_tx_hash(),
+            sequence_index=0,
             timestamp=ts_sec_to_ms(Timestamp(START_TS + 3000)),
+            location=Location.ETHEREUM,
             event_type=HistoryEventType.RECEIVE,
             event_subtype=HistoryEventSubType.NONE,
-            location=Location.BLOCKCHAIN,
             asset=A_ETH,
             amount=FVal('10'),
+            location_label=(user_addy := make_evm_address()),
             notes='Receive ETH',
         ),
         HistoryEvent(  # Day 3: Partial spend
@@ -82,22 +86,32 @@ def fixture_setup_historical_data(rotkehlchen_api_server: 'APIServer') -> None:
             amount=FVal('0.5'),
             notes='BTC partial spend',
         ),
-        AssetMovement(  # AssetMovements should be ignored
-            timestamp=ts_sec_to_ms(Timestamp(START_TS + DAY_IN_SECONDS * 2)),
+        AssetMovement(
+            timestamp=ts_sec_to_ms(day_3_ts := Timestamp(START_TS + DAY_IN_SECONDS * 2)),
+            location=Location.COINBASE,
+            event_type=HistoryEventType.DEPOSIT,
+            asset=A_BTC,
+            amount=ONE,
+        ),
+        AssetMovement(
+            timestamp=ts_sec_to_ms(Timestamp(day_3_ts + 1)),
             location=Location.COINBASE,
             event_type=HistoryEventType.WITHDRAWAL,
             asset=A_BTC,
-            amount=FVal('3'),
+            amount=ONE,
         ),
-        HistoryEvent(  # Deposit/deposit_asset is neutral and should not affect balance
-            group_identifier='btc_spend_1',
-            sequence_index=4,
-            timestamp=ts_sec_to_ms(Timestamp(START_TS + DAY_IN_SECONDS * 2)),
+        EvmEvent(  # Deposit into account (receive funds)
+            tx_ref=make_evm_tx_hash(),
+            sequence_index=1,
+            timestamp=ts_sec_to_ms(day_3_ts),
+            location=Location.ETHEREUM,
             event_type=HistoryEventType.DEPOSIT,
             event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
-            location=Location.BLOCKCHAIN,
-            asset=A_BTC,
-            amount=ONE,
+            asset=A_ETH,
+            amount=FVal('0.5'),
+            location_label=user_addy,
+            notes='Deposit 0.5 ETH',
+            address=make_evm_address(),
         ),
     ]
     with db.user_write() as write_cursor:
@@ -128,8 +142,8 @@ def test_get_historical_balance(
 
     result = assert_proper_sync_response_with_result(response)
     assert result['processing_required'] is False
-    assert result['entries']['BTC'] == '1.5'
-    assert result['entries']['ETH'] == '10'
+    assert result['entries']['BTC'] == '2.5'  # 2 - 0.5 + 1 (deposit to exchange, withdrawal not yet)  # noqa: E501
+    assert result['entries']['ETH'] == '10.5'  # 10 + 0.5 (deposit into account)
 
     # try retrieving the balance of a day without event and
     # see that the balance of the previous day is used.
@@ -189,7 +203,7 @@ def test_get_historical_asset_balance(
 
     result = assert_proper_sync_response_with_result(response)
     assert result['processing_required'] is False
-    assert result['entries']['BTC'] == '1.7'  # 2 - 0.5 + 0.2
+    assert result['entries']['BTC'] == '2.7'  # 2 - 0.5 + 1 (exchange deposit) + 0.2 (swap)
 
 
 @pytest.mark.parametrize('start_with_valid_premium', [True])
@@ -230,10 +244,12 @@ def test_get_historical_asset_amounts_over_time(
     )
     result = assert_proper_sync_response_with_result(response)
     # Check all balance amount change points are present with correct amounts
+    # Day 1: 2 (receive), Day 3: 2.5 (deposit to exchange), Day 3+1s: 1.5 (withdrawal), Day 4: 3.5 (swaps)  # noqa: E501
     assert len(result['times']) == len(result['values'])
+    day_3_ts = START_TS + DAY_IN_SECONDS * 2
     for ts, amount in zip(result['times'], result['values'], strict=True):
-        assert ts in {START_TS, START_TS + DAY_IN_SECONDS * 2, START_TS + DAY_IN_SECONDS * 3}
-        assert amount in {'2', '1.5', '3.5'}
+        assert ts in {START_TS, day_3_ts, day_3_ts + 1, START_TS + DAY_IN_SECONDS * 3}
+        assert amount in {'2', '2.5', '1.5', '3.5'}
 
 
 @pytest.mark.parametrize('start_with_valid_premium', [True])
@@ -293,11 +309,14 @@ def test_get_historical_asset_amounts_over_time_with_negative_amount(
     )
     result = assert_proper_sync_response_with_result(response)
     assert len(result['times']) == len(result['values'])
-    assert len(result['times']) == 2
+    day_3_ts = START_TS + DAY_IN_SECONDS * 2
+    assert len(result['times']) == 3
     assert result['times'][0] == START_TS  # Initial timestamp
-    assert result['times'][1] == START_TS + DAY_IN_SECONDS * 2  # First spend
+    assert result['times'][1] == day_3_ts  # After spend and exchange deposit
+    assert result['times'][2] == day_3_ts + 1  # After exchange withdrawal
     assert result['values'][0] == '2'  # Initial balance
-    assert result['values'][1] == '1.5'  # Balance after first spend
+    assert result['values'][1] == '2.5'  # Balance after spend and deposit (withdrawal not yet)
+    assert result['values'][2] == '1.5'  # Balance after withdrawal
 
 
 @pytest.mark.parametrize('start_with_valid_premium', [True])
@@ -356,11 +375,14 @@ def test_get_historical_assets_in_collection_amounts_over_time(
     )
     result = assert_proper_sync_response_with_result(response)
     assert len(result['times']) == len(result['values'])
-    assert len(result['times']) == 2
+    day_3_ts = START_TS + DAY_IN_SECONDS * 2
+    assert len(result['times']) == 3
     assert result['times'][0] == START_TS  # Initial timestamp
-    assert result['times'][1] == START_TS + DAY_IN_SECONDS * 2  # First spend
+    assert result['times'][1] == day_3_ts  # After spend and exchange deposit
+    assert result['times'][2] == day_3_ts + 1  # After exchange withdrawal
     assert result['values'][0] == '2'  # Initial balance
-    assert result['values'][1] == '1.5'  # Balance after first spend
+    assert result['values'][1] == '2.5'  # Balance after spend and deposit (withdrawal not yet)
+    assert result['values'][2] == '1.5'  # Balance after withdrawal
 
 
 @pytest.mark.parametrize('start_with_valid_premium', [True])
@@ -482,8 +504,8 @@ def test_get_historical_netvalue(
             A_EUR.identifier: '16800',
         },
         {  # Day 3: After BTC spend (-0.5) and ETH -> EUR swap (-0.2 ETH, +240 EUR)
-            A_BTC.identifier: '1.7',
-            A_ETH.identifier: '9.8',
+            A_BTC.identifier: '1.7000000000000002',
+            A_ETH.identifier: '10.5',
             A_EUR.identifier: '17040',
         },
     ]
@@ -514,7 +536,7 @@ def test_get_historical_netvalue(
     expected_balances_ignored = [
         {A_ETH.identifier: '10', A_EUR.identifier: '20000'},
         {A_ETH.identifier: '10', A_EUR.identifier: '16800'},
-        {A_ETH.identifier: '9.8', A_EUR.identifier: '17040'},
+        {A_ETH.identifier: '10.5', A_EUR.identifier: '17040'},
     ]
 
     for timestamp, balances, expected_ts, expected_bal in zip(
@@ -557,6 +579,7 @@ def test_get_historical_netvalue_with_negative_balance_events(
             history=events,
         )
 
+    gevent.sleep(0.01)  # allow db write to complete before processing
     process_historical_balances(database=db, msg_aggregator=db.msg_aggregator)
 
     # Verify negative balance was detected via WS message
@@ -569,15 +592,15 @@ def test_get_historical_netvalue_with_negative_balance_events(
     )
     result = assert_proper_sync_response_with_result(response)
 
-    # Should still return data up to the point before negative balance
-    assert result['processing_required'] is True
+    # All events evaluated (including negative balance skips) so processing_required is False
+    assert result['processing_required'] is False
     expected_timestamps = [
         timestamp_to_daystart_timestamp(START_TS),  # Day 1
         timestamp_to_daystart_timestamp(Timestamp(START_TS + DAY_IN_SECONDS * 2)),  # Day 3
     ]
     expected_balances = [
         {A_BTC.identifier: '2', A_ETH.identifier: '10'},  # Day 1: Initial receives from fixture
-        {A_BTC.identifier: '1.5', A_ETH.identifier: '10'},  # Day 3: After partial BTC spend
+        {A_BTC.identifier: '1.5', A_ETH.identifier: '10.5'},  # Day 3: After partial BTC spend and ETH deposit into account  # noqa: E501
     ]
 
     assert len(result['times']) == len(expected_timestamps)

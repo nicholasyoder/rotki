@@ -7,7 +7,10 @@ from rotkehlchen.db.cache import DBCacheStatic
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.fval import FVal
-from rotkehlchen.history.events.structures.types import EventDirection, HistoryEventSubType
+from rotkehlchen.history.events.structures.types import (
+    EventDirection,
+    HistoryEventSubType,
+)
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import EventMetricKey, TimestampMS
 from rotkehlchen.utils.misc import ts_ms_to_sec, ts_now, ts_now_in_ms
@@ -61,7 +64,7 @@ class Bucket(NamedTuple):
         asset = event.asset.identifier
         if (
             (counterparty := getattr(event, 'counterparty', None)) is not None and
-            event.maybe_get_direction() != EventDirection.NEUTRAL and
+            event.maybe_get_direction(for_balance_tracking=True) != EventDirection.NEUTRAL and
             event.event_subtype in PROTOCOL_BUCKET_SUBTYPES
         ):
             return cls(
@@ -147,7 +150,7 @@ def process_historical_balances(
         if (current_balance_in_bucket := bucket_balances.get(bucket, ZERO)) < ZERO:
             continue
 
-        if (direction := event.maybe_get_direction()) == EventDirection.IN:
+        if (direction := event.maybe_get_direction(for_balance_tracking=True)) == EventDirection.IN:  # noqa: E501
             new_balance = current_balance_in_bucket + event.amount
             bucket_balances[bucket] = new_balance
         elif direction == EventDirection.OUT:

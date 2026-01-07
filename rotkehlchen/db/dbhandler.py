@@ -677,6 +677,7 @@ class DBHandler:
                 DBCacheStatic.DOCKER_DEVICE_INFO,
                 DBCacheStatic.MONERIUM_OAUTH_CREDENTIALS,
                 DBCacheStatic.STALE_BALANCES_FROM_TS,
+                DBCacheStatic.STALE_BALANCES_MODIFICATION_TS,
             ],
     ) -> str | None:
         ...
@@ -732,7 +733,8 @@ class DBHandler:
         if name in (
             DBCacheStatic.DOCKER_DEVICE_INFO,
             DBCacheStatic.MONERIUM_OAUTH_CREDENTIALS,
-            DBCacheStatic.STALE_BALANCES_FROM_TS,  # format: "{event_ts},{modification_ts}"
+            DBCacheStatic.STALE_BALANCES_FROM_TS,
+            DBCacheStatic.STALE_BALANCES_MODIFICATION_TS,
         ):
             return value[0]
 

@@ -46,26 +46,44 @@ def get_event_direction(
         event_type: HistoryEventType,
         event_subtype: HistoryEventSubType,
         location: Location | None = None,
+        for_balance_tracking: bool = False,
 ) -> EventDirection | None:
     """
     Get direction based on type, subtype.
 
     If the combination of type/subtype is invalid return `None`.
+
+    If for_balance_tracking is True, certain NEUTRAL events that affect
+    location-specific balances will return IN or OUT instead:
+    - DEPOSIT/DEPOSIT_ASSET -> IN
+    - WITHDRAWAL/REMOVE_ASSET -> OUT
     """
     if event_type == HistoryEventType.INFORMATIONAL:
         return EventDirection.NEUTRAL
 
     try:
         category_mapping = EVENT_CATEGORY_MAPPINGS[event_type][event_subtype]
-        if (
-            location is not None and
-            EXCHANGE in category_mapping and
-            location in ALL_SUPPORTED_EXCHANGES
-        ):
-            return category_mapping[EXCHANGE].direction
-        return category_mapping[DEFAULT].direction
     except KeyError:
         return None
+
+    if (
+        location is not None and
+        EXCHANGE in category_mapping and
+        location in ALL_SUPPORTED_EXCHANGES
+    ):
+        direction = category_mapping[EXCHANGE].direction
+    else:
+        direction = category_mapping[DEFAULT].direction
+
+    if for_balance_tracking and direction == EventDirection.NEUTRAL:
+        if (event_type, event_subtype) == (HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_ASSET):  # noqa: E501
+            return EventDirection.IN
+        if (event_type, event_subtype) == (HistoryEventType.WITHDRAWAL, HistoryEventSubType.REMOVE_ASSET):  # noqa: E501
+            return EventDirection.OUT
+        # TODO: Handle TRANSFER/NONE in a follow-up PR. Requires generating two events
+        # (TRANSFER for sender, RECEIVE for recipient) during decoding.
+
+    return direction
 
 
 HISTORY_EVENT_DB_TUPLE_WRITE = tuple[
@@ -381,8 +399,13 @@ class HistoryBaseEntry(AccountingEventMixin, ABC, Generic[ExtraDataType]):
 
         return result
 
-    def maybe_get_direction(self) -> EventDirection | None:
-        return get_event_direction(self.event_type, self.event_subtype, self.location)
+    def maybe_get_direction(self, for_balance_tracking: bool = False) -> EventDirection | None:
+        return get_event_direction(
+            event_type=self.event_type,
+            event_subtype=self.event_subtype,
+            location=self.location,
+            for_balance_tracking=for_balance_tracking,
+        )
 
     @classmethod
     def _deserialize_base_history_data(cls, data: dict[str, Any]) -> HistoryBaseEntryData:
