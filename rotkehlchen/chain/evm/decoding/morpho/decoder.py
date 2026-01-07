@@ -2,7 +2,8 @@ import logging
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
-from rotkehlchen.assets.utils import token_normalized_value
+from rotkehlchen.assets.asset import UnderlyingToken
+from rotkehlchen.assets.utils import get_or_create_evm_token, token_normalized_value
 from rotkehlchen.chain.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.ethereum.utils import should_update_protocol_cache
@@ -14,15 +15,14 @@ from rotkehlchen.chain.evm.decoding.structures import (
     DecoderContext,
     EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.utils import get_protocol_token_addresses
 from rotkehlchen.chain.evm.types import string_to_evm_address
-from rotkehlchen.constants import ZERO
+from rotkehlchen.constants import ONE, ZERO
 from rotkehlchen.errors.misc import NotERC20Conformant, NotERC721Conformant
 from rotkehlchen.globaldb.cache import globaldb_get_general_cache_values
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.types import CacheType, ChecksumEvmAddress, EvmTransaction
+from rotkehlchen.types import CacheType, ChecksumEvmAddress, EvmTransaction, TokenKind
 from rotkehlchen.utils.misc import bytes_to_address
 
 from .constants import CPT_MORPHO
@@ -60,7 +60,7 @@ class MorphoCommonDecoder(EvmDecoderInterface, ReloadableDecoderMixin):
             base_tools=base_tools,
             msg_aggregator=msg_aggregator,
         )
-        self.vaults: set[ChecksumEvmAddress] = set()
+        self.vaults: dict[ChecksumEvmAddress, ChecksumEvmAddress] = {}
         self.bundlers = bundlers
         self.adapters = adapters
         self.rewards_distributors: list[ChecksumEvmAddress] = []
@@ -75,10 +75,7 @@ class MorphoCommonDecoder(EvmDecoderInterface, ReloadableDecoderMixin):
                 cache_key=CacheType.MORPHO_VAULTS,
                 args=(str(self.node_inquirer.chain_id),),
         ) is True:
-            query_morpho_vaults(
-                database=self.node_inquirer.database,
-                chain_id=self.node_inquirer.chain_id,
-            )
+            query_morpho_vaults(chain_id=self.node_inquirer.chain_id)
             updated = True
         if should_update_protocol_cache(
                 userdb=self.base.database,
@@ -90,11 +87,6 @@ class MorphoCommonDecoder(EvmDecoderInterface, ReloadableDecoderMixin):
         if updated is False and len(self.vaults) != 0 and len(self.rewards_distributors) != 0:
             return None  # we didn't update the globaldb cache, and we have the data already
 
-        self.vaults = get_protocol_token_addresses(
-            protocol=CPT_MORPHO,
-            chain_id=self.node_inquirer.chain_id,
-            existing_tokens=self.vaults,
-        )
         with GlobalDBHandler().conn.read_ctx() as cursor:
             self.rewards_distributors = [
                 string_to_evm_address(address) for address in globaldb_get_general_cache_values(
@@ -105,6 +97,16 @@ class MorphoCommonDecoder(EvmDecoderInterface, ReloadableDecoderMixin):
                     ),
                 )
             ]
+
+            for info in globaldb_get_general_cache_values(
+                cursor=cursor,
+                key_parts=(CacheType.MORPHO_VAULTS, str(self.node_inquirer.chain_id)),
+            ):
+                if len(vault := info.split(',')) != 2:
+                    log.error(f'Failed to load Morpho vault from cache: {info}')
+                    continue  # Shouldn't happen, but if the cache has bad values, log and skip
+
+                self.vaults[string_to_evm_address(vault[0])] = string_to_evm_address(vault[1])
 
         return self.addresses_to_decoders()
 
@@ -272,7 +274,24 @@ class MorphoCommonDecoder(EvmDecoderInterface, ReloadableDecoderMixin):
         return spend_event, receive_event
 
     def _decode_vault_events(self, context: DecoderContext) -> EvmDecodingOutput:
-        """Decode events from Morpho vaults."""
+        """Decode events from Morpho vaults. First ensures the vault token is created with the
+        proper underlying token and protocol, then decodes depending on the topic0.
+        """
+        get_or_create_evm_token(
+            userdb=self.base.database,
+            evm_address=context.tx_log.address,
+            chain_id=self.node_inquirer.chain_id,
+            evm_inquirer=self.node_inquirer,
+            protocol=CPT_MORPHO,
+            underlying_tokens=[UnderlyingToken(
+                address=self.base.get_or_create_evm_token(
+                    address=self.vaults[context.tx_log.address],
+                ).evm_address,
+                token_kind=TokenKind.ERC20,
+                weight=ONE,
+            )],
+        )
+
         if context.tx_log.topics[0] == DEPOSIT_TOPIC:
             out_events, in_event = self._decode_deposit(context=context)
         elif context.tx_log.topics[0] == WITHDRAW_TOPIC_V3:

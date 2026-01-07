@@ -29,6 +29,7 @@ from rotkehlchen.chain.evm.decoding.curve.constants import CPT_CURVE, CURVE_CHAI
 from rotkehlchen.chain.evm.decoding.curve.curve_cache import (
     query_curve_data,
 )
+from rotkehlchen.chain.evm.decoding.morpho.constants import CPT_MORPHO
 from rotkehlchen.chain.evm.decoding.pendle.constants import CPT_PENDLE
 from rotkehlchen.chain.evm.decoding.quickswap.constants import (
     CPT_QUICKSWAP_V2,
@@ -93,7 +94,6 @@ from rotkehlchen.tests.unit.decoders.test_curve_lend import (
 from rotkehlchen.tests.unit.test_cost_basis import ONE_PRICE
 from rotkehlchen.tests.utils.constants import A_CNY, A_JPY
 from rotkehlchen.tests.utils.mock import MockResponse
-from rotkehlchen.tests.utils.morpho import create_ethereum_morpho_vault_token
 from rotkehlchen.types import (
     EVM_CHAINS_WITH_TRANSACTIONS,
     CacheType,
@@ -1051,7 +1051,21 @@ def test_find_vthor_price(inquirer_defi: 'Inquirer', database: 'DBHandler'):
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
 def test_find_morpho_vault_price(database: 'DBHandler', inquirer_defi: 'Inquirer') -> None:
     """Test that we get the correct price for Morpho vault tokens."""
-    usual_boosted_usdc_vault = create_ethereum_morpho_vault_token(database=database)
+    usual_boosted_usdc_vault = get_or_create_evm_token(
+        userdb=database,
+        evm_address=string_to_evm_address('0xd63070114470f685b75B74D60EEc7c1113d33a3D'),
+        chain_id=ChainID.ETHEREUM,
+        token_kind=TokenKind.ERC20,
+        symbol='USUALUSDC+',
+        name='Usual Boosted USDC',
+        decimals=18,
+        protocol=CPT_MORPHO,
+        underlying_tokens=[UnderlyingToken(
+            address=string_to_evm_address('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'),
+            token_kind=TokenKind.ERC20,
+            weight=ONE,
+        )],
+    )
     price = inquirer_defi.find_usd_price(asset=usual_boosted_usdc_vault)
     assert price.is_close(FVal(1.02611), max_diff='1e-5')
 
