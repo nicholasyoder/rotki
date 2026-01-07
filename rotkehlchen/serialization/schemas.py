@@ -276,7 +276,7 @@ class EvmTokenSchema(TokenWithDecimalAndProtocolSchema):
     ) -> EvmToken:
         given_underlying_tokens = data.pop('underlying_tokens', None)
         underlying_tokens = None
-        if given_underlying_tokens is not None:
+        if given_underlying_tokens:  # truthy check checks for not None and not empty list
             underlying_tokens = [UnderlyingToken(
                 address=entry['address'],
                 token_kind=entry['token_kind'],

@@ -17,7 +17,7 @@ log = RotkehlchenLogsAdapter(logger)
 
 def get_aura_pool_price(inquirer: 'Inquirer', token: 'EvmToken') -> Price:
     """Get the USD price for an Aura pool token by using its underlying BPT token price."""
-    if token.underlying_tokens is None or len(token.underlying_tokens) == 0:
+    if token.underlying_tokens is None:
         log.warning(
             f'No underlying token found for aura pool token {token} on {token.chain_id.to_name()}. '  # noqa: E501
             'This indicates pools data has not been queried yet.',

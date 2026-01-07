@@ -116,7 +116,7 @@ class MorphoCommonDecoder(EvmDecoderInterface, ReloadableDecoderMixin):
         Returns the tokens and amounts in a tuple or None on error."""
         try:
             vault_token = self.base.get_or_create_evm_token(address=context.tx_log.address)
-            if not vault_token.underlying_tokens:
+            if vault_token.underlying_tokens is None:
                 return None
 
             underlying_token = self.base.get_or_create_evm_token(

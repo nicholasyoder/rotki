@@ -94,7 +94,7 @@ class GearboxCommonDecoder(EvmDecoderInterface, ReloadableCacheDecoderMixin):
         May raise:
             IndexError: if there is no underlying token detected for the farming token
         """
-        if not token.underlying_tokens:
+        if token.underlying_tokens is None:
             return False
 
         return token.underlying_tokens[0].get_identifier(self.node_inquirer.chain_id) in {
