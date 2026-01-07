@@ -285,12 +285,12 @@ class Coinbase(ExchangeInterface):
             next_uri += f'?{urlencode(options)}'
         while True:
             token = self.build_jwt(uri=f'{request_verb} {self.host}/{self.apiversion}/{endpoint}')
-            self.session.headers.update({'Authorization': f'Bearer {token}'})
+            headers = {'Authorization': f'Bearer {token}'}
 
             full_url = self.base_uri + next_uri
             log.debug('Coinbase API query', request_url=full_url)
             try:
-                response = self.session.get(full_url, timeout=timeout)
+                response = self.session.get(full_url, timeout=timeout, headers=headers)
             except requests.exceptions.RequestException as e:
                 raise RemoteError(f'Coinbase API request failed due to {e!s}') from e
 

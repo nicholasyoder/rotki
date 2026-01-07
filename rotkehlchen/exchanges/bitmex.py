@@ -221,8 +221,7 @@ class Bitmex(ExchangeInterface, SignatureGeneratorMixin):
         """
         # 20 seconds expiration
         request_path = f'/api/v1/{path}'
-        self.session.headers.pop('api-signature', None)
-        self.session.headers.pop('api-expires', None)
+        headers = None
 
         if options is not None:
             request_path += '?' + urlencode(options)
@@ -234,12 +233,15 @@ class Bitmex(ExchangeInterface, SignatureGeneratorMixin):
                 expires=(expires := ts_now() + 20),
                 data='',
             )
-            self.session.headers.update({'api-signature': signature, 'api-expires': str(expires)})
+            headers = {
+                'api-signature': signature,
+                'api-expires': str(expires),
+            }
 
         request_url = self.uri + request_path
         log.debug('Bitmex API Query', request_url=request_url)
         try:
-            response = self.session.get(url=request_url)
+            response = self.session.get(url=request_url, headers=headers)
         except requests.exceptions.RequestException as e:
             raise RemoteError(f'Bitmex API request failed due to {e!s}') from e
 

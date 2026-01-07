@@ -193,15 +193,15 @@ class Okx(ExchangeInterface, ExchangeWithExtras, SignatureGeneratorMixin):
 
         datestr = datetime.datetime.now(tz=datetime.UTC).isoformat(timespec='milliseconds').replace('+00:00', 'Z')  # noqa: E501
         signature = self._generate_signature(datestr, method, path, '')
-        self.session.headers.update({
+        headers = {
             'OK-ACCESS-TIMESTAMP': datestr,
             'OK-ACCESS-SIGN': signature,
-        })
+        }
         url = urljoin(self.base_uri, path)
 
         log.debug(f'Querying OKX {url} with {method=}')
         try:
-            response = self.session.request(method=method, url=url)
+            response = self.session.request(method=method, url=url, headers=headers)
         except requests.exceptions.RequestException as e:
             raise RemoteError(f'{self.name} API request failed due to {e!s}') from e
         try:

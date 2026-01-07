@@ -347,13 +347,13 @@ class Coinbaseprime(ExchangeInterface):
             uri += f'/{path}'
 
         url_path = urlparse(uri).path
-        self.session.headers.update({
+        headers: dict[str, str | bytes] = {
             'X-CB-ACCESS-TIMESTAMP': str(timestamp := ts_now()),
             'X-CB-ACCESS-SIGNATURE': self.sign(timestamp, url_path),
-        })
+        }
         log.debug(f'Querying coinbase prime module {module}/{path} with {params=}')
         try:
-            response = self.session.get(url=uri, params=params)
+            response = self.session.get(url=uri, params=params, headers=headers)
         except requests.RequestException as e:
             raise RemoteError(f'Coinbase Prime API request failed due to {e}') from e
 

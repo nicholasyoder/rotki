@@ -193,6 +193,7 @@ class Gemini(ExchangeInterface, SignatureGeneratorMixin):
         url = f'{self.base_uri}{v_endpoint}'
         retries_left = CachedSettings().get_query_retry_limit()
         retry_limit = CachedSettings().get_query_retry_limit()
+        headers = None
         while retries_left > 0:
             if endpoint in {'mytrades', 'balances', 'transfers', 'roles', 'balances/earn'}:
                 # private endpoints
@@ -204,16 +205,17 @@ class Gemini(ExchangeInterface, SignatureGeneratorMixin):
                 b64 = b64encode(encoded_payload)
                 signature = self.generate_hmac_signature(b64, digest_algorithm=hashlib.sha384)
 
-                self.session.headers.update({
+                headers = {
                     'X-GEMINI-PAYLOAD': b64.decode(),
                     'X-GEMINI-SIGNATURE': signature,
-                })
+                }
 
             try:
                 response = self.session.request(
                     method=method,
                     url=url,
                     timeout=GLOBAL_REQUESTS_TIMEOUT,
+                    headers=headers,
                 )
             except requests.exceptions.RequestException as e:
                 raise RemoteError(
