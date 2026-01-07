@@ -1416,7 +1416,6 @@ UniqueCacheType = Literal[
     CacheType.CURVE_CRVUSD_COLLATERAL_TOKEN,
     CacheType.CURVE_CRVUSD_AMM,
     CacheType.PENDLE_YIELD_TOKENS,
-    CacheType.BEEFY_VAULTS,
     CacheType.MERKL_REWARD_PROTOCOLS,
     CacheType.SUPERFLUID_TOKEN_LIST_VERSION,
 ]
@@ -1453,6 +1452,7 @@ GeneralCacheType = Literal[
     CacheType.PENDLE_POOLS,
     CacheType.PENDLE_SY_TOKENS,
     CacheType.SUPERFLUID_SUPER_TOKENS,
+    CacheType.BEEFY_VAULTS,
 ]
 
 

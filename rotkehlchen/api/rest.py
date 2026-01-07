@@ -5265,7 +5265,7 @@ class RestAPI:
             case ProtocolsWithCache.BEEFY_FINANCE:
                 with GlobalDBHandler().conn.write_ctx() as write_cursor:
                     write_cursor.execute(
-                        'DELETE FROM unique_cache WHERE key LIKE ?',
+                        'DELETE FROM general_cache WHERE key LIKE ?',
                         (f'{CacheType.BEEFY_VAULTS.serialize()}%',),
                     )
 
