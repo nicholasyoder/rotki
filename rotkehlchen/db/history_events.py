@@ -1528,23 +1528,26 @@ class DBHistoryEvents:
         """Process the events_result joining asset movements with the group of their matched event.
 
         Handles two cases:
-        - aggregate_by_group_ids is True: matched asset movement groups are skipped, and matched
-         event groups have their grouped_events_num incremented to account for the asset movements
-         that will be included in that group.
-        - aggregate_by_group_ids is False: If a matched event group is included in the result, the
-         corresponding asset movement events are added to the result.
+        - aggregate_by_group_ids is True: Only one entry for each movement & matched event pair
+         is included, with its grouped_events_num incremented to account for the other events
+         that will be included in that group. This entry will be given the group_identifier of the
+         matched event when the events are serialized (references the joined_group_ids dict).
+        - aggregate_by_group_ids is False: If a matched event group_identifier is included in the
+         result, the corresponding asset movement events are added to the result.
 
         Returns a tuple containing the processed events, joined group ids dict, entries found,
         entries with limit, entries total, and group identifiers with ignored assets.
         """
-        movement_group_ids_to_group_count, movement_id_to_group_id, match_group_id_to_movement, match_group_id_to_match, joined_group_ids = {}, {}, {}, {}, {}  # noqa: E501
-        for movement_id, match_id, movement_group_identifier, match_group_identifier, group_count in cursor.execute(  # noqa: E501
-                'SELECT SUBSTR(name, ?) AS movement_id, value AS match_id, '
+        movement_group_to_match_info, match_group_to_movement_info, joined_group_ids = {}, {}, {}
+        for match_id, movement_group_identifier, match_group_identifier, movement_group_count, match_group_count in cursor.execute(  # noqa: E501
+                'SELECT value AS match_id, '
                 'movement_events_join.group_identifier, match_events_join.group_identifier, '
                 '(SELECT COUNT(*) FROM history_events he2 '
-                'WHERE he2.group_identifier = movement_events_join.group_identifier) as group_count '  # noqa: E501
+                'WHERE he2.group_identifier = movement_events_join.group_identifier) as movement_group_count, '  # noqa: E501
+                '(SELECT COUNT(*) FROM history_events he2 '
+                'WHERE he2.group_identifier = match_events_join.group_identifier) as match_group_count '  # noqa: E501
                 'FROM key_value_cache '
-                'JOIN history_events movement_events_join ON CAST(movement_events_join.identifier AS TEXT) = movement_id '  # noqa: E501
+                'JOIN history_events movement_events_join ON CAST(movement_events_join.identifier AS TEXT) = SUBSTR(name, ?) '  # noqa: E501
                 'JOIN history_events match_events_join ON CAST(match_events_join.identifier AS TEXT) = match_id '  # noqa: E501
                 'WHERE name LIKE ? and value != ?;',
                 (
@@ -1553,35 +1556,50 @@ class DBHistoryEvents:
                     ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE,
                 ),
         ):
-            movement_group_ids_to_group_count[movement_group_identifier] = group_count
-            movement_id_to_group_id[movement_id] = movement_group_identifier
-            match_group_id_to_movement[match_group_identifier] = movement_id
-            match_group_id_to_match[match_group_identifier] = match_id
             joined_group_ids[movement_group_identifier] = match_group_identifier
             joined_group_ids[match_group_identifier] = match_group_identifier
+            movement_group_to_match_info[movement_group_identifier] = (
+                match_id,
+                match_group_identifier,
+                match_group_count,
+            )
+            match_group_to_movement_info[match_group_identifier] = (
+                movement_group_identifier,
+                movement_group_count,
+            )
+            entries_total -= 1
 
         processed_events_result = []
         if aggregate_by_group_ids:
+            # Aggregating by group. Need to ensure that for each movement/match group there is
+            # only one event present. Process the events and for each event that is part of a
+            # movement/match group do one of the following:
+            # - adjust grouped_events_num to include the events from the other side of the movement
+            # - skip the event if we have already processed an event from that movement/match group
+            already_processed_matches = set()
             for grouped_events_num, event in events_result:  # type: ignore[misc]  # events_result is a different type depending on aggregate_by_group_ids
-                if event.group_identifier in movement_group_ids_to_group_count:
-                    # Skip any matched asset movements. They will be added to the group of
-                    # the matched event instead, so they can be properly collapsed into a
-                    # single event in frontend.
-                    entries_found -= 1
-                    entries_with_limit -= 1
-                    entries_total -= 1
-                    continue
-                elif (
-                    (movement_id := match_group_id_to_movement.get(event.group_identifier)) is not None and  # noqa: E501
-                    (movement_group_id := movement_id_to_group_id.get(movement_id)) is not None and
-                    (movement_group_count := movement_group_ids_to_group_count.get(movement_group_id)) is not None  # noqa: E501
-                ):
-                    # There is a matched event in this group. Need to increase the count for this
-                    # group to include the matched asset movement and its fee if present.
-                    processed_events_result.append((grouped_events_num + movement_group_count, event))  # noqa: E501
-                    continue
+                if (match_info := movement_group_to_match_info.get(event.group_identifier)) is not None:  # noqa: E501
+                    _, match_group_identifier, match_group_count = match_info
+                    if match_group_identifier in already_processed_matches:
+                        # We already processed the matched_event for this movement, so skip.
+                        entries_found -= 1
+                        entries_with_limit -= 1
+                        continue
 
-                processed_events_result.append((grouped_events_num, event))
+                    processed_events_result.append((grouped_events_num + match_group_count, event))
+                    already_processed_matches.add(match_group_identifier)
+                elif (movement_info := match_group_to_movement_info.get(event.group_identifier)) is not None:  # noqa: E501
+                    _, movement_group_count = movement_info
+                    if event.group_identifier in already_processed_matches:
+                        # We already processed the movement for this matched event, so skip.
+                        entries_found -= 1
+                        entries_with_limit -= 1
+                        continue
+
+                    processed_events_result.append((grouped_events_num + movement_group_count, event))  # noqa: E501
+                    already_processed_matches.add(event.group_identifier)
+                else:
+                    processed_events_result.append((grouped_events_num, event))
         else:  # Not aggregating. Need to include the asset movements in their matched groups
             events_by_group: dict[str, list[HistoryBaseEntry]] = defaultdict(list)
             for event in events_result:
@@ -1589,10 +1607,9 @@ class DBHistoryEvents:
 
             for group_identifier, events in events_by_group.items():
                 if (
-                    (movement_id := match_group_id_to_movement.get(group_identifier)) is not None and  # noqa: E501
-                    (movement_group_id := movement_id_to_group_id.get(movement_id)) is not None and
-                    (match_id := match_group_id_to_match.get(group_identifier)) is not None and
-                    len(match_events := [x for x in events if str(x.identifier) == match_id]) == 1
+                    (movement_info := match_group_to_movement_info.get(group_identifier)) is not None and  # noqa: E501
+                    (match_info := movement_group_to_match_info.get(movement_group_id := movement_info[0])) is not None and  # noqa: E501
+                    len(match_events := [x for x in events if str(x.identifier) == match_info[0]]) == 1  # noqa: E501
                 ):
                     insert_index = events.index(match_events[0]) + 1  # insert immediately after the matched event  # noqa: E501
                     if (

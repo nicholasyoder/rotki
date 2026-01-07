@@ -4150,15 +4150,15 @@ class RestAPI:
                     (replacement_group_id or event.group_identifier) in group_has_ignored_assets
                 ),
             )
+            if replacement_group_id is not None:
+                serialized['entry']['group_identifier'] = replacement_group_id
+                serialized['entry']['actual_group_identifier'] = event.group_identifier
+
             if aggregate_by_group_ids:
                 # no need to group into lists when aggregating by group_identifier since only
                 # a single event is returned for each group_identifier
                 entries.append(serialized)
                 continue
-
-            if replacement_group_id is not None:
-                serialized['entry']['group_identifier'] = replacement_group_id
-                serialized['entry']['actual_group_identifier'] = event.group_identifier
 
             if (
                 replacement_group_id is not None and
@@ -5990,7 +5990,8 @@ class RestAPI:
                 from_ts=stale_from_ts,
             )
         else:  # task == TaskName.ASSET_MOVEMENT_MATCHING
-            match_asset_movements(database=self.rotkehlchen.data.db)
+            with self.rotkehlchen.data.db.match_asset_movements_lock:
+                match_asset_movements(database=self.rotkehlchen.data.db)
 
         return OK_RESULT
 
@@ -6614,10 +6615,15 @@ class RestAPI:
                 ),
             )
 
+        # Return the close_matches and other_events, filtering the other_events to remove
+        # informational / approve events and events from the same exchange as the asset movement
         return api_response(_wrap_in_ok_result(result={
             'close_matches': close_match_identifiers,
-            'other_events': [x.identifier for x in other_events if not (
+            'other_events': [x.identifier for x in other_events if not ((
                 x.location == asset_movement.location and
                 x.location_label == asset_movement.location_label
-            )],  # Skip any events that are for the same exchange as the asset movement.
+            ) or (
+                x.event_type == HistoryEventType.INFORMATIONAL and
+                x.event_subtype == HistoryEventSubType.APPROVE
+            ))],
         }))

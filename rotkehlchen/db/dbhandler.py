@@ -223,6 +223,7 @@ class DBHandler:
         self.conn_transient: DBConnection = None  # type: ignore
         # Lock to make sure that 2 callers of get_or_create_evm_token do not go in at the same time
         self.get_or_create_token_lock = Semaphore()
+        self.match_asset_movements_lock = Semaphore()
         self.password = password
         self._connect()
         self._check_unfinished_upgrades(resume_from_backup=resume_from_backup)
