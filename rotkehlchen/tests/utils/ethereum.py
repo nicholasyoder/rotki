@@ -65,7 +65,7 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 INFURA_TEST = 'https://mainnet.infura.io/v3/a6b269b6e5ad44ed943e9fff244dfe25'
-ALCHEMY_TEST = 'https://eth-mainnet.alchemyapi.io/v2/ga1GtB7R26UgzjextaVpbaWZ49nSi2zt'
+ALCHEMY_TEST = 'https://eth-mainnet.g.alchemy.com/v2/ga1GtB7R26UgzjextaVpbaWZ49nSi2zt'
 
 PRUNED_AND_NOT_ARCHIVED_NODE = WeightedNode(
     node_info=NodeName(
