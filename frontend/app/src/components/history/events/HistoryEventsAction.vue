@@ -218,14 +218,14 @@ const reportDescription = computed<string>(() => {
         <template v-else-if="eventWithDecoding">
           <RuiButton
             variant="list"
-            class="!py-2"
+            :class="{ '!py-2': evmEvent }"
             :disabled="loading || txEventsDecoding"
             @click="redecode(eventWithDecoding)"
           >
             <template #prepend>
               <RuiIcon
                 name="lu-rotate-ccw"
-                class="w-8"
+                class="min-w-[1.375rem]"
                 size="20"
               />
             </template>

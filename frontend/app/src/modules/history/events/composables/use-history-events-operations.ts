@@ -1,5 +1,5 @@
 import type { ComputedRef, Ref } from 'vue';
-import type { HistoryEventDeletePayload, HistoryEventsTableEmitFn } from '@/modules/history/events/types';
+import type { HistoryEventDeletePayload, HistoryEventsTableEmitFn, HistoryEventUnlinkPayload } from '@/modules/history/events/types';
 import type {
   LocationAndTxRef,
   PullEventPayload,
@@ -33,6 +33,7 @@ interface UseHistoryEventsOperationsReturn {
   // Functions
   getItemClass: (item: HistoryEventEntry) => '' | 'opacity-50';
   confirmDelete: (payload: HistoryEventDeletePayload) => void;
+  confirmUnlink: (payload: HistoryEventUnlinkPayload) => void;
   suggestNextSequenceId: (group: HistoryEventEntry) => string;
   confirmTxAndEventsDelete: (payload: LocationAndTxRef) => void;
   redecode: (payload: PullEventPayload, eventIdentifier: string) => void;
@@ -59,7 +60,7 @@ export function useHistoryEventsOperations(
   const { show } = useConfirmStore();
   const { getChain } = useSupportedChains();
 
-  const { deleteTransactions } = useHistoryEventsApi();
+  const { deleteTransactions, unlinkAssetMovement } = useHistoryEventsApi();
   const { deleteHistoryEvent } = useHistoryEvents();
   const { ignoreSingle, toggle } = useIgnore<HistoryEventEntry>({
     toData: (item: HistoryEventEntry) => item.groupIdentifier,
@@ -98,6 +99,43 @@ export function useHistoryEventsOperations(
       const { success } = await deleteHistoryEvent(payload.ids);
       if (success)
         emit('refresh');
+    }
+  }
+
+  function confirmUnlink(payload: HistoryEventUnlinkPayload): void {
+    show({
+      message: t('transactions.events.confirmation.unlink.message'),
+      primaryAction: t('common.actions.confirm'),
+      title: t('transactions.events.confirmation.unlink.title'),
+    }, async () => onConfirmUnlink(payload));
+  }
+
+  async function onConfirmUnlink(payload: HistoryEventUnlinkPayload): Promise<void> {
+    try {
+      const groupedEvents = get(allEventsMapped)[payload.groupIdentifier] || [];
+      const childEvents = flatten(groupedEvents);
+      const assetMovementEvent = childEvents.find(
+        e => e.entryType === HistoryEventEntryType.ASSET_MOVEMENT_EVENT && e.eventSubtype !== 'fee',
+      );
+
+      if (!assetMovementEvent) {
+        notify({
+          display: true,
+          message: t('transactions.events.unlink_no_asset_movement'),
+          title: t('transactions.events.unlink_error'),
+        });
+        return;
+      }
+
+      await unlinkAssetMovement(assetMovementEvent.identifier);
+      emit('refresh');
+    }
+    catch (error: any) {
+      notify({
+        display: true,
+        message: error.message,
+        title: t('transactions.events.unlink_error'),
+      });
     }
   }
 
@@ -214,6 +252,7 @@ export function useHistoryEventsOperations(
     confirmDelete,
     confirmRedecode,
     confirmTxAndEventsDelete,
+    confirmUnlink,
     getItemClass,
     hasCustomEvents,
     redecode,

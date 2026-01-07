@@ -17,6 +17,10 @@ interface HistoryEventDeletionPayload {
 
 export type HistoryEventDeletePayload = HistoryEventIgnorePayload | HistoryEventDeletionPayload;
 
+export interface HistoryEventUnlinkPayload {
+  readonly groupIdentifier: string;
+}
+
 export interface HistoryEventsTableEmits {
   'show:dialog': [options: DialogShowOptions];
   'set-page': [page: number];

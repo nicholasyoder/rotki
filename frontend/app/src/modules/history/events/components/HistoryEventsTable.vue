@@ -35,6 +35,7 @@ const props = defineProps<{
   highlightedIdentifiers?: string[];
   hideActions?: boolean;
   selection?: UseHistoryEventsSelectionModeReturn;
+  matchExactEvents?: boolean;
 }>();
 
 const emit = defineEmits<HistoryEventsTableEmits>();
@@ -80,6 +81,7 @@ const {
   confirmDelete,
   confirmRedecode,
   confirmTxAndEventsDelete,
+  confirmUnlink,
   getItemClass,
   hasCustomEvents,
   redecode,
@@ -219,9 +221,11 @@ useRememberTableSorting<HistoryEventEntry>(TableId.HISTORY, sort, cols);
         :has-ignored-event="hasIgnoredEvent"
         :highlighted-identifiers="highlightedIdentifiers"
         :selection="selection"
+        :match-exact-events="matchExactEvents"
         @edit-event="editEvent($event, row);"
         @delete-event="confirmDelete($event)"
         @show:missing-rule-action="addMissingRule($event, row);"
+        @unlink-event="confirmUnlink($event)"
         @refresh="emit('refresh')"
       />
     </template>

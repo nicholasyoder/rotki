@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import type { UseHistoryEventsSelectionModeReturn } from '@/modules/history/events/composables/use-selection-mode';
-import type { HistoryEventDeletePayload } from '@/modules/history/events/types';
+import type { HistoryEventDeletePayload, HistoryEventUnlinkPayload } from '@/modules/history/events/types';
 import type { HistoryEventEditData } from '@/modules/history/management/forms/form-types';
 import type { HistoryEventEntry, HistoryEventRow } from '@/types/history/events/schemas';
 import { flatten } from 'es-toolkit';
 import HistoryEventsListItem from '@/components/history/events/HistoryEventsListItem.vue';
-import HistoryEventsListSwap from '@/components/history/events/HistoryEventsListSwap.vue';
+import HistoryEventsListSubgroup from '@/components/history/events/HistoryEventsListSubgroup.vue';
 
 interface HistoryEventsListTableProps {
   allEvents: HistoryEventRow[];
@@ -24,6 +24,7 @@ const emit = defineEmits<{
   'edit-event': [data: HistoryEventEditData];
   'delete-event': [data: HistoryEventDeletePayload];
   'show:missing-rule-action': [data: HistoryEventEditData];
+  'unlink-event': [data: HistoryEventUnlinkPayload];
   'refresh': [];
 }>();
 
@@ -44,10 +45,11 @@ function findAllEventsFromArrayItem(items: HistoryEventEntry[]): HistoryEventEnt
   <div class="@container">
     <template v-if="total > 0">
       <template v-for="(item, index) in events">
-        <HistoryEventsListSwap
+        <HistoryEventsListSubgroup
           v-if="Array.isArray(item)"
-          :key="`swap-${index}`"
+          :key="`subgroup-${index}`"
           :events="item"
+          :is-last="index === events.length - 1"
           :all-events="findAllEventsFromArrayItem(item) || item"
           :hide-actions="hideActions"
           :highlighted-identifiers="highlightedIdentifiers"
@@ -55,6 +57,7 @@ function findAllEventsFromArrayItem(items: HistoryEventEntry[]): HistoryEventEnt
           @edit-event="emit('edit-event', $event)"
           @delete-event="emit('delete-event', $event)"
           @show:missing-rule-action="emit('show:missing-rule-action', $event)"
+          @unlink-event="emit('unlink-event', $event)"
           @refresh="emit('refresh')"
         />
         <HistoryEventsListItem

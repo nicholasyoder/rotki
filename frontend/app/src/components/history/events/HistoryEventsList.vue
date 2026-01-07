@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { UseHistoryEventsSelectionModeReturn } from '@/modules/history/events/composables/use-selection-mode';
-import type { HistoryEventDeletePayload } from '@/modules/history/events/types';
+import type { HistoryEventDeletePayload, HistoryEventUnlinkPayload } from '@/modules/history/events/types';
 import type { HistoryEventEditData } from '@/modules/history/management/forms/form-types';
 import type { HistoryEventEntry, HistoryEventRow } from '@/types/history/events/schemas';
 import { get, set } from '@vueuse/core';
@@ -20,6 +20,7 @@ const props = withDefaults(defineProps<{
   hideActions?: boolean;
   highlightedIdentifiers?: string[];
   selection?: UseHistoryEventsSelectionModeReturn;
+  matchExactEvents?: boolean;
 }>(), {
   loading: false,
 });
@@ -28,6 +29,7 @@ const emit = defineEmits<{
   'edit-event': [data: HistoryEventEditData];
   'delete-event': [data: HistoryEventDeletePayload];
   'show:missing-rule-action': [data: HistoryEventEditData];
+  'unlink-event': [data: HistoryEventUnlinkPayload];
   'refresh': [];
 }>();
 
@@ -44,6 +46,7 @@ const {
   hasIgnoredEvent,
   highlightedIdentifiers,
   loading,
+  matchExactEvents,
 } = toRefs(props);
 
 function combineEvents(events: HistoryEventRow[], group: HistoryEventEntry): HistoryEventRow[] {
@@ -130,10 +133,25 @@ watch(() => get(eventGroup), () => {
 
 // Unsupported event detection
 const unsupportedEvent = computed<HistoryEventEntry | null>(() => {
-  if (get(loading))
+  if (get(loading) || get(matchExactEvents))
     return null;
 
   const events = get(combinedAllEvents);
+
+  // Flatten all events to check for incomplete trades
+  const flatEvents = events.flatMap(event => (Array.isArray(event) ? event : [event]));
+
+  // Check for incomplete trade events (receive without spend or vice versa)
+  const tradeReceive = flatEvents.find(e => e.eventType === 'trade' && e.eventSubtype === 'receive');
+  const tradeSpend = flatEvents.find(e => e.eventType === 'trade' && e.eventSubtype === 'spend');
+
+  if (tradeReceive && !tradeSpend)
+    return tradeReceive;
+
+  if (tradeSpend && !tradeReceive)
+    return tradeSpend;
+
+  // Check for gas-fee-only transaction
   if (events.length !== 1)
     return null;
 
@@ -215,6 +233,7 @@ const reportDescription = computed<string>(() => {
       @delete-event="emit('delete-event', $event)"
       @show:missing-rule-action="emit('show:missing-rule-action', $event)"
       @edit-event="emit('edit-event', $event)"
+      @unlink-event="emit('unlink-event', $event)"
       @refresh="emit('refresh')"
     />
 

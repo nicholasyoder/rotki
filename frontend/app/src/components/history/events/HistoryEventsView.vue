@@ -88,7 +88,7 @@ const {
 } = useHistoryEventsStatus();
 
 const {
-  fetchUnmatchedAssetMovements,
+  refreshUnmatchedAssetMovements,
   unmatchedCount,
 } = useUnmatchedAssetMovements();
 
@@ -185,13 +185,14 @@ watchImmediate(route, async (route) => {
 
 const debouncedProcessing = debouncedRef(processing, 200);
 
-watchImmediate(debouncedProcessing, async (isLoading, wasLoading) => {
-  if (!isLoading && (wasLoading || !isDefined(wasLoading))) {
+watch(debouncedProcessing, async (isLoading, wasLoading) => {
+  if (!isLoading && wasLoading)
     await actions.fetch.dataAndLocations();
+});
 
-    if (get(mainPage)) {
-      await fetchUnmatchedAssetMovements();
-    }
+watch(logicOr(debouncedProcessing, groupLoading), async (loading) => {
+  if (!loading && get(mainPage)) {
+    await refreshUnmatchedAssetMovements();
   }
 });
 
@@ -282,6 +283,7 @@ function openMatchAssetMovementsDialog(): void {
           :identifiers="identifiers"
           :highlighted-identifiers="highlightedIdentifiers"
           :selection="selectionMode"
+          :match-exact-events="toggles.matchExactEvents"
           @show:dialog="dialogContainer?.show($event)"
           @refresh="actions.fetch.dataAndRedecode($event)"
           @refresh:block-event="actions.redecode.blocks($event)"
