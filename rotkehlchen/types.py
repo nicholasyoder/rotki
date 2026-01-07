@@ -1418,7 +1418,6 @@ UniqueCacheType = Literal[
     CacheType.PENDLE_YIELD_TOKENS,
     CacheType.BEEFY_VAULTS,
     CacheType.MERKL_REWARD_PROTOCOLS,
-    CacheType.STAKEDAO_V2_VAULTS,
     CacheType.SUPERFLUID_TOKEN_LIST_VERSION,
 ]
 
@@ -1449,6 +1448,7 @@ GeneralCacheType = Literal[
     CacheType.MORPHO_VAULTS,
     CacheType.MORPHO_REWARD_DISTRIBUTORS,
     CacheType.CURVE_CRVUSD_CONTROLLERS,
+    CacheType.STAKEDAO_V2_VAULTS,
     CacheType.STAKEDAO_GAUGES,
     CacheType.PENDLE_POOLS,
     CacheType.PENDLE_SY_TOKENS,

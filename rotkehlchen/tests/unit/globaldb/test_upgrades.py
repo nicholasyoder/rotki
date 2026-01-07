@@ -1472,20 +1472,26 @@ def test_upgrade_v14_v15(
     """Test the global DB upgrade from v14 to v15"""
     assert globaldb.get_setting_value('version', 0) == 14
     with globaldb.conn.read_ctx() as cursor:
-        assert cursor.execute(
-            "SELECT key, value, last_queried_ts FROM unique_cache WHERE key LIKE 'AURA_POOLS%'",
-        ).fetchall() == [
-            ('AURA_POOLS8453', '29', 1767375960),
-            ('AURA_POOLS42161', '109', 1767375961),
-            ('AURA_POOLS1', '273', 1767375964),
-        ]
-        assert cursor.execute(
-            "SELECT key, value, last_queried_ts FROM unique_cache WHERE key LIKE 'MORPHO_VAULTS%'",
-        ).fetchall() == [
-            ('MORPHO_VAULTSpolygon_pos', '53', 1767365352),
-            ('MORPHO_VAULTSethereum', '389', 1767375981),
-            ('MORPHO_VAULTSbase', '413', 1767375982),
-        ]
+        for key, expected_value in [
+            ('AURA_POOLS%', [
+                ('AURA_POOLS8453', '29', 1767375960),
+                ('AURA_POOLS42161', '109', 1767375961),
+                ('AURA_POOLS1', '273', 1767375964),
+            ]),
+            ('MORPHO_VAULTS%', [
+                ('MORPHO_VAULTSpolygon_pos', '53', 1767365352),
+                ('MORPHO_VAULTSethereum', '389', 1767375981),
+                ('MORPHO_VAULTSbase', '413', 1767375982),
+            ]),
+            ('STAKEDAO_V2_VAULTS%', [
+                ('STAKEDAO_V2_VAULTSarbitrum_one', '27', 1767365328),
+                ('STAKEDAO_V2_VAULTSbase', '8', 1767365340),
+            ]),
+        ]:
+            assert cursor.execute(
+                'SELECT key, value, last_queried_ts FROM unique_cache WHERE key LIKE ?',
+                (key,),
+            ).fetchall() == expected_value
 
     with ExitStack() as stack:
         patch_for_globaldb_upgrade_to(stack, 15)
@@ -1499,7 +1505,7 @@ def test_upgrade_v14_v15(
     assert globaldb.get_setting_value('version', 0) == 15
     with globaldb.conn.read_ctx() as cursor:
         assert cursor.execute(
-            "SELECT COUNT(*) FROM unique_cache WHERE key LIKE 'AURA_POOLS%' OR key LIKE 'MORPHO_VAULTS%'",  # noqa: E501
+            "SELECT COUNT(*) FROM unique_cache WHERE key LIKE 'AURA_POOLS%' OR key LIKE 'MORPHO_VAULTS%' OR key LIKE 'STAKEDAO_V2_VAULTS%'",  # noqa: E501
         ).fetchone()[0] == 0
 
 

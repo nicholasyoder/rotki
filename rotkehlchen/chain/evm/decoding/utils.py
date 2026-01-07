@@ -19,13 +19,21 @@ from rotkehlchen.errors.misc import (
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.cache import (
+    globaldb_get_general_cache_values,
     globaldb_get_unique_cache_value,
     globaldb_set_unique_cache_value,
 )
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.types import ChainID, ChecksumEvmAddress, Price, Timestamp, UniqueCacheType
+from rotkehlchen.types import (
+    ChainID,
+    ChecksumEvmAddress,
+    GeneralCacheType,
+    Price,
+    Timestamp,
+    UniqueCacheType,
+)
 
 if TYPE_CHECKING:
     from rotkehlchen.assets.asset import CryptoAsset, EvmToken
@@ -294,3 +302,29 @@ def get_protocol_token_addresses(
         # else we are missing new tokens. Load all from db.
         cursor.execute(f'SELECT protocol, address {query_body}', bindings)
         return {string_to_evm_address(row[1]) for row in cursor}
+
+
+def get_address_to_address_dict_from_cache(
+        cache_type: GeneralCacheType,
+        chain_id: ChainID,
+        description: str,
+) -> dict[ChecksumEvmAddress, ChecksumEvmAddress]:
+    """Load all `address,address` pairs from the cache for the given cache type and chain id.
+    Returns a dict mapping addresses to their corresponding address.
+    """
+    with GlobalDBHandler().conn.read_ctx() as cursor:
+        if len(cache_entries := globaldb_get_general_cache_values(
+            cursor=cursor,
+            key_parts=(cache_type, str(chain_id)),
+        )) == 0:
+            return {}
+
+    result_dict = {}
+    for entry in cache_entries:
+        if len(parts := entry.split(',')) != 2:
+            log.error(f'Failed to load {description} from cache: {entry}')
+            continue  # Shouldn't happen, but if the cache has bad values, log and skip
+
+        result_dict[string_to_evm_address(parts[0])] = string_to_evm_address(parts[1])
+
+    return result_dict

@@ -9,7 +9,10 @@ from rotkehlchen.chain.evm.decoding.utils import get_vault_price
 from rotkehlchen.constants import EXP18_INT
 from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.errors.serialization import DeserializationError
-from rotkehlchen.globaldb.cache import globaldb_set_general_cache_values
+from rotkehlchen.globaldb.cache import (
+    globaldb_set_general_cache_values,
+    globaldb_update_cache_last_ts,
+)
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import deserialize_evm_address
@@ -62,6 +65,12 @@ def _query_morpho_vaults_api(chain_id: ChainID) -> list[dict[str, Any]] | None:
 def query_morpho_vaults(chain_id: ChainID) -> None:
     """Query list of Morpho vaults and add the vault tokens to the global database."""
     if (vault_list := _query_morpho_vaults_api(chain_id=chain_id)) is None:
+        with GlobalDBHandler().conn.write_ctx() as write_cursor:
+            globaldb_update_cache_last_ts(
+                write_cursor=write_cursor,
+                cache_type=CacheType.MORPHO_VAULTS,
+                key_parts=(str(chain_id),),
+            )  # Update cache timestamp to prevent repeated errors.
         return
 
     cache_entries = []
