@@ -15,6 +15,7 @@ from rotkehlchen.chain.evm.decoding.structures import (
     DecoderContext,
     EvmDecodingOutput,
 )
+from rotkehlchen.chain.evm.decoding.utils import get_address_to_address_dict_from_cache
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants import ONE, ZERO
 from rotkehlchen.errors.misc import NotERC20Conformant, NotERC721Conformant
@@ -98,16 +99,11 @@ class MorphoCommonDecoder(EvmDecoderInterface, ReloadableDecoderMixin):
                 )
             ]
 
-            for info in globaldb_get_general_cache_values(
-                cursor=cursor,
-                key_parts=(CacheType.MORPHO_VAULTS, str(self.node_inquirer.chain_id)),
-            ):
-                if len(vault := info.split(',')) != 2:
-                    log.error(f'Failed to load Morpho vault from cache: {info}')
-                    continue  # Shouldn't happen, but if the cache has bad values, log and skip
-
-                self.vaults[string_to_evm_address(vault[0])] = string_to_evm_address(vault[1])
-
+        self.vaults = get_address_to_address_dict_from_cache(
+            cache_type=CacheType.MORPHO_VAULTS,
+            chain_id=self.node_inquirer.chain_id,
+            description='Morpho vault',
+        )
         return self.addresses_to_decoders()
 
     def _get_vault_event_tokens_and_amounts(

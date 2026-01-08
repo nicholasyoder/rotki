@@ -23,10 +23,11 @@ def migrate_to_v15(connection: 'DBConnection', progress_handler: 'DBUpgradeProgr
            have a pool count stored in the cache.
         - Morpho vaults - This key is now a general cache key and stores addresses instead of just
            vault counts.
+        - StakeDAO V2 vaults - Same as Morpho, this is now a general cache key storing addresses.
         """
         write_cursor.executemany(
             'DELETE FROM unique_cache WHERE key LIKE ?',
-            [('AURA_POOLS%',), ('MORPHO_VAULTS%',)],
+            [('AURA_POOLS%',), ('MORPHO_VAULTS%',), ('STAKEDAO_V2_VAULTS%',)],
         )
 
     perform_globaldb_upgrade_steps(connection, progress_handler)
