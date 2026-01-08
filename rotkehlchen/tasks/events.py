@@ -4,17 +4,18 @@ from typing import TYPE_CHECKING, Final
 from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
 from rotkehlchen.constants import HOUR_IN_SECONDS
-from rotkehlchen.db.cache import DBCacheDynamic, DBCacheStatic
+from rotkehlchen.db.cache import ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE, DBCacheDynamic, DBCacheStatic
 from rotkehlchen.db.constants import CHAIN_EVENT_FIELDS, HISTORY_BASE_ENTRY_FIELDS
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.base import HistoryBaseEntry, HistoryBaseEntryType
 from rotkehlchen.history.events.structures.onchain_event import OnchainEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.types import Timestamp
+from rotkehlchen.types import CHAINS_WITH_TRANSACTIONS, SupportedBlockchain, Timestamp
 from rotkehlchen.utils.misc import ts_ms_to_sec, ts_now
 
 if TYPE_CHECKING:
@@ -50,6 +51,26 @@ def process_events(
         )
 
 
+def _should_auto_ignore_movement(asset_movement: AssetMovement) -> bool:
+    """Check if the given asset movement should be auto ignored.
+    Returns True if the asset movement has a fiat asset, or if it is a movement to/from a
+    blockchain that we will not have txs for. Otherwise returns False.
+    """
+    if asset_movement.asset.is_fiat():
+        return True
+
+    if (
+        (extra_data := asset_movement.extra_data) is not None and
+        (blockchain_str := extra_data.get('blockchain')) is not None
+    ):
+        try:
+            return SupportedBlockchain.deserialize(blockchain_str) not in CHAINS_WITH_TRANSACTIONS
+        except DeserializationError:
+            return True  # not even a valid SupportedBlockchain
+
+    return False
+
+
 def match_asset_movements(database: 'DBHandler') -> None:
     """Analyze asset movements and find corresponding onchain events, then update those onchain
     events with proper event_type, counterparty, etc and cache the matched identifiers.
@@ -57,8 +78,12 @@ def match_asset_movements(database: 'DBHandler') -> None:
     log.debug('Analyzing asset movements for corresponding onchain events...')
     events_db = DBHistoryEvents(database=database)
     asset_movements, fee_events = get_unmatched_asset_movements(database)
-    unmatched_asset_movements = []
+    unmatched_asset_movements, movement_ids_to_ignore = [], []
     for asset_movement in asset_movements:
+        if _should_auto_ignore_movement(asset_movement=asset_movement):
+            movement_ids_to_ignore.append(asset_movement.identifier)
+            continue
+
         if len(matched_events := find_asset_movement_matches(
             events_db=events_db,
             asset_movement=asset_movement,
@@ -80,6 +105,16 @@ def match_asset_movements(database: 'DBHandler') -> None:
                 )
 
         unmatched_asset_movements.append(asset_movement)
+
+    if len(movement_ids_to_ignore) > 0:
+        with events_db.db.conn.write_ctx() as write_cursor:
+            write_cursor.executemany(
+                'INSERT OR REPLACE INTO key_value_cache(name, value) VALUES(?, ?)',
+                [(
+                    DBCacheDynamic.MATCHED_ASSET_MOVEMENT.get_db_key(identifier=x),  # type: ignore[arg-type]  # identifiers will not be None since the events are from the db.
+                    ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE,
+                ) for x in movement_ids_to_ignore],
+            )
 
     if (unmatched_count := len(unmatched_asset_movements)) > 0:
         log.warning(f'Failed to match {unmatched_count} asset movements')
