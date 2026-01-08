@@ -7,6 +7,7 @@ from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
 from rotkehlchen.constants import HOUR_IN_SECONDS
 from rotkehlchen.constants.assets import A_BTC, A_ETH, A_USD, A_USDC
+from rotkehlchen.db.cache import ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.fval import FVal
@@ -45,7 +46,7 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
     with database.conn.write_ctx() as write_cursor:
         events_db.add_history_events(
             write_cursor=write_cursor,
-            history=[(deposit1 := AssetMovement(  # deposit1, Fiat, should appear as unmatched
+            history=[AssetMovement(  # deposit1, Fiat, should be auto ignored
                 location=Location.GEMINI,
                 event_type=HistoryEventType.DEPOSIT,
                 timestamp=TimestampMS(1500000000000),
@@ -53,14 +54,17 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
                 amount=FVal('100'),
                 unique_id='1',
                 location_label='Gemini 1',
-            )), (deposit2 := AssetMovement(  # deposit2, two matches, one with tx ref
+            ), (deposit2 := AssetMovement(  # deposit2, two matches, one with tx ref
                 location=Location.GEMINI,
                 event_type=HistoryEventType.DEPOSIT,
                 timestamp=TimestampMS(1510000000000),
                 asset=A_ETH,
                 amount=FVal('0.1'),
                 unique_id='2',
-                extra_data={'transaction_id': str(tx_ref := make_evm_tx_hash())},
+                extra_data=AssetMovementExtraData(
+                    blockchain='eth',
+                    transaction_id=str(tx_ref := make_evm_tx_hash()),
+                ),
                 location_label='Gemini 2',
             )), EvmEvent(  # deposit2's matched event, same tx ref
                 tx_ref=tx_ref,
@@ -180,6 +184,15 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
                 asset=A_USDC,
                 amount=FVal('100'),
                 location_label=(deposit3_user_address := make_solana_address()),
+            ), AssetMovement(  # deposit5, for blockchain that will have no transactions
+                location=Location.GEMINI,
+                event_type=HistoryEventType.DEPOSIT,
+                timestamp=TimestampMS(1555000000000),
+                asset=A_ETH,
+                amount=FVal('0.6'),
+                unique_id='9',
+                location_label='Gemini 1',
+                extra_data=AssetMovementExtraData(blockchain='monero'),
             ), (withdrawal4 := AssetMovement(  # withdrawal4, with another asset movement for the matched event  # noqa: E501
                 location=Location.BITSTAMP,
                 event_type=HistoryEventType.WITHDRAWAL,
@@ -254,10 +267,12 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
 
     # Check that matches have been cached and that the cached identifiers
     # refer to the correct asset movements (ordered by timestamp descending)
+    deposit_1_identifier = 1
     deposit_2_identifier = 2
     withdrawal_1_identifier = 5
     deposit_3_identifier = 13
-    withdrawal4_identifier = 16
+    deposit_4_identifier = 16
+    withdrawal4_identifier = 17
     with database.conn.read_ctx() as cursor:
         assert cursor.execute(
             'SELECT * FROM key_value_cache WHERE name LIKE ?',
@@ -268,6 +283,8 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
             (f'matched_asset_movement_{deposit_3_identifier}', str(deposit3_matched_event.identifier)),  # noqa: E501
             (f'matched_asset_movement_{withdrawal_1_identifier}', str(withdrawal1_matched_event.identifier)),  # noqa: E501
             (f'matched_asset_movement_{deposit_2_identifier}', str(deposit2_matched_event.identifier)),  # noqa: E501
+            (f'matched_asset_movement_{deposit_4_identifier}', str(ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE)),  # noqa: E501
+            (f'matched_asset_movement_{deposit_1_identifier}', str(ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE)),  # noqa: E501
         ]
         matched_asset_movements = events_db.get_history_events_internal(
             cursor=cursor,
@@ -298,18 +315,16 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
     # Check that the unmatched movements ws message was sent
     assert database.msg_aggregator.rotki_notifier.pop_message() == MockedWsMessage(  # type: ignore  # pop_message will be present since it's a MockRotkiNotifier
         message_type=WSMessageType.UNMATCHED_ASSET_MOVEMENTS,
-        data={'count': 3},
+        data={'count': (unmatched_count := 2)},
     )
 
     # Check that the matching logic is now only run for unmatched asset movements
     with patch('rotkehlchen.tasks.events.find_asset_movement_matches', return_value=[]) as find_match_mock:  # noqa: E501
         match_asset_movements(database=database)
 
-    assert find_match_mock.call_count == 3
+    assert find_match_mock.call_count == unmatched_count
     # Processed in order of descending timestamp: withdrawal3, withdrawal2, deposit1
     withdrawal3.identifier = 12
     assert find_match_mock.call_args_list[0].kwargs['asset_movement'] == withdrawal3
     withdrawal2.identifier = 9
     assert find_match_mock.call_args_list[1].kwargs['asset_movement'] == withdrawal2
-    deposit1.identifier = 1
-    assert find_match_mock.call_args_list[2].kwargs['asset_movement'] == deposit1
