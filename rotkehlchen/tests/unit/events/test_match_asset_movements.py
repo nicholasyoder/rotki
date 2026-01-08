@@ -204,7 +204,11 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
     with database.conn.read_ctx() as cursor:
         all_events = events_db.get_history_events_internal(
             cursor=cursor,
-            filter_query=HistoryEventFilterQuery.make(),
+            filter_query=HistoryEventFilterQuery.make(order_by_rules=[
+                ('timestamp', True),
+                ('sequence_index', True),
+                ('history_events_identifier', True),
+            ]),
         )
 
     asset_movements = [event for event in all_events if isinstance(event, AssetMovement)]
@@ -272,7 +276,7 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
                 withdrawal_1_identifier,
                 deposit_3_identifier,
                 withdrawal4_identifier,
-            ]),
+            ], order_by_rules=[('history_events_identifier', True)]),
         )
     assert len(matched_asset_movements) == 4
     deposit2.identifier = deposit_2_identifier

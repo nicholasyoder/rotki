@@ -20,6 +20,7 @@ from rotkehlchen.db.constants import (
     CHAIN_FIELD_LENGTH,
     ETH_STAKING_EVENT_FIELDS,
     ETH_STAKING_FIELD_LENGTH,
+    GROUP_HAS_IGNORED_ASSETS_FIELD,
     HISTORY_BASE_ENTRY_FIELDS,
     HISTORY_BASE_ENTRY_LENGTH,
     HISTORY_MAPPING_KEY_STATE,
@@ -540,7 +541,10 @@ class DBHistoryEvents:
             match_exact_events: bool = True,
     ) -> tuple[str, list]:
         """Returns the sql queries and bindings for the history events without pagination."""
-        base_suffix = f'{HISTORY_BASE_ENTRY_FIELDS}, {CHAIN_EVENT_FIELDS}, {ETH_STAKING_EVENT_FIELDS} {ALL_EVENTS_DATA_JOIN}'  # noqa: E501
+        # group_has_ignored_assets is added at the END so existing slicing logic is not affected.
+        # It's computed via a window function to detect groups with ignored assets even when
+        # those rows are filtered out by exclude_ignored_assets.
+        base_suffix = f'{HISTORY_BASE_ENTRY_FIELDS}, {CHAIN_EVENT_FIELDS}, {ETH_STAKING_EVENT_FIELDS}, {GROUP_HAS_IGNORED_ASSETS_FIELD} {ALL_EVENTS_DATA_JOIN}'  # noqa: E501
         if aggregate_by_group_ids:
             filters, query_bindings = filter_query.prepare(
                 with_group_by=True,
@@ -801,12 +805,17 @@ class DBHistoryEvents:
         type_idx = 1 if aggregate_by_group_ids else 0
         data_start_idx = type_idx + 1
         failed_to_deserialize = False
+        # Fixed position of group_has_ignored_assets (after entry_type, base, chain, staking).
+        # JOINs like customized_events_only may add columns at the end, so we use fixed index.
+        group_has_ignored_assets_idx = (
+            type_idx + 1 + HISTORY_BASE_ENTRY_LENGTH +
+            CHAIN_FIELD_LENGTH + ETH_STAKING_FIELD_LENGTH
+        )
+
         for entry in cursor:
-            # ignored is placed right after the base history fields (relative to entry_type).
-            group_has_ignored_assets = entry[type_idx + HISTORY_BASE_ENTRY_LENGTH] == 1
-            # Design decision: ignored-group detection is based on returned rows only.
-            # When exclude_ignored_assets=True, groups with filtered-out ignored entries
-            # won't be flagged as having ignored assets.
+            # group_has_ignored_assets is computed via MAX(ignored) OVER window function,
+            # so it detects groups with ignored assets even when those rows are filtered out.
+            group_has_ignored_assets = entry[group_has_ignored_assets_idx] == 1
             entry_type = HistoryBaseEntryType(entry[type_idx])
             try:
                 deserialized_event: HistoryBaseEntry
@@ -857,7 +866,7 @@ class DBHistoryEvents:
                         entry[data_start_idx + HISTORY_BASE_ENTRY_LENGTH + 1:data_start_idx + HISTORY_BASE_ENTRY_LENGTH + CHAIN_FIELD_LENGTH + 1],  # noqa: E501
                     )
                 else:
-                    data = entry[data_start_idx:]
+                    data = entry[data_start_idx:group_has_ignored_assets_idx]
                     deserialized_event = (
                         AssetMovement if entry_type == HistoryBaseEntryType.ASSET_MOVEMENT_EVENT else  # noqa: E501
                         SwapEvent if entry_type == HistoryBaseEntryType.SWAP_EVENT else

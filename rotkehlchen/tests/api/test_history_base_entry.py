@@ -1591,6 +1591,7 @@ def test_group_has_ignored_assets_flag(rotkehlchen_api_server: 'APIServer') -> N
             ],
         )
 
+    # Default request should exclude ignored assets but still report has_ignored_assets
     result = assert_proper_sync_response_with_result(
         response=requests.post(api_url_for(rotkehlchen_api_server, 'historyeventresource')),
     )
@@ -1599,7 +1600,9 @@ def test_group_has_ignored_assets_flag(rotkehlchen_api_server: 'APIServer') -> N
     assert isinstance(entries[0], list)
     assert len(entries[0]) == 1
     assert entries[0][0]['entry']['event_subtype'] == 'spend'
-    assert 'has_ignored_assets' not in entries[0][0]
+    # has_ignored_assets is True because the group contains the WBTC event (ignored asset)
+    # even though that event is filtered out by exclude_ignored_assets
+    assert entries[0][0]['has_ignored_assets'] is True
 
 
 @pytest.mark.parametrize('number_of_eth_accounts', [0])

@@ -559,7 +559,8 @@ def test_history_events_with_ignored_groups_excluding_assets(database: 'DBHandle
     events_excluding: list[HistoryBaseEntry] = events_result_excluding.events  # type: ignore[assignment]  # filter uses aggregate_by_group_ids=False.
     assert len(events_excluding) == 1
     assert events_excluding[0].asset == A_ETH
-    assert events_result_excluding.ignored_group_identifiers == set()
+    # With the window function fix, ignored_group_identifiers is detected even when excluding
+    assert events_result_excluding.ignored_group_identifiers == {group_identifier}
     assert events_result_including.ignored_group_identifiers == {group_identifier}
 
 

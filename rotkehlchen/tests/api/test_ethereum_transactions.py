@@ -1218,7 +1218,8 @@ def test_ignored_assets(
         expected_totals_with_grouping=3,
         entries_limit=1000,
     )
-    expected = generate_events_response([event1, event3])
+    # event1's group has ignored BTC asset, event3's group has no ignored assets
+    expected = generate_events_response([event1, event3], has_ignored_assets=[True, False])
     assert returned_events == expected
 
 
