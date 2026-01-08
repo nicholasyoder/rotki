@@ -48,7 +48,6 @@ from rotkehlchen.premium.premium import (
 )
 from rotkehlchen.serialization.deserialize import deserialize_timestamp
 from rotkehlchen.tasks.assets import _find_missing_tokens
-from rotkehlchen.tasks.historical_balances import process_historical_balances
 from rotkehlchen.tasks.manager import PREMIUM_STATUS_CHECK, TaskManager
 from rotkehlchen.tasks.utils import should_run_periodic_task
 from rotkehlchen.tests.fixtures.websockets import WebsocketReader
@@ -87,7 +86,6 @@ if TYPE_CHECKING:
     from rotkehlchen.exchanges.exchange import ExchangeInterface
     from rotkehlchen.exchanges.manager import ExchangeManager
     from rotkehlchen.rotkehlchen import Rotkehlchen
-    from rotkehlchen.user_messages import MessagesAggregator
 
 
 def test_potential_maybe_schedule_task(task_manager: TaskManager):
@@ -1574,21 +1572,30 @@ def test_process_historical_balances(
                 receive=AssetAmount(asset=A_DAI, amount=FVal('1000')),
                 group_identifier='grp2',
                 location_label=TEST_ADDR1,
-            ), AssetMovement(  # withdraw 500 DAI (asset movement, neutral) -> no metric recorded
-                identifier=4,
+            ), AssetMovement(  # deposit 1000 DAI to exchange -> exchange bucket, balance: 1000
+                identifier=(event4_id := 4),
                 group_identifier='grp3',
                 timestamp=TimestampMS(3000),
-                location=Location.ETHEREUM,
+                location=Location.KRAKEN,
+                event_type=HistoryEventType.DEPOSIT,
+                asset=A_DAI,
+                amount=FVal('1000'),
+                location_label=TEST_ADDR1,
+            ), AssetMovement(  # withdraw 500 DAI from exchange -> exchange bucket, balance: 500
+                identifier=(event5_id := 5),
+                group_identifier='grp4',
+                timestamp=TimestampMS(3500),
+                location=Location.KRAKEN,
                 event_type=HistoryEventType.WITHDRAWAL,
                 asset=A_DAI,
                 amount=FVal('500'),
                 location_label=TEST_ADDR1,
             ), EvmEvent(  # deposit DAI -> wallet bucket, balance: 500
-                identifier=(event5_id := 5),
+                identifier=(event6_id := 6),
                 tx_ref=(pool_tx_hash := make_evm_tx_hash()),
-                group_identifier='grp3',
-                sequence_index=1,
-                timestamp=TimestampMS(3000),
+                group_identifier='grp5',
+                sequence_index=0,
+                timestamp=TimestampMS(4000),
                 location=Location.ETHEREUM,
                 event_type=HistoryEventType.DEPOSIT,
                 event_subtype=HistoryEventSubType.DEPOSIT_FOR_WRAPPED,
@@ -1597,11 +1604,11 @@ def test_process_historical_balances(
                 location_label=TEST_ADDR1,
                 counterparty=CPT_AAVE_V3,
             ), EvmEvent(  # receive aEthDAI (wrapped) -> aave protocol bucket, balance: 500
-                identifier=(event6_id := 6),
+                identifier=(event7_id := 7),
                 tx_ref=pool_tx_hash,
-                group_identifier='grp3',
+                group_identifier='grp5',
                 sequence_index=2,
-                timestamp=TimestampMS(3000),
+                timestamp=TimestampMS(4000),
                 location=Location.ETHEREUM,
                 event_type=HistoryEventType.RECEIVE,
                 event_subtype=HistoryEventSubType.RECEIVE_WRAPPED,
@@ -1610,11 +1617,11 @@ def test_process_historical_balances(
                 location_label=TEST_ADDR1,
                 counterparty=CPT_AAVE_V3,
             ), EvmEvent(  # spend 100 ETH -> triggers negative balance, skips ETH wallet bucket
-                identifier=7,
+                identifier=8,
                 tx_ref=make_evm_tx_hash(),
-                group_identifier='grp4',
+                group_identifier='grp6',
                 sequence_index=0,
-                timestamp=TimestampMS(4000),
+                timestamp=TimestampMS(5000),
                 location=Location.ETHEREUM,
                 event_type=HistoryEventType.SPEND,
                 event_subtype=HistoryEventSubType.NONE,
@@ -1622,11 +1629,11 @@ def test_process_historical_balances(
                 amount=FVal('100'),
                 location_label=TEST_ADDR1,
             ), EvmEvent(  # receive ETH after negative -> skipped
-                identifier=8,
+                identifier=9,
                 tx_ref=make_evm_tx_hash(),
-                group_identifier='grp5',
+                group_identifier='grp7',
                 sequence_index=0,
-                timestamp=TimestampMS(5000),
+                timestamp=TimestampMS(6000),
                 location=Location.ETHEREUM,
                 event_type=HistoryEventType.RECEIVE,
                 event_subtype=HistoryEventSubType.NONE,
@@ -1634,11 +1641,11 @@ def test_process_historical_balances(
                 amount=FVal('50'),
                 location_label=TEST_ADDR1,
             ), EvmEvent(  # receive 200 DAI -> wallet bucket, balance: 700
-                identifier=(event7_id := 9),
+                identifier=(event8_id := 10),
                 tx_ref=make_evm_tx_hash(),
-                group_identifier='grp6',
+                group_identifier='grp8',
                 sequence_index=0,
-                timestamp=TimestampMS(6000),
+                timestamp=TimestampMS(7000),
                 location=Location.ETHEREUM,
                 event_type=HistoryEventType.RECEIVE,
                 event_subtype=HistoryEventSubType.NONE,
@@ -1655,12 +1662,12 @@ def test_process_historical_balances(
     messages = task_manager.database.msg_aggregator.rotki_notifier.messages  # type: ignore[union-attr]
     assert len(messages) == 4
     assert messages[0].message_type == WSMessageType.PROGRESS_UPDATES
-    assert messages[0].data == {'subtype': 'historical_balance_processing', 'total': 9, 'processed': 0}  # noqa: E501
+    assert messages[0].data == {'subtype': 'historical_balance_processing', 'total': 10, 'processed': 0}  # noqa: E501
     assert messages[1].message_type == WSMessageType.PROGRESS_UPDATES
     assert messages[2].message_type == WSMessageType.NEGATIVE_BALANCE_DETECTED
     assert messages[2].data['asset'] == A_ETH.identifier
     assert messages[3].message_type == WSMessageType.PROGRESS_UPDATES
-    assert messages[3].data == {'subtype': 'historical_balance_processing', 'total': 9, 'processed': 9}  # noqa: E501
+    assert messages[3].data == {'subtype': 'historical_balance_processing', 'total': 10, 'processed': 10}  # noqa: E501
 
     with database.conn.read_ctx() as cursor:
         assert cursor.execute(
@@ -1672,47 +1679,9 @@ def test_process_historical_balances(
             (event1_id, None, '10', A_ETH.identifier),
             (event2_id, None, '8', A_ETH.identifier),
             (event3_id, None, '1000', A_DAI.identifier),
+            (event4_id, None, '1000', A_DAI.identifier),
             (event5_id, None, '500', A_DAI.identifier),
-            (event6_id, CPT_AAVE_V3, '500', a_ethdai_asset.identifier),
-            (event7_id, None, '700', A_DAI.identifier),
+            (event6_id, None, '500', A_DAI.identifier),
+            (event7_id, CPT_AAVE_V3, '500', a_ethdai_asset.identifier),
+            (event8_id, None, '700', A_DAI.identifier),
         ]
-
-
-def test_process_historical_balances_clears_stale_marker(
-        database: 'DBHandler',
-        messages_aggregator: 'MessagesAggregator',
-) -> None:
-    cache_key = DBCacheStatic.STALE_BALANCES_FROM_TS.value
-    db_events = DBHistoryEvents(database)
-
-    with database.user_write() as write_cursor:
-        db_events.add_history_event(
-            write_cursor=write_cursor,
-            event=EvmEvent(
-                tx_ref=make_evm_tx_hash(),
-                group_identifier='grp1',
-                sequence_index=0,
-                timestamp=TimestampMS(1000),
-                location=Location.ETHEREUM,
-                event_type=HistoryEventType.RECEIVE,
-                event_subtype=HistoryEventSubType.NONE,
-                asset=A_ETH,
-                amount=FVal('10'),
-                location_label=TEST_ADDR1,
-            ),
-        )
-
-    with database.conn.read_ctx() as cursor:
-        assert cursor.execute(
-            'SELECT value FROM key_value_cache WHERE name = ?',
-            (cache_key,),
-        ).fetchone() is not None
-
-    gevent.sleep(0.01)  # ensure modification_ts < processing_started_at
-    process_historical_balances(database, messages_aggregator)
-
-    with database.conn.read_ctx() as cursor:
-        assert cursor.execute(
-            'SELECT value FROM key_value_cache WHERE name = ?',
-            (cache_key,),
-        ).fetchone() is None
