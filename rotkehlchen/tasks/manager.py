@@ -73,6 +73,7 @@ from rotkehlchen.types import (
     Optional,
     SupportedBlockchain,
     Timestamp,
+    TimestampMS,
 )
 from rotkehlchen.utils.misc import ts_now
 
@@ -746,8 +747,6 @@ class TaskManager:
         Processes history events to compute and store pre-computed balance metrics
         in the event_metrics table.
         """
-        # TODO: Prevent this from running concurrently with tasks that add or modify events,
-        # such as transaction queries, exchange history sync, decoding, and event processing.
         if should_run_periodic_task(
             database=self.database,
             key_name=DBCacheStatic.LAST_HISTORICAL_BALANCE_PROCESSING_TS,
@@ -769,7 +768,7 @@ class TaskManager:
             method=process_historical_balances,
             database=self.database,
             msg_aggregator=self.msg_aggregator,
-            from_ts=stale_from_ts,
+            from_ts=TimestampMS(int(stale_from_ts)) if stale_from_ts else None,
         )]
 
     def _maybe_check_data_updates(self) -> Optional[list[gevent.Greenlet]]:

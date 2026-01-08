@@ -34,6 +34,9 @@ class DBCacheStatic(Enum):
     # Earliest timestamp from which balance caches are stale due to event modifications.
     # When events are added/edited/deleted, balances must be recalculated from this point.
     STALE_BALANCES_FROM_TS: Final = 'stale_balances_from_ts'
+    # Timestamp when events were last modified. Used to detect concurrent modifications
+    # during historical balance processing.
+    STALE_BALANCES_MODIFICATION_TS: Final = 'stale_balances_modification_ts'
     LAST_HISTORICAL_BALANCE_PROCESSING_TS: Final = 'last_historical_balance_processing_ts'
 
 

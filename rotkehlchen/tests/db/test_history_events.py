@@ -1,6 +1,7 @@
 from typing import Any
 from unittest.mock import patch
 
+import gevent
 import pytest
 
 from rotkehlchen.api.v1.types import IncludeExcludeFilterData
@@ -666,13 +667,13 @@ def test_match_exact_events(database: 'DBHandler', start_with_valid_premium: boo
 
 def test_event_modification_tracks_earliest_timestamp(database: 'DBHandler') -> None:
     db = DBHistoryEvents(database)
-    cache_key = DBCacheStatic.STALE_BALANCES_FROM_TS.value
+    event_ts_key = DBCacheStatic.STALE_BALANCES_FROM_TS.value
+    modification_ts_key = DBCacheStatic.STALE_BALANCES_MODIFICATION_TS.value
 
     with database.conn.read_ctx() as cursor:
-        result = cursor.execute(
-            'SELECT value FROM key_value_cache WHERE name=?', (cache_key,),
-        ).fetchone()
-        assert result is None
+        assert cursor.execute(
+            'SELECT value FROM key_value_cache WHERE name=?', (event_ts_key,),
+        ).fetchone() is None
 
     with database.user_write() as write_cursor:
         db.add_history_events(
@@ -699,10 +700,12 @@ def test_event_modification_tracks_earliest_timestamp(database: 'DBHandler') -> 
         )
 
     with database.conn.read_ctx() as cursor:
-        result = cursor.execute(
-            'SELECT value FROM key_value_cache WHERE name=?', (cache_key,),
-        ).fetchone()
-        assert result[0] == str(ts_2000)  # global minimum across all assets
+        assert int(cursor.execute(
+            'SELECT value FROM key_value_cache WHERE name=?', (event_ts_key,),
+        ).fetchone()[0]) == ts_2000  # global minimum across all assets
+        assert int(cursor.execute(
+            'SELECT value FROM key_value_cache WHERE name=?', (modification_ts_key,),
+        ).fetchone()[0]) > 0
 
     with database.user_write() as write_cursor:
         db.add_history_event(
@@ -720,10 +723,9 @@ def test_event_modification_tracks_earliest_timestamp(database: 'DBHandler') -> 
         )
 
     with database.conn.read_ctx() as cursor:
-        result = cursor.execute(
-            'SELECT value FROM key_value_cache WHERE name=?', (cache_key,),
-        ).fetchone()
-        assert result[0] == str(ts_1000)  # updated to earlier timestamp
+        assert int(cursor.execute(
+            'SELECT value FROM key_value_cache WHERE name=?', (event_ts_key,),
+        ).fetchone()[0]) == ts_1000  # updated to earlier timestamp
 
     # add event at later timestamp 5000 and cache should remain at 1000
     with database.user_write() as write_cursor:
@@ -742,10 +744,9 @@ def test_event_modification_tracks_earliest_timestamp(database: 'DBHandler') -> 
         )
 
     with database.conn.read_ctx() as cursor:
-        result = cursor.execute(
-            'SELECT value FROM key_value_cache WHERE name=?', (cache_key,),
-        ).fetchone()
-        assert result[0] == str(ts_1000)  # remains at minimum
+        assert int(cursor.execute(
+            'SELECT value FROM key_value_cache WHERE name=?', (event_ts_key,),
+        ).fetchone()[0]) == ts_1000  # remains at minimum
 
     # edit notes only and _mark_events_modified should NOT be called
     with (
@@ -763,10 +764,9 @@ def test_event_modification_tracks_earliest_timestamp(database: 'DBHandler') -> 
         db.edit_history_event(write_cursor=write_cursor, event=eth_event)
 
     with database.conn.read_ctx() as cursor:
-        result = cursor.execute(
-            'SELECT value FROM key_value_cache WHERE name=?', (cache_key,),
-        ).fetchone()
-        assert result[0] == str(ts_1000)  # still the global minimum
+        assert int(cursor.execute(
+            'SELECT value FROM key_value_cache WHERE name=?', (event_ts_key,),
+        ).fetchone()[0]) == ts_1000  # still the global minimum
 
     # test purge_exchange_data updates cache via delete_events_and_track
     with database.user_write() as write_cursor:
@@ -786,7 +786,57 @@ def test_event_modification_tracks_earliest_timestamp(database: 'DBHandler') -> 
         database.purge_exchange_data(write_cursor=write_cursor, location=Location.KRAKEN)
 
     with database.conn.read_ctx() as cursor:
-        result = cursor.execute(
-            'SELECT value FROM key_value_cache WHERE name=?', (cache_key,),
-        ).fetchone()
-        assert result[0] == str(ts_500)  # updated to deleted event's timestamp
+        assert int(cursor.execute(
+            'SELECT value FROM key_value_cache WHERE name=?', (event_ts_key,),
+        ).fetchone()[0]) == ts_500  # updated to deleted event's timestamp
+
+
+def test_modification_ts_updated_on_each_modification(database: 'DBHandler') -> None:
+    db = DBHistoryEvents(database)
+    event_ts_key = DBCacheStatic.STALE_BALANCES_FROM_TS.value
+    modification_ts_key = DBCacheStatic.STALE_BALANCES_MODIFICATION_TS.value
+
+    with database.user_write() as write_cursor:
+        db.add_history_event(
+            write_cursor=write_cursor,
+            event=HistoryEvent(
+                group_identifier='TEST1',
+                sequence_index=1,
+                timestamp=TimestampMS(1000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.TRADE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=ONE,
+            ),
+        )
+
+    with database.conn.read_ctx() as cursor:
+        modification_ts1 = int(cursor.execute(
+            'SELECT value FROM key_value_cache WHERE name=?', (modification_ts_key,),
+        ).fetchone()[0])
+
+    gevent.sleep(0.01)  # ensure different modification_ts between events
+
+    with database.user_write() as write_cursor:
+        db.add_history_event(
+            write_cursor=write_cursor,
+            event=HistoryEvent(
+                group_identifier='TEST2',
+                sequence_index=1,
+                timestamp=TimestampMS(2000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.TRADE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=ONE,
+            ),
+        )
+
+    with database.conn.read_ctx() as cursor:
+        assert int(cursor.execute(
+            'SELECT value FROM key_value_cache WHERE name=?', (event_ts_key,),
+        ).fetchone()[0]) == 1000
+        assert int(cursor.execute(
+            'SELECT value FROM key_value_cache WHERE name=?', (modification_ts_key,),
+        ).fetchone()[0]) >= modification_ts1

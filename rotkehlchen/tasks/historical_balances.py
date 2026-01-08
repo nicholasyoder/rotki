@@ -10,10 +10,12 @@ from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.types import EventDirection, HistoryEventSubType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import EventMetricKey, TimestampMS
-from rotkehlchen.utils.misc import ts_ms_to_sec, ts_now
+from rotkehlchen.utils.misc import ts_ms_to_sec, ts_now, ts_now_in_ms
+from rotkehlchen.utils.mixins.lockable import skip_if_running
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
+    from rotkehlchen.db.drivers.gevent import DBCursor
     from rotkehlchen.history.events.structures.base import HistoryBaseEntry
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -107,6 +109,7 @@ def _load_bucket_balances_before_ts(
     return bucket_balances
 
 
+@skip_if_running
 def process_historical_balances(
         database: 'DBHandler',
         msg_aggregator: 'MessagesAggregator',
@@ -114,7 +117,7 @@ def process_historical_balances(
 ) -> None:
     """Process events and compute balance metrics. Stops on negative balance."""
     log.debug(f'Starting historical balance processing from_ts={from_ts}')
-    bucket_balances = {}
+    processing_started_at, bucket_balances = ts_now_in_ms(), {}
     if from_ts is not None:
         bucket_balances = _load_bucket_balances_before_ts(database, from_ts)
 
@@ -134,12 +137,11 @@ def process_historical_balances(
 
     if (total_events := len(events)) == 0:
         log.debug('No events to process for historical balances')
-        _finalize_processing(database)
+        _finalize_processing(database=database, processing_started_at=processing_started_at)
         return
 
     metrics_batch: list[tuple[int | None, str | None, str, str]] = []
-    first_batch_written = False
-    send_ws_every = msg_aggregator.how_many_events_per_ws(total_events)
+    first_batch_written, send_ws_every = False, msg_aggregator.how_many_events_per_ws(total_events)
     for idx, event in enumerate(events):
         bucket = Bucket.from_event(event)
         if (current_balance_in_bucket := bucket_balances.get(bucket, ZERO)) < ZERO:
@@ -164,7 +166,7 @@ def process_historical_balances(
                     f'Negative balance detected for {event.asset.identifier} '
                     f'at event {event.identifier}. Skipping {bucket}.',
                 )
-                bucket_balances[bucket] = FVal(-1)
+                bucket_balances[bucket] = FVal(-1)  # skip future events for this bucket
                 continue
             bucket_balances[bucket] = new_balance
         else:  # neutral events don't affect balance
@@ -189,34 +191,21 @@ def process_historical_balances(
 
         if len(metrics_batch) >= METRICS_BATCH_SIZE:
             with database.user_write() as write_cursor:
-                if not first_batch_written and from_ts is not None:
-                    write_cursor.execute(
-                        'DELETE FROM event_metrics WHERE event_identifier IN '
-                        '(SELECT identifier FROM history_events WHERE timestamp >= ?)',
-                        (from_ts,),
-                    )
-                    first_batch_written = True
-                write_cursor.executemany(
-                    'INSERT OR REPLACE INTO event_metrics '
-                    '(event_identifier, protocol, metric_key, metric_value) '
-                    'VALUES (?, ?, ?, ?)',
-                    metrics_batch,
+                _write_metrics_batch(
+                    write_cursor=write_cursor,
+                    metrics_batch=metrics_batch,
+                    from_ts=from_ts,
+                    first_batch_written=first_batch_written,
                 )
-            metrics_batch = []
+            first_batch_written, metrics_batch = True, []
 
     if len(metrics_batch) != 0:  # last batch
         with database.user_write() as write_cursor:
-            if not first_batch_written and from_ts is not None:
-                write_cursor.execute(
-                    'DELETE FROM event_metrics WHERE event_identifier IN '
-                    '(SELECT identifier FROM history_events WHERE timestamp >= ?)',
-                    (from_ts,),
-                )
-            write_cursor.executemany(
-                'INSERT OR REPLACE INTO event_metrics '
-                '(event_identifier, protocol, metric_key, metric_value) '
-                'VALUES (?, ?, ?, ?)',
-                metrics_batch,
+            _write_metrics_batch(
+                write_cursor=write_cursor,
+                metrics_batch=metrics_batch,
+                from_ts=from_ts,
+                first_batch_written=first_batch_written,
             )
 
     msg_aggregator.add_message(
@@ -227,19 +216,59 @@ def process_historical_balances(
             'processed': total_events,
         },
     )
-    _finalize_processing(database)
+    _finalize_processing(database=database, processing_started_at=processing_started_at)
     log.debug(f'Completed historical balance processing for {total_events} events')
 
 
-def _finalize_processing(database: 'DBHandler') -> None:
-    """Update cache timestamps and clear stale marker."""
+def _finalize_processing(database: 'DBHandler', processing_started_at: TimestampMS) -> None:
+    """Update cache timestamps. Only clears stale marker if no modifications during processing."""
     with database.user_write() as write_cursor:
         database.set_static_cache(
             write_cursor=write_cursor,
             name=DBCacheStatic.LAST_HISTORICAL_BALANCE_PROCESSING_TS,
             value=ts_now(),
         )
+
+        if (
+            (modification_ts := write_cursor.execute(
+                'SELECT value FROM key_value_cache WHERE name = ?',
+                (DBCacheStatic.STALE_BALANCES_MODIFICATION_TS.value,),
+            ).fetchone()) is None or
+            int(modification_ts[0]) >= processing_started_at
+        ):
+            if modification_ts is not None:
+                log.debug(
+                    'Events modified during historical balance processing, '
+                    'keeping stale marker for next run',
+                )
+            return
+
         write_cursor.execute(
-            'DELETE FROM key_value_cache WHERE name = ?',
-            (DBCacheStatic.STALE_BALANCES_FROM_TS.value,),
+            'DELETE FROM key_value_cache WHERE name IN (?, ?)',
+            (DBCacheStatic.STALE_BALANCES_FROM_TS.value,
+             DBCacheStatic.STALE_BALANCES_MODIFICATION_TS.value),
         )
+
+
+def _write_metrics_batch(
+        write_cursor: 'DBCursor',
+        metrics_batch: list[tuple[int | None, str | None, str, str]],
+        from_ts: TimestampMS | None,
+        first_batch_written: bool,
+) -> None:
+    """Write metrics batch to DB, deleting old entries on first write."""
+    if not first_batch_written:
+        if from_ts is not None:
+            write_cursor.execute(
+                'DELETE FROM event_metrics WHERE event_identifier IN '
+                '(SELECT identifier FROM history_events WHERE timestamp >= ?)',
+                (from_ts,),
+            )
+        else:
+            write_cursor.execute('DELETE FROM event_metrics')
+    write_cursor.executemany(
+        'INSERT OR REPLACE INTO event_metrics '
+        '(event_identifier, protocol, metric_key, metric_value) '
+        'VALUES (?, ?, ?, ?)',
+        metrics_batch,
+    )
