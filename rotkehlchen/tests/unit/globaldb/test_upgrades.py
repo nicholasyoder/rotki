@@ -1502,6 +1502,11 @@ def test_upgrade_v14_v15(
                 ('STAKEDAO_V2_VAULTSarbitrum_one', '27', 1767365328),
                 ('STAKEDAO_V2_VAULTSbase', '8', 1767365340),
             ]),
+            ('BEEFY_VAULTS%', [
+                ('BEEFY_VAULTS10', '495', 1767261893),
+                ('BEEFY_VAULTS1', '236', 1767261915),
+                ('BEEFY_VAULTS100', '30', 1767262013),
+            ]),
         ]:
             assert cursor.execute(
                 'SELECT key, value, last_queried_ts FROM unique_cache WHERE key LIKE ?',
@@ -1520,7 +1525,7 @@ def test_upgrade_v14_v15(
     assert globaldb.get_setting_value('version', 0) == 15
     with globaldb.conn.read_ctx() as cursor:
         assert cursor.execute(
-            "SELECT COUNT(*) FROM unique_cache WHERE key LIKE 'AURA_POOLS%' OR key LIKE 'MORPHO_VAULTS%' OR key LIKE 'STAKEDAO_V2_VAULTS%'",  # noqa: E501
+            "SELECT COUNT(*) FROM unique_cache WHERE key LIKE 'AURA_POOLS%' OR key LIKE 'MORPHO_VAULTS%' OR key LIKE 'STAKEDAO_V2_VAULTS%' OR key LIKE 'BEEFY_VAULTS%'",  # noqa: E501
         ).fetchone()[0] == 0
 
 

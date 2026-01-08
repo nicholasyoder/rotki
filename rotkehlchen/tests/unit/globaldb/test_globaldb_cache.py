@@ -655,7 +655,12 @@ def test_query_balancer_data_protocol_version_gnosis(gnosis_inquirer):
 
 @pytest.mark.vcr
 def test_query_beefy_legacy_boosts(ethereum_inquirer: 'EthereumInquirer') -> None:
-    """Test that query_beefy_vaults correctly creates legacy boost tokens."""
+    """Test that query_beefy_vaults correctly caches legacy boost vaults."""
+    with GlobalDBHandler().conn.write_ctx() as write_cursor:
+        write_cursor.execute(
+            'DELETE FROM general_cache WHERE key LIKE ?',
+            (f'{CacheType.BEEFY_VAULTS.serialize()}%',),
+        )
     with GlobalDBHandler().conn.read_ctx() as cursor:
         assert cursor.execute('SELECT COUNT(*) FROM evm_tokens WHERE protocol=?', (CPT_BEEFY_FINANCE,)).fetchone()[0] == 0  # noqa: E501
 
@@ -670,16 +675,25 @@ def test_query_beefy_legacy_boosts(ethereum_inquirer: 'EthereumInquirer') -> Non
         query_beefy_vaults(evm_inquirer=ethereum_inquirer)
 
     with GlobalDBHandler().conn.read_ctx() as cursor:
+        assert set(globaldb_get_general_cache_values(
+            cursor=cursor,
+            key_parts=(CacheType.BEEFY_VAULTS, str(ChainID.ETHEREUM.value)),
+        )) == {
+            ','.join((
+                string_to_evm_address('0xbd313b13ed794B86Bd161885F8e170769E0e68b2'),
+                string_to_evm_address('0x46EA5993fdDC27E4f770eFfB6921F401101Cbd59'),
+                '1',
+            )),
+            ','.join((
+                string_to_evm_address('0xC0dD9F05511Eec7f3C9C755816E4A25caECde47a'),
+                string_to_evm_address('0x0E5F3a47122901D3eE047d2C7e1B36b419Ede5FE'),
+                '1',
+            )),
+        }
         assert cursor.execute(
-            'SELECT a.name, cad.symbol, et.decimals FROM evm_tokens et '
-            'JOIN assets a ON et.identifier = a.identifier '
-            'JOIN common_asset_details cad ON a.identifier = cad.identifier '
-            'WHERE et.protocol = ?',
+            'SELECT COUNT(*) FROM evm_tokens WHERE protocol=?',
             (CPT_BEEFY_FINANCE,),
-        ).fetchall() == [
-            ('Reward Moo Curve ShezETH-ETH', 'rmooCurveShezETH-ETH', 18),
-            ('Reward Moo Silo WETH (weETH Market)', 'rmooSiloWETH', 18),
-        ]
+        ).fetchone()[0] == 0
 
 
 def test_superfluid_cache(ethereum_inquirer: EthereumInquirer):
