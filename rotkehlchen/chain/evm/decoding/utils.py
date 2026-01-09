@@ -315,7 +315,7 @@ def get_address_to_address_dict_from_cache(
     with GlobalDBHandler().conn.read_ctx() as cursor:
         if len(cache_entries := globaldb_get_general_cache_values(
             cursor=cursor,
-            key_parts=(cache_type, str(chain_id)),
+            key_parts=(cache_type, str(chain_id.serialize())),
         )) == 0:
             return {}
 

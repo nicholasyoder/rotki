@@ -33,7 +33,7 @@ def test_vault_deposit(
     with GlobalDBHandler().conn.write_ctx() as write_cursor:
         globaldb_set_general_cache_values(
             write_cursor=write_cursor,
-            key_parts=(CacheType.STAKEDAO_V2_VAULTS, str(ethereum_inquirer.chain_id)),
+            key_parts=(CacheType.STAKEDAO_V2_VAULTS, str(ethereum_inquirer.chain_id.serialize())),
             values=[','.join([
                 (vault_addr := string_to_evm_address('0xCA137e3853Eab95541290B372223e7F2ee4c0cFa')),  # noqa: E501
                 (underlying_addr := string_to_evm_address('0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1')),  # noqa: E501
@@ -111,7 +111,7 @@ def test_vault_withdraw(
     with GlobalDBHandler().conn.write_ctx() as write_cursor:
         globaldb_set_general_cache_values(
             write_cursor=write_cursor,
-            key_parts=(CacheType.STAKEDAO_V2_VAULTS, str(arbitrum_one_inquirer.chain_id)),
+            key_parts=(CacheType.STAKEDAO_V2_VAULTS, str(arbitrum_one_inquirer.chain_id.serialize())),  # noqa: E501
             values=[','.join([
                 (vault_addr := string_to_evm_address('0x52c43c76D268cF9a343b9aAA38974a50c455f372')),  # noqa: E501
                 (underlying_addr := string_to_evm_address('0x78483d06a82ae76E0FF9C72AFd80E5B2CEA3b2A0')),  # noqa: E501

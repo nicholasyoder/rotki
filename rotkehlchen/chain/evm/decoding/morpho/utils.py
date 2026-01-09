@@ -69,7 +69,7 @@ def query_morpho_vaults(chain_id: ChainID) -> None:
             globaldb_update_cache_last_ts(
                 write_cursor=write_cursor,
                 cache_type=CacheType.MORPHO_VAULTS,
-                key_parts=(str(chain_id),),
+                key_parts=(str(chain_id.serialize()),),
             )  # Update cache timestamp to prevent repeated errors.
         return
 
@@ -91,7 +91,7 @@ def query_morpho_vaults(chain_id: ChainID) -> None:
         with GlobalDBHandler().conn.write_ctx() as write_cursor:
             globaldb_set_general_cache_values(
                 write_cursor=write_cursor,
-                key_parts=(CacheType.MORPHO_VAULTS, str(chain_id)),
+                key_parts=(CacheType.MORPHO_VAULTS, str(chain_id.serialize())),
                 values=cache_entries,
             )
 

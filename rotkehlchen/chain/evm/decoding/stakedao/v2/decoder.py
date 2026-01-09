@@ -57,7 +57,7 @@ class Stakedaov2CommonDecoder(EvmDecoderInterface, ReloadableDecoderMixin):
         if should_update_protocol_cache(
             userdb=self.base.database,
             cache_key=CacheType.STAKEDAO_V2_VAULTS,
-            args=(str(self.node_inquirer.chain_id),),
+            args=(str(self.node_inquirer.chain_id.serialize()),),
         ):
             query_stakedao_v2_vaults(chain_id=self.node_inquirer.chain_id)
         elif len(self.vaults) != 0:

@@ -74,7 +74,7 @@ class MorphoCommonDecoder(EvmDecoderInterface, ReloadableDecoderMixin):
         if should_update_protocol_cache(
                 userdb=self.base.database,
                 cache_key=CacheType.MORPHO_VAULTS,
-                args=(str(self.node_inquirer.chain_id),),
+                args=(str(self.node_inquirer.chain_id.serialize()),),
         ) is True:
             query_morpho_vaults(chain_id=self.node_inquirer.chain_id)
             updated = True

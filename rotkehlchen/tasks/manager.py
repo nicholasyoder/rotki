@@ -13,10 +13,6 @@ from rotkehlchen.chain.ethereum.modules.makerdao.cache import (
     query_ilk_registry_and_maybe_update_cache,
 )
 from rotkehlchen.chain.ethereum.utils import should_update_protocol_cache
-from rotkehlchen.chain.evm.decoding.pendle.constants import (
-    PENDLE_SUPPORTED_CHAINS_WITHOUT_ETHEREUM,
-)
-from rotkehlchen.chain.evm.decoding.pendle.utils import query_pendle_yield_tokens
 from rotkehlchen.constants import WEEK_IN_SECONDS
 from rotkehlchen.constants.timing import (
     AAVE_V3_ASSETS_UPDATE,
@@ -62,7 +58,6 @@ from rotkehlchen.types import (
     EVM_CHAINS_WITH_TRANSACTIONS,
     SUPPORTED_BITCOIN_CHAINS,
     CacheType,
-    ChainID,
     ChecksumEvmAddress,
     ExchangeLocationID,
     Optional,
@@ -147,7 +142,6 @@ class TaskManager:
         self.activate_premium = activate_premium
         self.query_balances = query_balances
         self.last_balance_query_ts = Timestamp(0)
-        self.query_pendle_yield_tokens = query_pendle_yield_tokens
         self.last_premium_status_check = ts_now()
         self.last_calendar_reminder_check = Timestamp(0)
         self.last_google_calendar_sync = Timestamp(0)
@@ -182,7 +176,6 @@ class TaskManager:
             self._maybe_delete_past_calendar_events,
             self._maybe_sync_google_calendar,
             self._maybe_query_graph_delegated_tokens,
-            self._maybe_update_pendle_cache,
             self._maybe_process_historical_balances,
         ]
         if self.premium_sync_manager is not None:
@@ -653,30 +646,6 @@ class TaskManager:
             chains_aggregator=self.chains_aggregator,
             database=self.database,
         )]
-
-    def _maybe_update_pendle_cache(self) -> Optional[list[gevent.Greenlet]]:
-        with self.database.conn.read_ctx() as cursor:
-            account_data = self.database.get_blockchain_accounts(cursor)
-            if (
-                len(account_data.get(SupportedBlockchain.ARBITRUM_ONE)) == 0 and
-                len(account_data.get(SupportedBlockchain.ETHEREUM)) == 0 and
-                len(account_data.get(SupportedBlockchain.BASE)) == 0 and
-                len(account_data.get(SupportedBlockchain.BINANCE_SC)) == 0 and
-                len(account_data.get(SupportedBlockchain.OPTIMISM)) == 0
-            ):
-                return None
-
-        return [
-            self.greenlet_manager.spawn_and_track(
-                after_seconds=None,
-                task_name=f'Update Pendle yield tokens for {chain.to_name()}',
-                exception_is_error=False,
-                method=self.query_pendle_yield_tokens,
-                evm_inquirer=self.chains_aggregator.get_evm_manager(chain).node_inquirer,  # type: ignore[arg-type]  # chain is supported
-            )
-            for chain in PENDLE_SUPPORTED_CHAINS_WITHOUT_ETHEREUM | {ChainID.ETHEREUM}
-            if should_update_protocol_cache(self.database, CacheType.PENDLE_YIELD_TOKENS, (str(chain.serialize()),)) is True  # noqa: E501
-        ]
 
     def _maybe_process_historical_balances(self) -> Optional[list[gevent.Greenlet]]:
         """Schedule historical balance processing if enough time has passed.

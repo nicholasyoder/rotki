@@ -1507,6 +1507,11 @@ def test_upgrade_v14_v15(
                 ('BEEFY_VAULTS1', '236', 1767261915),
                 ('BEEFY_VAULTS100', '30', 1767262013),
             ]),
+            ('PENDLE_YIELD_TOKENS%', [
+                ('PENDLE_YIELD_TOKENS56', '139', 1767968088),
+                ('PENDLE_YIELD_TOKENS42161', '390', 1767968249),
+                ('PENDLE_YIELD_TOKENS1', '1598', 1767968461),
+            ]),
         ]:
             assert cursor.execute(
                 'SELECT key, value, last_queried_ts FROM unique_cache WHERE key LIKE ?',
@@ -1525,7 +1530,9 @@ def test_upgrade_v14_v15(
     assert globaldb.get_setting_value('version', 0) == 15
     with globaldb.conn.read_ctx() as cursor:
         assert cursor.execute(
-            "SELECT COUNT(*) FROM unique_cache WHERE key LIKE 'AURA_POOLS%' OR key LIKE 'MORPHO_VAULTS%' OR key LIKE 'STAKEDAO_V2_VAULTS%' OR key LIKE 'BEEFY_VAULTS%'",  # noqa: E501
+            "SELECT COUNT(*) FROM unique_cache WHERE key LIKE 'AURA_POOLS%' "
+            "OR key LIKE 'MORPHO_VAULTS%' OR key LIKE 'STAKEDAO_V2_VAULTS%' "
+            "OR key LIKE 'BEEFY_VAULTS%' OR key LIKE 'PENDLE_YIELD_TOKENS%'",
         ).fetchone()[0] == 0
 
 

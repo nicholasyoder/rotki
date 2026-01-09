@@ -79,7 +79,7 @@ def query_stakedao_v2_vaults(chain_id: ChainID) -> None:
             globaldb_update_cache_last_ts(
                 write_cursor=write_cursor,
                 cache_type=CacheType.STAKEDAO_V2_VAULTS,
-                key_parts=(str(chain_id),),
+                key_parts=(str(chain_id.serialize()),),
             )  # Update cache timestamp to prevent repeated errors.
         return
 
@@ -101,6 +101,6 @@ def query_stakedao_v2_vaults(chain_id: ChainID) -> None:
         with GlobalDBHandler().conn.write_ctx() as write_cursor:
             globaldb_set_general_cache_values(
                 write_cursor=write_cursor,
-                key_parts=(CacheType.STAKEDAO_V2_VAULTS, str(chain_id)),
+                key_parts=(CacheType.STAKEDAO_V2_VAULTS, str(chain_id.serialize())),
                 values=cache_entries,
             )

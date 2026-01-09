@@ -62,7 +62,7 @@ def test_morpho_vaults_api(database: 'DBHandler') -> None:
     with GlobalDBHandler().conn.read_ctx() as cursor:
         assert globaldb_get_general_cache_values(
             cursor=cursor,
-            key_parts=(CacheType.MORPHO_VAULTS, str(ChainID.BASE)),
+            key_parts=(CacheType.MORPHO_VAULTS, str(ChainID.BASE.serialize())),
         ) == [
             '0xc28ca6bFA6C1dfEF94989DC0D0A862eff8d71065,0x4200000000000000000000000000000000000006',
             '0xc43f5F199a055F38de4629dd14d18e69dAe9f29D,0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
@@ -71,7 +71,7 @@ def test_morpho_vaults_api(database: 'DBHandler') -> None:
     check_new_query_updates_timestamp(
         query_patch=query_patch,
         query_func=lambda: query_morpho_vaults(chain_id=ChainID.BASE),
-        key_parts=(CacheType.MORPHO_VAULTS, str(ChainID.BASE)),
+        key_parts=(CacheType.MORPHO_VAULTS, str(ChainID.BASE.serialize())),
     )
 
 
