@@ -1460,10 +1460,10 @@ def test_process_events_frequency(
 
         freezer.move_to(datetime.datetime.now(tz=datetime.UTC) + time_delta)
         with patch('rotkehlchen.tasks.events.match_asset_movements') as match_events_mock:
-            task_manager.potential_tasks = [task_manager._maybe_run_events_processing]
+            task_manager.potential_tasks = [task_manager._maybe_process_asset_movements]
             task_manager.schedule()
             if len(task_manager.running_greenlets):
-                gevent.joinall(task_manager.running_greenlets[task_manager._maybe_run_events_processing])
+                gevent.joinall(task_manager.running_greenlets[task_manager._maybe_process_asset_movements])
 
         assert match_events_mock.call_count == (1 if should_run else 0)
 

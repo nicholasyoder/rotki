@@ -3789,6 +3789,9 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
             'SELECT tag_name FROM tag_mappings WHERE object_reference = ?',
             ((safe_contract_address := '0x5A0b54D5dc17e0AadC383d2db43B0a0D3E029c4c'),),
         ).fetchone() is None
+        assert cursor.execute(
+            "SELECT * FROM key_value_cache WHERE name = 'last_events_processing_task_ts'",
+        ).fetchone() == ('last_events_processing_task_ts', (processing_ts := '1767987178'))
 
     db_v50.logout()
     db = _init_db_with_target_version(
@@ -3820,5 +3823,11 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
             (safe_contract_address, 'Contract'),
             (existing_contract_tag_address, 'Contract (Custom)'),
         ]
+        assert cursor.execute(
+            "SELECT * FROM key_value_cache WHERE name = 'last_events_processing_task_ts'",
+        ).fetchone() is None
+        assert cursor.execute(
+            "SELECT * FROM key_value_cache WHERE name = 'last_eth2_events_processing_ts'",
+        ).fetchone() == ('last_eth2_events_processing_ts', processing_ts)
 
     db.logout()

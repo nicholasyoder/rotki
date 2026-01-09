@@ -1,19 +1,30 @@
 import logging
 from typing import TYPE_CHECKING, Final
 
+from rotkehlchen.api.v1.types import IncludeExcludeFilterData
 from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
 from rotkehlchen.constants import HOUR_IN_SECONDS
 from rotkehlchen.db.cache import ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE, DBCacheDynamic, DBCacheStatic
-from rotkehlchen.db.constants import CHAIN_EVENT_FIELDS, HISTORY_BASE_ENTRY_FIELDS
+from rotkehlchen.db.constants import (
+    CHAIN_EVENT_FIELDS,
+    HISTORY_BASE_ENTRY_FIELDS,
+    HISTORY_MAPPING_KEY_STATE,
+    HISTORY_MAPPING_STATE_CUSTOMIZED,
+)
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.errors.serialization import DeserializationError
+from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.base import HistoryBaseEntry, HistoryBaseEntryType
 from rotkehlchen.history.events.structures.onchain_event import OnchainEvent
-from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
+from rotkehlchen.history.events.structures.types import (
+    EventDirection,
+    HistoryEventSubType,
+    HistoryEventType,
+)
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import CHAINS_WITH_TRANSACTIONS, SupportedBlockchain, Timestamp
 from rotkehlchen.utils.misc import ts_ms_to_sec, ts_now
@@ -26,27 +37,34 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 ASSET_MOVEMENT_MATCH_WINDOW: Final = HOUR_IN_SECONDS
+AMOUNT_TOLERANCE: Final = FVal(1e-6)
 
 
-def process_events(
+def process_eth2_events(
         chains_aggregator: 'ChainsAggregator',
         database: 'DBHandler',
 ) -> None:
-    """Processes all events and modifies/combines them or aggregates processing results
-
-    This is supposed to be a generic processing task that can be requested or run periodically
-    """
+    """Process ETH2 events and maybe modify or combine them with corresponding tx events."""
     if (eth2 := chains_aggregator.get_module('eth2')) is not None:
         eth2.combine_block_with_tx_events()
         eth2.refresh_activated_validators_deposits()
 
+    with database.user_write() as write_cursor:
+        database.set_static_cache(  # update last eth2 event processing timestamp
+            write_cursor=write_cursor,
+            name=DBCacheStatic.LAST_ETH2_EVENTS_PROCESSING_TS,
+            value=ts_now(),
+        )
+
+
+def process_asset_movements(database: 'DBHandler') -> None:
     with database.match_asset_movements_lock:
         match_asset_movements(database)
 
     with database.user_write() as write_cursor:
-        database.set_static_cache(  # update last event processing timestamp
+        database.set_static_cache(  # update last asset movement processing timestamp
             write_cursor=write_cursor,
-            name=DBCacheStatic.LAST_EVENTS_PROCESSING_TASK_TS,
+            name=DBCacheStatic.LAST_ASSET_MOVEMENT_PROCESSING_TS,
             value=ts_now(),
         )
 
@@ -153,6 +171,77 @@ def get_unmatched_asset_movements(
     return asset_movements, fee_events
 
 
+def _maybe_adjust_fee(
+        events_db: DBHistoryEvents,
+        asset_movement: AssetMovement,
+        matched_event: HistoryBaseEntry,
+        is_deposit: bool,
+) -> None:
+    """Add/edit the fee to cover the difference between the amounts of the movement and its match.
+    Takes no action if the amounts match, if existing fees already cover the difference, or if
+    the amounts are off in the wrong direction where more is received than was sent (can only
+    happen in a manual match).
+    """
+    if asset_movement.amount == matched_event.amount or (
+        asset_movement.amount > matched_event.amount and is_deposit
+    ) or (
+        asset_movement.amount < matched_event.amount and not is_deposit
+    ):
+        return  # Don't add a fee if the amount is the same or is off in the wrong direction
+
+    # Get any existing fees
+    with events_db.db.conn.read_ctx() as cursor:
+        fee_events = events_db.get_history_events_internal(
+            cursor=cursor,
+            filter_query=HistoryEventFilterQuery.make(
+                entry_types=IncludeExcludeFilterData([HistoryBaseEntryType.ASSET_MOVEMENT_EVENT]),
+                group_identifiers=[
+                    asset_movement.group_identifier,
+                    matched_event.group_identifier,  # include the matched event since it may also be an asset movement.  # noqa: E501
+                ],
+                assets=(asset_movement.asset,),
+                event_subtypes=[HistoryEventSubType.FEE],
+            ),
+        )
+
+    amount_diff = abs(asset_movement.amount - matched_event.amount)
+    movement_fee = None
+    for fee_event in fee_events:
+        if fee_event.amount == amount_diff:
+            return  # An existing fee already covers the amount difference. May happen in several
+            # cases: A deposit where the fee is taken from the onchain amount, when a user manually
+            # unlinks a match but then re-matches them, or when processing the second movement
+            # when matching an asset movement with another asset movement.
+
+        if fee_event.group_identifier == asset_movement.group_identifier:
+            movement_fee = fee_event  # There can only be one fee per movement
+            # Don't break since there may also be a fee present from the matched event.
+
+    # Create or edit the movement's fee event
+    with events_db.db.conn.write_ctx() as write_cursor:
+        if movement_fee is None:
+            events_db.add_history_event(
+                write_cursor=write_cursor,
+                event=AssetMovement(
+                    timestamp=asset_movement.timestamp,
+                    location=asset_movement.location,
+                    event_type=asset_movement.event_type,  # type: ignore[arg-type]  # asset movement will have type of either deposit or withdraw
+                    asset=asset_movement.asset,
+                    amount=amount_diff,
+                    group_identifier=asset_movement.group_identifier,
+                    is_fee=True,
+                    location_label=asset_movement.location_label,
+                ),
+                mapping_values={HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_CUSTOMIZED},
+            )
+        else:
+            movement_fee.amount += amount_diff
+            events_db.edit_history_event(
+                write_cursor=write_cursor,
+                event=movement_fee,
+            )
+
+
 def update_asset_movement_matched_event(
         events_db: DBHistoryEvents,
         asset_movement: AssetMovement,
@@ -201,6 +290,13 @@ def update_asset_movement_matched_event(
         'exchange_name': asset_movement.location_label,
     }
 
+    _maybe_adjust_fee(
+        events_db=events_db,
+        asset_movement=asset_movement,
+        matched_event=matched_event,
+        is_deposit=is_deposit,
+    )
+
     # Save the event and cache the matched identifiers
     with events_db.db.conn.write_ctx() as write_cursor:
         events_db.edit_history_event(
@@ -217,6 +313,51 @@ def update_asset_movement_matched_event(
     return True, ''
 
 
+def should_exclude_possible_match(
+        asset_movement: AssetMovement,
+        event: HistoryBaseEntry,
+        exclude_unexpected_direction: bool = False,
+) -> bool:
+    """Check if the given event should be excluded from being a possible match.
+    Returns True in the following cases:
+    - Event is from the same exchange as the asset movement
+    - Event is an INFORMATIONAL/APPROVE event
+    - exclude_unexpected_direction is True and the event has the opposite direction of what would
+       be expected based on the asset movement's type. This is used during automatic matching but
+       is not used when getting possible matches for manual matching since there may be edge cases
+       where an event was customized with the wrong event types.
+    """
+    return (
+        event.location == asset_movement.location and
+        event.location_label == asset_movement.location_label
+    ) or (
+        event.event_type == HistoryEventType.INFORMATIONAL and
+        event.event_subtype == HistoryEventSubType.APPROVE
+    ) or (
+        exclude_unexpected_direction and
+        (direction := event.maybe_get_direction()) != EventDirection.NEUTRAL and
+        direction != (EventDirection.OUT if asset_movement.event_type == HistoryEventType.DEPOSIT else EventDirection.IN)  # noqa: E501
+    )
+
+
+def _match_amount(
+        movement_amount: FVal,
+        event_amount: FVal,
+        tolerance: FVal,
+        is_deposit: bool,
+) -> bool:
+    """Check for matching amounts with the given tolerance as long as there
+    was not more received than was sent (as determined by is_deposit).
+    """
+    return movement_amount == event_amount or (
+        (
+            (movement_amount < event_amount and is_deposit) or
+            (movement_amount > event_amount and not is_deposit)
+        ) and
+        abs(movement_amount - event_amount) <= movement_amount * tolerance
+    )
+
+
 def find_asset_movement_matches(
         events_db: DBHistoryEvents,
         asset_movement: AssetMovement,
@@ -228,16 +369,10 @@ def find_asset_movement_matches(
     should look like. Returns a list of events that match.
     """
     asset_movement_timestamp = ts_ms_to_sec(asset_movement.timestamp)
-    type_and_subtype_combinations: list[tuple[HistoryEventType, HistoryEventSubType]] = [
-        (HistoryEventType.WITHDRAWAL, HistoryEventSubType.REMOVE_ASSET),
-        (HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_ASSET),
-    ]
     if is_deposit:
-        type_and_subtype_combinations.append((HistoryEventType.SPEND, HistoryEventSubType.NONE))
         from_ts = Timestamp(asset_movement_timestamp - match_window)
         to_ts = Timestamp(asset_movement_timestamp)
     else:
-        type_and_subtype_combinations.append((HistoryEventType.RECEIVE, HistoryEventSubType.NONE))
         from_ts = Timestamp(asset_movement_timestamp)
         to_ts = Timestamp(asset_movement_timestamp + match_window)
 
@@ -248,28 +383,48 @@ def find_asset_movement_matches(
                 assets=GlobalDBHandler.get_assets_in_same_collection(
                     identifier=asset_movement.asset.identifier,
                 ),
-                type_and_subtype_combinations=type_and_subtype_combinations,
                 from_ts=from_ts,
                 to_ts=to_ts,
+                entry_types=IncludeExcludeFilterData(
+                    values=[  # Don't include eth staking events
+                        HistoryBaseEntryType.ETH_BLOCK_EVENT,
+                        HistoryBaseEntryType.ETH_DEPOSIT_EVENT,
+                        HistoryBaseEntryType.ETH_WITHDRAWAL_EVENT,
+                    ],
+                    operator='NOT IN',
+                ),
             ),
         )
 
     close_matches: list[HistoryBaseEntry] = []
     for event in possible_matches:
-        if (
-            event.location == asset_movement.location and
-            event.location_label == asset_movement.location_label
-        ):  # skip events from the same exchange
+        if should_exclude_possible_match(
+            asset_movement=asset_movement,
+            event=event,
+            exclude_unexpected_direction=True,
+        ):
             continue
 
         # Check for matching amount, or matching amount + fee for deposits. The fee doesn't need
         # to be included for withdrawals since the onchain event will happen after the fee is
         # already deducted and the amount should always match the main asset movement amount.
-        if not (event.amount == asset_movement.amount or (
+        # Also allow a small tolerance as long as the received amount is less
+        # than the sent amount. A fee event will be added later to account for the difference.
+        if not (_match_amount(
+            movement_amount=asset_movement.amount,
+            event_amount=event.amount,
+            tolerance=AMOUNT_TOLERANCE,
+            is_deposit=is_deposit,
+        ) or (
             is_deposit and
             fee_event is not None and
             fee_event.asset == asset_movement.asset and
-            event.amount == (asset_movement.amount + fee_event.amount)
+            _match_amount(
+                movement_amount=asset_movement.amount + fee_event.amount,
+                event_amount=event.amount,
+                tolerance=AMOUNT_TOLERANCE,
+                is_deposit=True,
+            )
         )):
             log.debug(
                 f'Excluding possible match for asset movement {asset_movement.group_identifier} '

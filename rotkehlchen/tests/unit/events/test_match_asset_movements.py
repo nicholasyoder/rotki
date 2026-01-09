@@ -198,17 +198,17 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
                 event_type=HistoryEventType.WITHDRAWAL,
                 timestamp=TimestampMS(1560000000000),
                 asset=A_USDC,
-                amount=FVal('0.3'),
+                amount=FVal('0.7654321'),
                 unique_id='7',
                 location_label='Bitstamp 1',
             )), (withdrawal4_matched_event := AssetMovement(  # withdrawal4's matched event
-                location=Location.KUCOIN,
+                location=Location.KRAKEN,
                 event_type=HistoryEventType.DEPOSIT,
                 timestamp=TimestampMS(1560000000001),
                 asset=A_USDC,
-                amount=FVal('0.3'),
+                amount=FVal('0.765432'),  # Slightly different amount but within the tolerance so will still auto match and add a fee event to cover the difference. # noqa: E501
                 unique_id='8',
-                location_label='Kucoin 1',
+                location_label='Kraken 1',
             ))],
         )
 
@@ -257,13 +257,21 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
     assert deposit3_matched_event.notes == f'Withdraw 100 USDC from {deposit3_user_address} to Bybit 1'  # noqa: E501
     assert deposit3_matched_event.counterparty == Location.BYBIT.name.lower()
 
-    withdrawal4_matched_event.identifier = asset_movements[-1].identifier
+    # Last two events should be withdrawal4's matched event and a new fee event to cover the
+    # difference between withdrawal4 and its matched event. Note that since the matched event is
+    # also an asset movement in this case, the fee is actually added to the matched event since
+    # it gets processed first.
+    withdrawal4_matched_event.identifier = asset_movements[-2].identifier
     withdrawal4_matched_event.extra_data = AssetMovementExtraData(matched_asset_movement={
         'group_identifier': withdrawal4.group_identifier,
         'exchange': 'bitstamp',
         'exchange_name': 'Bitstamp 1',
     })
-    assert asset_movements[-1] == withdrawal4_matched_event
+    assert asset_movements[-2] == withdrawal4_matched_event
+    assert (withdrawal4_new_fee := asset_movements[-1]).event_type == HistoryEventType.DEPOSIT
+    assert withdrawal4_new_fee.event_subtype == HistoryEventSubType.FEE
+    assert withdrawal4_new_fee.group_identifier == withdrawal4_matched_event.group_identifier
+    assert withdrawal4_new_fee.amount == withdrawal4.amount - withdrawal4_matched_event.amount
 
     # Check that matches have been cached and that the cached identifiers
     # refer to the correct asset movements (ordered by timestamp descending)
@@ -306,8 +314,8 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
     # for the other asset movement and has the matched_asset_movement extra data.
     withdrawal4.extra_data = AssetMovementExtraData(matched_asset_movement={
         'group_identifier': withdrawal4_matched_event.group_identifier,
-        'exchange': 'kucoin',
-        'exchange_name': 'Kucoin 1',
+        'exchange': 'kraken',
+        'exchange_name': 'Kraken 1',
     })
     withdrawal4.identifier = withdrawal4_identifier
     assert matched_asset_movements[3] == withdrawal4
