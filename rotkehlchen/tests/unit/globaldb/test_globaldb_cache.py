@@ -267,14 +267,14 @@ def test_velodrome_cache(optimism_inquirer):
             nonlocal call_count
             if method_name == 'all':
                 if force_refresh is True:
-                    assert kwargs['arguments'] == [POOL_DATA_CHUNK_SIZE, 0]  # starts from the beginning  # noqa: E501
+                    assert kwargs['arguments'] == [POOL_DATA_CHUNK_SIZE, 0, 0]  # starts from the beginning  # noqa: E501
                     return []  # don't return any pools. Will test the rest of the pool processing when force_refresh is False  # noqa: E501
 
                 if call_count > 0:
                     return []  # only do a single chunk
 
-                assert kwargs['arguments'] == [POOL_DATA_CHUNK_SIZE, 1402]  # only tries to query new pools  # noqa: E501
-                kwargs['arguments'] = [5, 0]  # Only query the first 5 pools for simpler testing
+                assert kwargs['arguments'] == [POOL_DATA_CHUNK_SIZE, 1402, 0]  # only tries to query new pools  # noqa: E501
+                kwargs['arguments'] = [5, 0, 0]  # Only query the first 5 pools for simpler testing
                 call_count += 1
 
             return node_inquirer.call_contract(
@@ -306,33 +306,33 @@ def test_velodrome_cache(optimism_inquirer):
     assert all((identifier,) in asset_identifiers for identifier in VELODROME_SOME_EXPECTED_ASSETS)
 
 
-class MockEvmContract:
-    """A mock contract class that returns a desired result for a `call` function.
-    Used for `test_velodrome_cache_with_no_symbol`."""
-    def call(self, **kwargs):
-        if kwargs['method_name'] == 'all':
+def test_velodrome_cache_with_no_symbol(optimism_inquirer: 'OptimismInquirer'):
+    """Test a case when a queried pool is not a valid ERC20 token,
+    in such case the symbol should fallback to the form `CL{tick}-{token0}/{token1}`."""
+    def mock_call_contract(contract, node_inquirer, method_name, **kwargs):
+        """Mock the contract call for velodrome pools."""
+        if method_name == 'all':
             return [{
                 0: '0x3241738149B24C9164dA14Fa2040159FFC6Dd237',
                 1: '',
                 2: 18,
                 4: 10,
-                7: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85',
-                10: '0xdFA46478F9e5EA86d57387849598dbFB2e964b02',
+                7: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85',  # USDC
+                10: '0xdFA46478F9e5EA86d57387849598dbFB2e964b02',  # MAI
                 13: '0xBe3235e341393e43949aAd6F073982F67BFF412f',
                 16: '0x25dEc77FC1c2b67582DD2237dA427d3E3Be94259',
                 17: '0x0000000000000000000000000000000000000000',
             }]
-        else:
-            return []
+        return []
 
+    def mock_multicall_2(require_success, calls):
+        """Mock multicall_2 returning (success, data) tuples for each call."""
+        return [(False, b'') for _ in calls]
 
-def test_velodrome_cache_with_no_symbol(optimism_inquirer: 'OptimismInquirer'):
-    """Test a case when a queried pool is not a valid ERC20 token,
-    in such case the symbol should fallback to the form `CL{tick}-{token0}/{token1}`."""
-    def mock_contract(*args, **kwargs):  # pylint: disable=unused-argument
-        return MockEvmContract()
-
-    with patch('rotkehlchen.chain.evm.contracts.EvmContracts.contract', mock_contract):
+    with (
+        patch(target='rotkehlchen.chain.evm.contracts.EvmContract.call', new=mock_call_contract),
+        patch.object(optimism_inquirer, 'multicall_2', new=mock_multicall_2),
+    ):
         query_velodrome_like_data(
             inquirer=optimism_inquirer,
             cache_type=CacheType.VELODROME_POOL_ADDRESS,
