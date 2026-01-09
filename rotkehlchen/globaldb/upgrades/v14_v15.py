@@ -25,10 +25,18 @@ def migrate_to_v15(connection: 'DBConnection', progress_handler: 'DBUpgradeProgr
            vault counts.
         - StakeDAO V2 vaults - Same as Morpho, this is now a general cache key storing addresses.
         - Beefy vaults - This key is now a general cache key and stores (address, boolean).
+        - Pendle yield tokens - These tokens are now loaded as needed during decoding and do not
+           need any cache entry.
         """
         write_cursor.executemany(
             'DELETE FROM unique_cache WHERE key LIKE ?',
-            [('AURA_POOLS%',), ('MORPHO_VAULTS%',), ('STAKEDAO_V2_VAULTS%',), ('BEEFY_VAULTS%',)],
+            [
+                ('AURA_POOLS%',),
+                ('MORPHO_VAULTS%',),
+                ('STAKEDAO_V2_VAULTS%',),
+                ('BEEFY_VAULTS%',),
+                ('PENDLE_YIELD_TOKENS%',),
+            ],
         )
 
     perform_globaldb_upgrade_steps(connection, progress_handler)

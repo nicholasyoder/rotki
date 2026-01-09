@@ -14,9 +14,6 @@ from rotkehlchen.chain.ethereum.constants import LAST_GRAPH_DELEGATIONS
 from rotkehlchen.chain.ethereum.modules.eth2.structures import ValidatorDetails, ValidatorType
 from rotkehlchen.chain.ethereum.modules.thegraph.constants import CONTRACT_STAKING
 from rotkehlchen.chain.evm.decoding.aave.constants import CPT_AAVE_V3
-from rotkehlchen.chain.evm.decoding.pendle.constants import (
-    PENDLE_SUPPORTED_CHAINS_WITHOUT_ETHEREUM,
-)
 from rotkehlchen.chain.evm.decoding.spark.constants import CPT_SPARK
 from rotkehlchen.chain.evm.decoding.thegraph.constants import CPT_THEGRAPH
 from rotkehlchen.chain.evm.types import NodeName, WeightedNode, string_to_evm_address
@@ -1433,18 +1430,6 @@ def test_graph_query_query_delegations(
 
             # we expect two addresses and not all 3 tracked ones
             assert cursor.execute("SELECT COUNT(*) FROM key_value_cache WHERE name LIKE 'ethereum_GRAPH_DELEGATIONS%'").fetchone() == (2,)  # noqa: E501
-
-
-@pytest.mark.parametrize('max_tasks_num', [1])
-def test_query_pendle_yield_tokens_task(task_manager: TaskManager) -> None:
-    task_manager.should_schedule = True
-    task_manager.potential_tasks = [task_manager._maybe_update_pendle_cache]
-    with patch.object(target=task_manager, attribute='query_pendle_yield_tokens') as mocked_query_pendle_yield_tokens:  # noqa: E501
-        task_manager.schedule()
-        if len(task_manager.running_greenlets) != 0:
-            gevent.joinall(task_manager.running_greenlets[task_manager._maybe_update_pendle_cache])
-
-        assert mocked_query_pendle_yield_tokens.call_count == len(PENDLE_SUPPORTED_CHAINS_WITHOUT_ETHEREUM) + 1  # noqa: E501
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])

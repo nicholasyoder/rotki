@@ -1346,7 +1346,6 @@ class CacheType(Enum):
     STAKEDAO_GAUGES = auto()
     PENDLE_POOLS = auto()
     PENDLE_SY_TOKENS = auto()
-    PENDLE_YIELD_TOKENS = auto()  # store the count of all SYs, PTs, YTs & LP tokens per chain
     BEEFY_VAULTS = auto()
     MERKL_REWARD_PROTOCOLS = auto()
     STAKEDAO_V2_VAULTS = auto()
@@ -1415,7 +1414,6 @@ UniqueCacheType = Literal[
     CacheType.CURVE_LENDING_VAULT_GAUGE,
     CacheType.CURVE_CRVUSD_COLLATERAL_TOKEN,
     CacheType.CURVE_CRVUSD_AMM,
-    CacheType.PENDLE_YIELD_TOKENS,
     CacheType.MERKL_REWARD_PROTOCOLS,
     CacheType.SUPERFLUID_TOKEN_LIST_VERSION,
 ]

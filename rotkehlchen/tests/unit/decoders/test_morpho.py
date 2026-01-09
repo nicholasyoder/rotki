@@ -52,7 +52,7 @@ def _add_morpho_vault(
     with GlobalDBHandler().conn.write_ctx() as write_cursor:
         globaldb_set_general_cache_values(
             write_cursor=write_cursor,
-            key_parts=(CacheType.MORPHO_VAULTS, str(chain_id)),
+            key_parts=(CacheType.MORPHO_VAULTS, str(chain_id.serialize())),
             values=[f'{vault},{underlying}'],
         )
 
