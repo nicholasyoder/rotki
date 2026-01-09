@@ -12,12 +12,7 @@ from rotkehlchen.chain.bitcoin.xpub import XpubManager
 from rotkehlchen.chain.ethereum.modules.makerdao.cache import (
     query_ilk_registry_and_maybe_update_cache,
 )
-from rotkehlchen.chain.ethereum.modules.yearn.utils import query_yearn_vaults
 from rotkehlchen.chain.ethereum.utils import should_update_protocol_cache
-from rotkehlchen.chain.evm.decoding.morpho.utils import (
-    query_morpho_reward_distributors,
-    query_morpho_vaults,
-)
 from rotkehlchen.chain.evm.decoding.pendle.constants import (
     PENDLE_SUPPORTED_CHAINS_WITHOUT_ETHEREUM,
 )
@@ -152,10 +147,7 @@ class TaskManager:
         self.activate_premium = activate_premium
         self.query_balances = query_balances
         self.last_balance_query_ts = Timestamp(0)
-        self.query_yearn_vaults = query_yearn_vaults
-        self.query_morpho_vaults = query_morpho_vaults
         self.query_pendle_yield_tokens = query_pendle_yield_tokens
-        self.query_morpho_reward_distributors = query_morpho_reward_distributors
         self.last_premium_status_check = ts_now()
         self.last_calendar_reminder_check = Timestamp(0)
         self.last_google_calendar_sync = Timestamp(0)
@@ -175,8 +167,6 @@ class TaskManager:
             self._maybe_check_premium_status,
             self._maybe_check_data_updates,
             self._maybe_update_snapshot_balances,
-            self._maybe_update_yearn_vaults,
-            self._maybe_update_morpho_cache,
             self._maybe_detect_evm_accounts,
             self._maybe_update_ilk_cache,
             self._maybe_query_produced_blocks,
@@ -663,59 +653,6 @@ class TaskManager:
             chains_aggregator=self.chains_aggregator,
             database=self.database,
         )]
-
-    def _maybe_update_yearn_vaults(self) -> Optional[list[gevent.Greenlet]]:
-        with self.database.conn.read_ctx() as cursor:
-            if len(self.database.get_single_blockchain_addresses(cursor, SupportedBlockchain.ETHEREUM)) == 0:  # noqa: E501
-                return None
-
-        if should_update_protocol_cache(self.database, CacheType.YEARN_VAULTS) is True:
-            return [self.greenlet_manager.spawn_and_track(
-                after_seconds=None,
-                task_name='Update yearn vaults',
-                exception_is_error=False,
-                method=self.query_yearn_vaults,
-                db=self.database,
-                ethereum_inquirer=self.chains_aggregator.ethereum.node_inquirer,
-            )]
-
-        return None
-
-    def _maybe_update_morpho_cache(self) -> Optional[list[gevent.Greenlet]]:
-        with self.database.conn.read_ctx() as cursor:
-            account_data = self.database.get_blockchain_accounts(cursor)
-            if (
-                len(account_data.get(SupportedBlockchain.ETHEREUM)) == 0 and
-                len(account_data.get(SupportedBlockchain.BASE)) == 0
-            ):
-                return None
-
-        greenlets = []
-        for chain_id in {ChainID.ETHEREUM, ChainID.BASE}:
-            if should_update_protocol_cache(self.database, CacheType.MORPHO_VAULTS, (str(chain_id),)) is True:  # noqa: E501
-                greenlets.append(self.greenlet_manager.spawn_and_track(
-                    after_seconds=None,
-                    task_name=f'Update Morpho vaults for {chain_id.to_name()}',
-                    exception_is_error=False,
-                    method=self.query_morpho_vaults,
-                    database=self.database,
-                    chain_id=chain_id,
-                ))
-
-            if should_update_protocol_cache(
-                userdb=self.database,
-                cache_key=CacheType.MORPHO_REWARD_DISTRIBUTORS,
-                args=(str(chain_id),),
-            ) is True:
-                greenlets.append(self.greenlet_manager.spawn_and_track(
-                    after_seconds=None,
-                    task_name=f'Update Morpho reward distributors for {chain_id.to_name()}',
-                    exception_is_error=False,
-                    method=self.query_morpho_reward_distributors,
-                    chain_id=chain_id,
-                ))
-
-        return greenlets if len(greenlets) > 0 else None
 
     def _maybe_update_pendle_cache(self) -> Optional[list[gevent.Greenlet]]:
         with self.database.conn.read_ctx() as cursor:

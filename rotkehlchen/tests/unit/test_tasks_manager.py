@@ -34,7 +34,6 @@ from rotkehlchen.db.utils import LocationData
 from rotkehlchen.errors.api import PremiumAuthenticationError, PremiumPermissionError
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.fval import FVal
-from rotkehlchen.globaldb.cache import globaldb_set_general_cache_values
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
@@ -63,7 +62,6 @@ from rotkehlchen.tests.utils.premium import VALID_PREMIUM_KEY, VALID_PREMIUM_SEC
 from rotkehlchen.types import (
     SPAM_PROTOCOL,
     AssetAmount,
-    CacheType,
     ChainID,
     ChecksumEvmAddress,
     Eth2PubKey,
@@ -774,18 +772,14 @@ def test_tasks_dont_schedule_if_no_eth_address(task_manager: TaskManager) -> Non
     """Test that we don't execute extra logic in tasks if no ethereum address is tracked"""
     with gevent.Timeout(5):  # this should not take long. Otherwise a long running task ran
         task_manager.should_schedule = True
-        for func in (
-            task_manager._maybe_update_yearn_vaults,
-            task_manager._maybe_update_ilk_cache,
+        with (  # if we get to should_update_protocol_cache it means check did not work
+            patch('rotkehlchen.chain.ethereum.utils.should_update_protocol_cache') as mocked_func,
         ):
-            with (  # if we get to should_update_protocol_cache it means check did not work
-                patch('rotkehlchen.chain.ethereum.utils.should_update_protocol_cache') as mocked_func,  # noqa: E501
-            ):
-                task_manager.potential_tasks = [func]
-                task_manager.schedule()
-                if len(task_manager.running_greenlets) != 0:
-                    gevent.joinall(task_manager.running_greenlets[func])
-                assert mocked_func.call_count == 0
+            task_manager.potential_tasks = [task_manager._maybe_update_ilk_cache]
+            task_manager.schedule()
+            if len(task_manager.running_greenlets) != 0:
+                gevent.joinall(task_manager.running_greenlets[task_manager._maybe_update_ilk_cache])
+            assert mocked_func.call_count == 0
 
 
 @pytest.mark.parametrize('vcr_cassette_name', ['test_update_lending_protocol_tokens'])
@@ -1441,38 +1435,6 @@ def test_graph_query_query_delegations(
             assert cursor.execute("SELECT COUNT(*) FROM key_value_cache WHERE name LIKE 'ethereum_GRAPH_DELEGATIONS%'").fetchone() == (2,)  # noqa: E501
 
 
-@pytest.mark.parametrize('max_tasks_num', [5])
-def test_morpho_reward_task_repetition(task_manager: TaskManager) -> None:
-    """Test that the morpho reward task doesn't keep re-running after the cache has been updated.
-    Regression test for https://github.com/rotki/rotki/pull/9355.
-    """
-    task_manager.should_schedule = True
-    task_manager.potential_tasks = [task_manager._maybe_update_morpho_cache]
-
-    def update_cache(chain_id):
-        with GlobalDBHandler().conn.write_ctx() as write_cursor:
-            globaldb_set_general_cache_values(
-                write_cursor=write_cursor,
-                key_parts=(CacheType.MORPHO_REWARD_DISTRIBUTORS, str(chain_id)),
-                values=['test'],
-            )
-
-    with (
-        gevent.Timeout(5),  # this should not take long. Otherwise a long running task ran
-        patch.object(target=task_manager, attribute='query_morpho_vaults'),
-        patch.object(
-            target=task_manager,
-            attribute='query_morpho_reward_distributors',
-            side_effect=update_cache,
-        ) as mocked_query_distributors,
-    ):
-        task_manager.schedule()
-        if len(task_manager.running_greenlets) != 0:
-            gevent.joinall(task_manager.running_greenlets[task_manager._maybe_update_morpho_cache])
-
-            assert mocked_query_distributors.call_count == 2
-
-
 @pytest.mark.parametrize('max_tasks_num', [1])
 def test_query_pendle_yield_tokens_task(task_manager: TaskManager) -> None:
     task_manager.should_schedule = True
@@ -1483,26 +1445,6 @@ def test_query_pendle_yield_tokens_task(task_manager: TaskManager) -> None:
             gevent.joinall(task_manager.running_greenlets[task_manager._maybe_update_pendle_cache])
 
         assert mocked_query_pendle_yield_tokens.call_count == len(PENDLE_SUPPORTED_CHAINS_WITHOUT_ETHEREUM) + 1  # noqa: E501
-
-
-@pytest.mark.parametrize('max_tasks_num', [5])
-def test_maybe_update_morpho_cache_with_chain_ids(task_manager: TaskManager) -> None:
-    """Regression test that _maybe_update_morpho_cache correctly calls vault and
-    reward distributor queries for both supported chains with chain_id parameters."""
-    task_manager.should_schedule = True
-    task_manager.potential_tasks = [task_manager._maybe_update_morpho_cache]
-
-    with (
-        patch.object(target=task_manager, attribute='query_morpho_vaults') as mock_vaults,
-        patch.object(target=task_manager, attribute='query_morpho_reward_distributors') as mock_distributors,  # noqa: E501
-    ):
-        task_manager.schedule()
-        if len(task_manager.running_greenlets) != 0:
-            gevent.joinall(task_manager.running_greenlets[task_manager._maybe_update_morpho_cache])
-
-        for mock_fn in (mock_vaults, mock_distributors):
-            assert mock_fn.call_count == 2
-            assert mock_fn.call_args[1]['chain_id'] in {ChainID.ETHEREUM, ChainID.BASE}
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
