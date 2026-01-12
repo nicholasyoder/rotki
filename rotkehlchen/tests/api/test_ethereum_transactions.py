@@ -721,7 +721,7 @@ def test_query_transactions_check_decoded_events(
         with mock_evm_chains_with_transactions():
             rotki.task_manager._maybe_schedule_evm_txreceipts()
             gevent.joinall(rotki.greenlet_manager.greenlets)
-            rotki.task_manager._maybe_decode_evm_transactions()
+            rotki.task_manager._maybe_decode_transactions()
             gevent.joinall(rotki.greenlet_manager.greenlets)
         response = requests.post(
             api_url_for(rotkehlchen_api_server, 'blockchaintransactionsresource'),
