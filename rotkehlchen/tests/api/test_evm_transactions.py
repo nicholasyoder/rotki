@@ -315,6 +315,14 @@ def test_force_refetch_evm_transactions_success(
 
     # Count initial transactions
     total_transaction_count = db_evmtx.count_evm_transactions(ChainID.ETHEREUM)
+    with db.conn.read_ctx() as cursor:
+        expected_hashes = {
+            str(deserialize_evm_tx_hash(tx_hash))
+            for (tx_hash,) in cursor.execute(
+                'SELECT tx_hash FROM evm_transactions WHERE chain_id = ? AND timestamp >= ? AND timestamp <= ?',  # noqa: E501
+                (ChainID.ETHEREUM.serialize_for_db(), four_days_ago, now),
+            )
+        }
 
     # Delete some transactions to simulate missing data
     with db.conn.write_ctx() as cursor:
@@ -340,6 +348,11 @@ def test_force_refetch_evm_transactions_success(
     )
     result = assert_proper_sync_response_with_result(response)
     assert result['new_transactions_count'] == removed_transactions
+    assert (
+        len(result['new_transactions'][SupportedBlockchain.ETHEREUM.serialize()]) ==
+        removed_transactions
+    )
+    assert set(result['new_transactions'][SupportedBlockchain.ETHEREUM.serialize()]) == expected_hashes  # noqa: E501
 
     # Count transactions after refetch
     assert total_transaction_count == db_evmtx.count_evm_transactions(ChainID.ETHEREUM)
