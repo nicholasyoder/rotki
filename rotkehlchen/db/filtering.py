@@ -2428,7 +2428,7 @@ class HistoricalBalancesFilterQuery(DBFilterQuery, FilterWithTimestamp):
         filters.append(filter_query.timestamp_filter)
         if timestamp is not None:
             unprocessed_clauses.append('timestamp <= ?')
-            unprocessed_bindings.append(timestamp * scaling_factor)
+            unprocessed_bindings.append((timestamp * scaling_factor).to_int(exact=False))
 
         if asset is not None:
             asset_filter = DBEqualsFilter(
