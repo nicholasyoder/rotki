@@ -3757,6 +3757,11 @@ def test_upgrade_db_49_to_50(user_data_dir, messages_aggregator):
 def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
     """Test upgrading the DB from version 50 to version 51"""
     _use_prepared_db(user_data_dir, 'v50_rotkehlchen.db')
+    subtype_migration_query = (
+        'SELECT h.identifier, h.type, h.subtype, c.counterparty '
+        'FROM history_events h LEFT JOIN chain_events_info c ON h.identifier = c.identifier '
+        'WHERE h.identifier >= 5 ORDER BY h.identifier'
+    )
     db_v50 = _init_db_with_target_version(
         target_version=50,
         user_data_dir=user_data_dir,
@@ -3766,13 +3771,25 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
     with db_v50.conn.read_ctx() as cursor:
         assert column_exists(cursor=cursor, table_name='history_events', column_name='event_identifier')  # noqa: E501
         assert not column_exists(cursor=cursor, table_name='history_events', column_name='group_identifier')  # noqa: E501
-        assert cursor.execute('SELECT COUNT(*) FROM chain_events_info').fetchone()[0] == 2
+        assert cursor.execute('SELECT COUNT(*) FROM chain_events_info').fetchone()[0] == 5
         assert cursor.execute('SELECT identifier, event_identifier, sequence_index, asset FROM history_events ORDER BY identifier').fetchall() == (result := [  # noqa: E501
             (1, 'TEST_EVENT_1', 0, 'ETH'),
             (2, 'TEST_EVENT_2', 0, 'BTC'),
             (3, 'TEST_EVENT_3', 1, 'USD'),
             (4, 'SAFE_DEPLOY_EVENT', 0, 'ETH'),
+            (5, '0xabc123def456', 0, 'ETH'),
+            (6, '0xdef456abc789', 0, 'ETH'),
+            (7, '0x111222333444', 0, 'ETH'),
+            (8, '0x555666777888', 0, 'ETH'),
+            (9, '0x999888777666', 0, 'ETH'),
         ])
+        assert cursor.execute(subtype_migration_query).fetchall() == [
+            (5, 'deposit', 'deposit asset', 'aave-v3'),  # customized + counterparty
+            (6, 'withdrawal', 'remove asset', 'aave-v3'),  # customized + counterparty
+            (7, 'deposit', 'deposit asset', 'compound'),  # not customized
+            (8, 'deposit', 'deposit asset', None),  # asset movement
+            (9, 'deposit', 'deposit asset', None),  # customized, no counterparty
+        ]
         assert not table_exists(cursor=cursor, name='lido_csm_node_operators')
         assert not table_exists(cursor=cursor, name='lido_csm_node_operator_metrics')
         assert not table_exists(cursor=cursor, name='event_metrics')
@@ -3803,7 +3820,7 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
     with db.conn.read_ctx() as cursor:
         assert not column_exists(cursor=cursor, table_name='history_events', column_name='event_identifier')  # noqa: E501
         assert column_exists(cursor=cursor, table_name='history_events', column_name='group_identifier')  # noqa: E501
-        assert cursor.execute('SELECT COUNT(*) FROM chain_events_info').fetchone()[0] == 2
+        assert cursor.execute('SELECT COUNT(*) FROM chain_events_info').fetchone()[0] == 5
         assert cursor.execute('SELECT identifier, group_identifier, sequence_index, asset FROM history_events ORDER BY identifier').fetchall() == result  # noqa: E501
         assert cursor.execute(  # Verify the unique constraint was updated
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='history_events'",
@@ -3829,5 +3846,12 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
         assert cursor.execute(
             "SELECT * FROM key_value_cache WHERE name = 'last_eth2_events_processing_ts'",
         ).fetchone() == ('last_eth2_events_processing_ts', processing_ts)
+        assert cursor.execute(subtype_migration_query).fetchall() == [
+            (5, 'deposit', 'deposit to protocol', 'aave-v3'),  # migrated
+            (6, 'withdrawal', 'withdraw from protocol', 'aave-v3'),  # migrated
+            (7, 'deposit', 'deposit asset', 'compound'),  # not customized
+            (8, 'deposit', 'deposit asset', None),  # asset movement
+            (9, 'deposit', 'deposit asset', None),  # no counterparty
+        ]
 
     db.logout()
