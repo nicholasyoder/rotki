@@ -40,8 +40,10 @@ from rotkehlchen.db.evmtx import DBEvmTx
 from rotkehlchen.db.filtering import (
     EvmTransactionsFilterQuery,
     EvmTransactionsNotDecodedFilterQuery,
+    SolanaTransactionsNotDecodedFilterQuery,
 )
 from rotkehlchen.db.settings import CachedSettings
+from rotkehlchen.db.solanatx import DBSolanaTx
 from rotkehlchen.errors.api import PremiumAuthenticationError, PremiumPermissionError
 from rotkehlchen.errors.asset import UnknownAsset, WrongAssetType
 from rotkehlchen.errors.misc import RemoteError
@@ -65,6 +67,7 @@ from rotkehlchen.tasks.calendar import (
 )
 from rotkehlchen.tasks.utils import should_run_periodic_task
 from rotkehlchen.types import (
+    CHAINS_WITH_TRANSACTION_DECODERS,
     EVM_CHAINS_WITH_TRANSACTIONS,
     SUPPORTED_BITCOIN_CHAINS,
     CacheType,
@@ -171,7 +174,7 @@ class TaskManager:
             self._maybe_query_evm_transactions,
             self._maybe_schedule_exchange_history_query,
             self._maybe_schedule_evm_txreceipts,
-            self._maybe_decode_evm_transactions,
+            self._maybe_decode_transactions,
             self._maybe_check_premium_status,
             self._maybe_check_data_updates,
             self._maybe_update_snapshot_balances,
@@ -430,24 +433,30 @@ class TaskManager:
             fail_callback=exchange_fail_cb,
         )]
 
-    def _maybe_decode_evm_transactions(self) -> Optional[list[gevent.Greenlet]]:
-        """Schedules the evm transaction decoding task
+    def _maybe_decode_transactions(self) -> Optional[list[gevent.Greenlet]]:
+        """Schedules the transaction decoding task
 
         The DB check happens first here to see if scheduling would even be needed.
         But the DB query will happen again inside the query task while having the
         lock acquired.
         """
-        dbevmtx = DBEvmTx(self.database)
-        shuffled_chains = list(EVM_CHAINS_WITH_TRANSACTIONS)
+
+        shuffled_chains = list(CHAINS_WITH_TRANSACTION_DECODERS)
         random.shuffle(shuffled_chains)
         for blockchain in shuffled_chains:
-            number_of_tx_to_decode = dbevmtx.count_hashes_not_decoded(
-                filter_query=EvmTransactionsNotDecodedFilterQuery.make(chain_id=blockchain.to_chain_id()),
-            )
+            if blockchain == SupportedBlockchain.SOLANA:
+                number_of_tx_to_decode = DBSolanaTx(self.database).count_hashes_not_decoded(
+                    filter_query=SolanaTransactionsNotDecodedFilterQuery.make(),
+                )
+            else:
+                number_of_tx_to_decode = DBEvmTx(self.database).count_hashes_not_decoded(
+                    filter_query=EvmTransactionsNotDecodedFilterQuery.make(chain_id=blockchain.to_chain_id()),
+                )
+
             if number_of_tx_to_decode == 0:
                 return None
 
-            evm_inquirer = self.chains_aggregator.get_chain_manager(blockchain)
+            chain_inquirer = self.chains_aggregator.get_chain_manager(blockchain)
             task_name = f'decode {min(number_of_tx_to_decode, TX_DECODING_LIMIT)} {blockchain!s} transactions'  # noqa: E501
             log.debug(f'Scheduling periodic task to {task_name}')
             # Since this task is heavy we spawn it only for one chain at a time.
@@ -455,7 +464,7 @@ class TaskManager:
                 after_seconds=None,
                 task_name=task_name,
                 exception_is_error=True,
-                method=evm_inquirer.transactions_decoder.get_and_decode_undecoded_transactions,
+                method=chain_inquirer.transactions_decoder.get_and_decode_undecoded_transactions,  # type: ignore[attr-defined]
                 limit=TX_DECODING_LIMIT,
                 send_ws_notifications=True,
             )]
