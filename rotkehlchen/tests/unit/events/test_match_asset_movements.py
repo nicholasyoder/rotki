@@ -7,7 +7,7 @@ from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
 from rotkehlchen.constants import HOUR_IN_SECONDS
 from rotkehlchen.constants.assets import A_BTC, A_ETH, A_USD, A_USDC
-from rotkehlchen.db.cache import ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE
+from rotkehlchen.db.cache import ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE, DBCacheDynamic
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.fval import FVal
@@ -336,3 +336,68 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
     assert find_match_mock.call_args_list[0].kwargs['asset_movement'] == withdrawal3
     withdrawal2.identifier = 9
     assert find_match_mock.call_args_list[1].kwargs['asset_movement'] == withdrawal2
+
+
+def test_match_asset_movements_tolerance(database: 'DBHandler') -> None:
+    """Test that the asset_movement_amount_tolerance setting works correctly, with the match
+    failing with too low of tolerance and succeeding with higher tolerance.
+    """
+    events_db = DBHistoryEvents(database)
+    with database.conn.write_ctx() as write_cursor:
+        events_db.add_history_events(
+            write_cursor=write_cursor,
+            history=[(movement_event := AssetMovement(
+                identifier=(movement_id := 1),
+                location=Location.KRAKEN,
+                event_type=HistoryEventType.WITHDRAWAL,
+                timestamp=TimestampMS(1520000000000),
+                asset=A_USDC,
+                amount=FVal('0.2'),
+                unique_id='xyz',
+                location_label='Kraken 1',
+            )), (matched_event := EvmEvent(
+                identifier=(match_id := 2),
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=movement_event.timestamp,
+                location=Location.ARBITRUM_ONE,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_USDC,
+                amount=FVal('0.199'),  # Differs by 0.001 (0.5%)
+                location_label=make_evm_address(),
+            ))],
+        )
+
+    for tolerance, expected_value in (
+        (FVal('0.0001'), None),  # First test with tolerance too low - match should fail
+        (FVal('0.01'), match_id),  # Then test with higher tolerance - match should succeed
+    ):
+        with database.user_write() as write_cursor:
+            database.set_setting(
+                write_cursor=write_cursor,
+                name='asset_movement_amount_tolerance',
+                value=tolerance,
+            )
+
+        match_asset_movements(database=database)
+        with database.conn.read_ctx() as cursor:
+            assert database.get_dynamic_cache(
+                cursor=cursor,
+                name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
+                identifier=movement_id,
+            ) == expected_value
+
+    # Verify the fee event was created properly
+    with database.conn.read_ctx() as cursor:
+        all_events = events_db.get_history_events_internal(
+            cursor=cursor,
+            filter_query=HistoryEventFilterQuery.make(),
+        )
+
+    assert len(all_events) == 3
+    assert all_events[0].group_identifier == matched_event.group_identifier
+    assert all_events[1].group_identifier == movement_event.group_identifier
+    assert all_events[2].group_identifier == movement_event.group_identifier
+    assert all_events[2].event_subtype == HistoryEventSubType.FEE
+    assert all_events[2].amount == movement_event.amount - matched_event.amount

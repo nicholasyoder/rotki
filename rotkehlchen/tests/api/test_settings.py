@@ -231,6 +231,8 @@ def test_set_settings(rotkehlchen_api_server: 'APIServer') -> None:
             value = ';'
         elif setting == 'events_processing_frequency':
             value = HOUR_IN_SECONDS
+        elif setting == 'asset_movement_amount_tolerance':
+            value = '0.0001'
         else:
             raise AssertionError(f'Unexpected setting {setting} encountered')
 

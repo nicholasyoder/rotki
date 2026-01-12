@@ -792,11 +792,16 @@ Getting or modifying settings
               "cost_basis_method": "fifo",
               "oracle_penalty_threshold_count": 5,
               "oracle_penalty_duration": 1800,
+              "auto_delete_calendar_entries": true,
               "auto_create_calendar_reminders": true,
               "address_name_priority": ["private_addressbook", "blockchain_account",
                                         "global_addressbook", "ethereum_tokens",
                                         "hardcoded_mappings", "ens_names"],
               "ask_user_upon_size_discrepancy": true,
+              "auto_detect_tokens": true,
+              "csv_export_delimiter": ",",
+              "events_processing_frequency": 86400,
+              "asset_movement_amount_tolerance": "0.000001"
           },
           "message": ""
       }
@@ -832,8 +837,13 @@ Getting or modifying settings
    :resjson int read_timeout: The number of seconds to wait for the first byte after a connection to an external service has been established. Default is 30.
    :resjson int oracle_penalty_threshold_count: The number of failures after which an oracle is penalized. Default is 5.
    :resjson int oracle_penalty_duration: The duration in seconds for which an oracle is penalized. Default is 1800.
+   :resjson bool auto_delete_calendar_entries: A boolean denoting whether calendar entries are automatically deleted when related blockchain accounts are removed. Default is ``true``.
    :resjson bool auto_create_calendar_reminders: A boolean denoting whether reminders are created automatically for calendar entries based on the decoded history events. Default is ``true``.
    :resjson bool ask_user_upon_size_discrepancy: A boolean denoting whether to prompt the user for confirmation each time the remote database is bigger than the local one or directly force push. Default is ``true``.
+   :resjson bool auto_detect_tokens: A boolean denoting whether to automatically detect and add tokens for EVM addresses. Default is ``true``.
+   :resjson string csv_export_delimiter: The delimiter character to use when exporting data to CSV files. Default is ``","``.
+   :resjson int events_processing_frequency: The frequency in seconds at which to process events and match asset movements. Must be >= 60 seconds. Default is 86400 (24 hours).
+   :resjson string asset_movement_amount_tolerance: The tolerance value used when matching asset movement amounts with onchain events. Must be a positive decimal number. Default is ``"0.000001"``.
 
    :statuscode 200: Querying of settings was successful
    :statuscode 409: There is no logged in user
@@ -883,8 +893,13 @@ Getting or modifying settings
    :resjson int read_timeout: The number of seconds to wait for the first byte after a connection to an external service has been established. Default is 30.
    :resjson int oracle_penalty_threshold_count: The number of failures after which an oracle is penalized. Default is 5.
    :resjson int oracle_penalty_duration: The duration in seconds for which an oracle is penalized. Default is 1800.
+   :resjson bool[optional] auto_delete_calendar_entries: A boolean denoting whether calendar entries are automatically deleted when related blockchain accounts are removed.
    :resjson bool[optional] auto_create_calendar_reminders: A boolean denoting whether reminders are created automatically for calendar entries based on the decoded history events.
    :resjson bool[optional] ask_user_upon_size_discrepancy: A boolean denoting whether to prompt the user for confirmation each time the remote database is bigger than the local one or directly force push.
+   :resjson bool[optional] auto_detect_tokens: A boolean denoting whether to automatically detect and add tokens for EVM addresses.
+   :resjson string[optional] csv_export_delimiter: The delimiter character to use when exporting data to CSV files.
+   :resjson int[optional] events_processing_frequency: The frequency in seconds at which to process events and match asset movements. Must be >= 60 seconds.
+   :resjson string[optional] asset_movement_amount_tolerance: The tolerance value used when matching asset movement amounts with onchain events. Must be a positive decimal number.
 
    **Example Response**:
 
@@ -914,9 +929,14 @@ Getting or modifying settings
               "current_price_oracles": ["cryptocompare"],
               "historical_price_oracles": ["coingecko", "cryptocompare"],
               "ssf_graph_multiplier": 2,
-              "non_sync_exchanges": [{"location": "binance", "name": "binance1"}]
+              "non_sync_exchanges": [{"location": "binance", "name": "binance1"}],
+              "auto_delete_calendar_entries": true,
               "auto_create_calendar_reminders": true,
               "ask_user_upon_size_discrepancy": true,
+              "auto_detect_tokens": true,
+              "csv_export_delimiter": ",",
+              "events_processing_frequency": 86400,
+              "asset_movement_amount_tolerance": "0.000001"
           },
           "message": ""
       }

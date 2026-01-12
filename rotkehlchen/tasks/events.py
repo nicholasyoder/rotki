@@ -14,6 +14,7 @@ from rotkehlchen.db.constants import (
 )
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
+from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.handler import GlobalDBHandler
@@ -37,7 +38,6 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 ASSET_MOVEMENT_MATCH_WINDOW: Final = HOUR_IN_SECONDS
-AMOUNT_TOLERANCE: Final = FVal(1e-6)
 
 
 def process_eth2_events(
@@ -397,6 +397,7 @@ def find_asset_movement_matches(
         )
 
     close_matches: list[HistoryBaseEntry] = []
+    tolerance = CachedSettings().get_settings().asset_movement_amount_tolerance
     for event in possible_matches:
         if should_exclude_possible_match(
             asset_movement=asset_movement,
@@ -413,7 +414,7 @@ def find_asset_movement_matches(
         if not (_match_amount(
             movement_amount=asset_movement.amount,
             event_amount=event.amount,
-            tolerance=AMOUNT_TOLERANCE,
+            tolerance=tolerance,
             is_deposit=is_deposit,
         ) or (
             is_deposit and
@@ -422,7 +423,7 @@ def find_asset_movement_matches(
             _match_amount(
                 movement_amount=asset_movement.amount + fee_event.amount,
                 event_amount=event.amount,
-                tolerance=AMOUNT_TOLERANCE,
+                tolerance=tolerance,
                 is_deposit=True,
             )
         )):

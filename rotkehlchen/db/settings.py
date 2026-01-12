@@ -18,6 +18,7 @@ from rotkehlchen.data_migrations.constants import LAST_USERDB_DATA_MIGRATION
 from rotkehlchen.db.constants import UpdateType
 from rotkehlchen.db.utils import str_to_bool
 from rotkehlchen.errors.serialization import DeserializationError
+from rotkehlchen.fval import FVal
 from rotkehlchen.history.types import DEFAULT_HISTORICAL_PRICE_ORACLES_ORDER, HistoricalPriceOracle
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.oracles.structures import DEFAULT_CURRENT_PRICE_ORACLES_ORDER, CurrentPriceOracle
@@ -79,6 +80,7 @@ DEFAULT_ASK_USER_UPON_SIZE_DISCREPANCY: Final = True
 DEFAULT_AUTO_DETECT_TOKENS: Final = True
 DEFAULT_CSV_EXPORT_DELIMITER: Final = ','
 DEFAULT_EVENTS_PROCESSING_FREQUENCY: Final = DAY_IN_SECONDS
+DEFAULT_ASSET_MOVEMENT_AMOUNT_TOLERANCE: Final = FVal('0.000001')
 
 LIST_KEYS: Final = (
     'current_price_oracles',
@@ -130,6 +132,9 @@ STRING_KEYS: Final = (
     'frontend_settings',
     'csv_export_delimiter',
 )
+FVAL_KEYS: Final = (
+    'asset_movement_amount_tolerance',
+)
 
 UPDATE_TYPES_VERSIONS: Final = {x.serialize() for x in UpdateType}
 
@@ -179,12 +184,14 @@ CachedDBSettingsFieldNames = Literal[
     'auto_create_calendar_reminders',
     'ask_user_upon_size_discrepancy',
     'events_processing_frequency',
+    'asset_movement_amount_tolerance',
 ]
 
 DBSettingsFieldTypes = (
     bool |
     int |
     str |
+    FVal |
     Asset |
     Sequence[ModuleName] |
     Sequence[CurrentPriceOracle] |
@@ -246,6 +253,7 @@ class DBSettings:
     auto_detect_tokens: bool = DEFAULT_AUTO_DETECT_TOKENS
     csv_export_delimiter: str = DEFAULT_CSV_EXPORT_DELIMITER
     events_processing_frequency: int = DEFAULT_EVENTS_PROCESSING_FREQUENCY
+    asset_movement_amount_tolerance: FVal = DEFAULT_ASSET_MOVEMENT_AMOUNT_TOLERANCE
 
     def serialize(self) -> dict[str, Any]:
         settings_dict = {}
@@ -310,6 +318,7 @@ class ModifiableDBSettings(NamedTuple):
     csv_export_delimiter: str | None = None
     btc_mempool_api: str | None = None
     events_processing_frequency: int | None = None
+    asset_movement_amount_tolerance: FVal | None = None
 
     def serialize(self) -> dict[str, Any]:
         settings_dict = {}
@@ -370,6 +379,8 @@ def db_settings_from_dict(
             specified_args[key] = int(value)
         elif key in STRING_KEYS:
             specified_args[key] = str(value)
+        elif key in FVAL_KEYS:
+            specified_args[key] = FVal(value)
         elif key in UPDATE_TYPES_VERSIONS:
             continue  # these are handled separately
         elif key == 'taxfree_after_period':
@@ -433,6 +444,8 @@ def serialize_db_setting(
     # Handle settings that serialize regardless of is_modifiable
     if setting in {'main_currency', 'cost_basis_method'}:
         return value.serialize()  # pylint: disable=no-member
+    if setting in FVAL_KEYS:
+        return str(value)  # FVal isn't json serializable so needs converted to string in all cases
 
     if is_modifiable:
         if isinstance(value, bool):
