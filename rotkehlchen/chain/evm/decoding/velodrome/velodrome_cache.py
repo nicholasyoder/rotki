@@ -3,7 +3,12 @@ from typing import TYPE_CHECKING, Final, Literal, NamedTuple
 
 from rotkehlchen.assets.utils import TokenEncounterInfo, get_or_create_evm_token
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
-from rotkehlchen.chain.evm.decoding.velodrome.constants import CPT_AERODROME, CPT_VELODROME
+from rotkehlchen.chain.evm.contracts import EvmContract
+from rotkehlchen.chain.evm.decoding.velodrome.constants import (
+    CPT_AERODROME,
+    CPT_VELODROME,
+    SUGAR_V3_CONTRACT_ABI,
+)
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.chain.evm.utils import (
     maybe_notify_cache_query_status,
@@ -38,8 +43,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
-VELODROME_SUGAR_V2_CONTRACT: Final = string_to_evm_address('0xc734656F0112CA18cdcaD424ddd8949F3D4c1DdD')  # Velodrome Finance LP Sugar v3  # noqa: E501
-AERODROME_SUGAR_V2_CONTRACT: Final = string_to_evm_address('0xC301856B4262E49E9239ec8a2d0c754d5ae317c0')  # Aerodrome Finance LP Sugar v3  # noqa: E501
+VELODROME_SUGAR_V3_CONTRACT: Final = string_to_evm_address('0x1d5E1893fCfb62CAaCE48eB2BAF7a6E134a8a27c')  # Velodrome Finance LP Sugar v3  # noqa: E501
+AERODROME_SUGAR_V3_CONTRACT: Final = string_to_evm_address('0x9DE6Eab7a910A288dE83a04b6A43B52Fd1246f1E')  # Aerodrome Finance LP Sugar v3  # noqa: E501
 POOL_DATA_CHUNK_SIZE: Final = 100
 POOL_DATA_MAX_QUERY: Final = 400  # takes less than 2 minutes
 
@@ -173,14 +178,14 @@ def query_velodrome_data_from_chain_and_maybe_create_tokens(
         reload_all: bool,
 ) -> list[VelodromePoolData]:
     """
-    Queries velodrome data from chain from the Velodrome Finance LP Sugar v2 contract.
+    Queries velodrome data from chain from the Velodrome Finance LP Sugar v3 contract.
     If new pools are found their tokens are created and the pools are returned.
     (Find more details for the contract here: https://github.com/velodrome-finance/sugar).
 
     Will only process up to POOL_DATA_MAX_QUERY (400) pools at a time. Queries pool data in
     chunks of POOL_DATA_CHUNK_SIZE (100) from the Sugar contract.
 
-    - It only queries velodrome v2. Velodrome v1 data is "hardcoded" in the packaged db
+    - It only queries velodrome v2 & v3. Velodrome v1 data is "hardcoded" in the packaged db
     because they are not expected to change and there is no reason to make this method slower
     by querying v1 too.
 
@@ -188,10 +193,16 @@ def query_velodrome_data_from_chain_and_maybe_create_tokens(
     - RemoteError if there is an error connecting with the remote source of data
     """
     if inquirer.chain_id == ChainID.OPTIMISM:
-        data_contract = inquirer.contracts.contract(VELODROME_SUGAR_V2_CONTRACT)
+        data_contract = EvmContract(
+            address=VELODROME_SUGAR_V3_CONTRACT,
+            abi=SUGAR_V3_CONTRACT_ABI,
+        )
         counterparty = CPT_VELODROME
     else:
-        data_contract = inquirer.contracts.contract(AERODROME_SUGAR_V2_CONTRACT)
+        data_contract = EvmContract(
+            address=AERODROME_SUGAR_V3_CONTRACT,
+            abi=SUGAR_V3_CONTRACT_ABI,
+        )
         counterparty = CPT_AERODROME
 
     pool_data: list[dict] = []
@@ -209,7 +220,7 @@ def query_velodrome_data_from_chain_and_maybe_create_tokens(
             pool_data_chunk = data_contract.call(
                 node_inquirer=inquirer,
                 method_name='all',
-                arguments=[limit, offset],
+                arguments=[limit, offset, 0],  # return all.
             )
         except RemoteError as e:
             log.warning(f'Failed to query {counterparty} pool data chunk due to {e!s}.')
