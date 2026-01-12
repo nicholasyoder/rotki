@@ -191,7 +191,7 @@ def test_curve_locked_crv_balances(
         timestamp=TimestampMS(0),
         location=Location.ETHEREUM,
         event_type=HistoryEventType.DEPOSIT,
-        event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+        event_subtype=HistoryEventSubType.DEPOSIT_TO_PROTOCOL,
         asset=A_CRV,
         amount=(locked_crv_amount := FVal('311.05616434049212239')),
         location_label=(address := ethereum_accounts[0]),
