@@ -14454,9 +14454,22 @@ Refetch transactions for a specific time period
       HTTP/1.1 200 OK
       Content-Type: application/json
 
-      { "result": {"new_transactions_count": 12}, "message": "" }
+      {
+          "result": {
+              "new_transactions_count": 2,
+              "new_transactions": {
+                  "eth": [
+                      "0x1234...",
+                      "0xabcd..."
+                  ]
+              }
+          },
+          "message": ""
+      }
 
    :resjson int new_transactions_count: The number of new transactions found and added to the database.
+   :resjson dict new_transactions: Mapping of chain to list of new transaction hashes.
+   :resjson list new_transactions[chain]: New transaction hashes for the chain (Solana uses the transaction signature).
    :statuscode 200: Transactions successfully refetched.
    :statuscode 401: User is not logged in.
    :statuscode 400: Invalid parameters such as from_timestamp > to_timestamp. Address not tracked by rotki.

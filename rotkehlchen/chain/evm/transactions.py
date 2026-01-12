@@ -4,7 +4,7 @@ from collections import defaultdict
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from functools import wraps
-from typing import TYPE_CHECKING, Any, Optional, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, Optional, TypeVar, cast, overload
 
 from gevent.lock import Semaphore
 
@@ -67,7 +67,7 @@ def with_tx_status_messaging(func: T) -> T:
             end_ts: Timestamp,
             *args: Any,
             **kwargs: Any,
-    ) -> None:
+    ) -> Any:
         with self.address_tx_locks[address]:
             self.msg_aggregator.add_message(
                 message_type=WSMessageType.TRANSACTION_STATUS,
@@ -181,19 +181,54 @@ class EvmTransactions(ABC):  # noqa: B024
             )
         self.get_chain_specific_multiaddress_data(addresses)
 
+    @overload
     def _query_and_save_transactions_for_range(
             self,
             address: ChecksumEvmAddress,
             period: TimestampOrBlockRange,
             location_string: str | None = None,
             update_ranges: bool = True,
+            return_queried_hashes: Literal[True] = True,
+    ) -> list[EVMTxHash]:
+        ...
+
+    @overload
+    def _query_and_save_transactions_for_range(
+            self,
+            address: ChecksumEvmAddress,
+            period: TimestampOrBlockRange,
+            location_string: str | None = None,
+            update_ranges: bool = True,
+            return_queried_hashes: Literal[False] = False,
     ) -> None:
+        ...
+
+    @overload
+    def _query_and_save_transactions_for_range(
+            self,
+            address: ChecksumEvmAddress,
+            period: TimestampOrBlockRange,
+            location_string: str | None = None,
+            update_ranges: bool = True,
+            return_queried_hashes: bool = False,
+    ) -> list[EVMTxHash] | None:
+        ...
+
+    def _query_and_save_transactions_for_range(
+            self,
+            address: ChecksumEvmAddress,
+            period: TimestampOrBlockRange,
+            location_string: str | None = None,
+            update_ranges: bool = True,
+            return_queried_hashes: bool = False,
+    ) -> list[EVMTxHash] | None:
         """Helper function to abstract tx querying functionality for different range types
 
         If update_ranges is True, updates the database tracking for this query range.
         Otherwise, data is fetched without updating the query range.
         """
         period_as_blocks = self.evm_inquirer.maybe_timestamp_to_block_range(period)
+        queried_hashes: list[EVMTxHash] | None = [] if return_queried_hashes else None
         for new_transactions in self.evm_inquirer.get_transactions(
                 account=address,
                 action='txlist',
@@ -209,6 +244,8 @@ class EvmTransactions(ABC):  # noqa: B024
                     evm_transactions=new_transactions,
                     relevant_address=address,
                 )
+                if queried_hashes is not None:
+                    queried_hashes.extend(tx.tx_hash for tx in new_transactions)
                 if period.range_type == 'timestamps':
                     assert location_string, 'should always be given for timestamps'
                     if update_ranges:  # update last queried time for the address
@@ -228,6 +265,7 @@ class EvmTransactions(ABC):  # noqa: B024
                     'status': str(TransactionStatusStep.QUERYING_TRANSACTIONS),
                 },
             )
+        return queried_hashes
 
     def _get_transactions_for_range(
             self,
@@ -283,13 +321,47 @@ class EvmTransactions(ABC):  # noqa: B024
                 queried_ranges=[(start_ts, end_ts)],
             )
 
+    @overload
     def _query_and_save_internal_transactions_for_range_or_parent_hash(
             self,
             period_or_hash: TimestampOrBlockRange | EVMTxHash,
             address: ChecksumEvmAddress | None = None,
             location_string: str | None = None,
             update_ranges: bool = True,
+            return_queried_hashes: Literal[True] = True,
+    ) -> list[EVMTxHash]:
+        ...
+
+    @overload
+    def _query_and_save_internal_transactions_for_range_or_parent_hash(
+            self,
+            period_or_hash: TimestampOrBlockRange | EVMTxHash,
+            address: ChecksumEvmAddress | None = None,
+            location_string: str | None = None,
+            update_ranges: bool = True,
+            return_queried_hashes: Literal[False] = False,
     ) -> None:
+        ...
+
+    @overload
+    def _query_and_save_internal_transactions_for_range_or_parent_hash(
+            self,
+            period_or_hash: TimestampOrBlockRange | EVMTxHash,
+            address: ChecksumEvmAddress | None = None,
+            location_string: str | None = None,
+            update_ranges: bool = True,
+            return_queried_hashes: bool = False,
+    ) -> list[EVMTxHash] | None:
+        ...
+
+    def _query_and_save_internal_transactions_for_range_or_parent_hash(
+            self,
+            period_or_hash: TimestampOrBlockRange | EVMTxHash,
+            address: ChecksumEvmAddress | None = None,
+            location_string: str | None = None,
+            update_ranges: bool = True,
+            return_queried_hashes: bool = False,
+    ) -> list[EVMTxHash] | None:
         """Helper function to abstract internal tx querying for different range types
         or for a specific parent transaction hash.
 
@@ -307,6 +379,7 @@ class EvmTransactions(ABC):  # noqa: B024
             query_period_or_hash = period_or_hash
 
         parent_tx_timestamps: dict[EVMTxHash, Timestamp] = {}
+        queried_hashes: list[EVMTxHash] | None = [] if return_queried_hashes else None
         for new_internal_txs in self.evm_inquirer.get_transactions(
                 account=address,
                 period_or_hash=query_period_or_hash,
@@ -328,6 +401,8 @@ class EvmTransactions(ABC):  # noqa: B024
                             tx_hash=internal_tx.parent_tx_hash,
                             relevant_address=address,
                         )
+                    if queried_hashes is not None:
+                        queried_hashes.append(tx.tx_hash)
 
                     timestamp = tx.timestamp
                     parent_tx_timestamps[internal_tx.parent_tx_hash] = timestamp
@@ -362,6 +437,7 @@ class EvmTransactions(ABC):  # noqa: B024
                             'status': str(TransactionStatusStep.QUERYING_INTERNAL_TRANSACTIONS),
                         },
                     )
+        return queried_hashes
 
     def _get_internal_transactions_for_ranges(
             self,
@@ -472,13 +548,47 @@ class EvmTransactions(ABC):  # noqa: B024
                 queried_ranges=[(start_ts, end_ts)],
             )
 
+    @overload
     def _query_and_save_erc20_transfers_for_range(
             self,
             address: ChecksumEvmAddress,
             period: TimestampOrBlockRange,
             location_string: str,
             update_ranges: bool = True,
+            return_queried_hashes: Literal[True] = True,
+    ) -> list[EVMTxHash]:
+        ...
+
+    @overload
+    def _query_and_save_erc20_transfers_for_range(
+            self,
+            address: ChecksumEvmAddress,
+            period: TimestampOrBlockRange,
+            location_string: str,
+            update_ranges: bool = True,
+            return_queried_hashes: Literal[False] = False,
     ) -> None:
+        ...
+
+    @overload
+    def _query_and_save_erc20_transfers_for_range(
+            self,
+            address: ChecksumEvmAddress,
+            period: TimestampOrBlockRange,
+            location_string: str,
+            update_ranges: bool = True,
+            return_queried_hashes: bool = False,
+    ) -> list[EVMTxHash] | None:
+        ...
+
+    def _query_and_save_erc20_transfers_for_range(
+            self,
+            address: ChecksumEvmAddress,
+            period: TimestampOrBlockRange,
+            location_string: str,
+            update_ranges: bool = True,
+            return_queried_hashes: bool = False,
+    ) -> list[EVMTxHash] | None:
         """Helper function to abstract ERC20 transfer querying functionality for different range types
 
         If update_ranges is True, updates the database tracking for this query range.
@@ -488,6 +598,7 @@ class EvmTransactions(ABC):  # noqa: B024
         to_block = self.evm_inquirer.get_blocknumber_by_time(ts=Timestamp(period.to_value))
 
         log.debug(f'Querying erc20 transfers of {address} from {period.from_value} to {period.to_value} in {self.evm_inquirer.chain_name}')  # noqa: E501
+        queried_hashes: list[EVMTxHash] | None = [] if return_queried_hashes else None
         for erc20_tx_hashes in self.evm_inquirer.get_token_transaction_hashes(
             account=address,
             from_block=from_block,
@@ -500,6 +611,8 @@ class EvmTransactions(ABC):  # noqa: B024
                         tx_hash=tx_hash,
                         relevant_address=address,
                     )
+                if queried_hashes is not None:
+                    queried_hashes.append(tx.tx_hash)
 
                 if period.range_type == 'timestamps':
                     log.debug(f'{self.evm_inquirer.chain_name} ERC20 Transfers for {address} -> update range {period.from_value} - {tx.timestamp}')  # noqa: E501
@@ -521,6 +634,7 @@ class EvmTransactions(ABC):  # noqa: B024
                             'status': str(TransactionStatusStep.QUERYING_EVM_TOKENS_TRANSACTIONS),
                         },
                     )
+        return queried_hashes
 
     def address_has_been_spammed(self, address: ChecksumEvmAddress) -> bool:
         """
@@ -952,13 +1066,44 @@ class EvmTransactions(ABC):  # noqa: B024
         for all tracked addresses at once"""
         return None
 
+    @overload
+    def refetch_transactions_for_address(
+            self,
+            address: ChecksumEvmAddress,
+            start_ts: Timestamp,
+            end_ts: Timestamp,
+            return_queried_hashes: Literal[True],
+    ) -> list[EVMTxHash]:
+        ...
+
+    @overload
+    def refetch_transactions_for_address(
+            self,
+            address: ChecksumEvmAddress,
+            start_ts: Timestamp,
+            end_ts: Timestamp,
+            return_queried_hashes: Literal[False] = False,
+    ) -> None:
+        ...
+
+    @overload
+    def refetch_transactions_for_address(
+            self,
+            address: ChecksumEvmAddress,
+            start_ts: Timestamp,
+            end_ts: Timestamp,
+            return_queried_hashes: bool,
+    ) -> list[EVMTxHash] | None:
+        ...
+
     @with_tx_status_messaging
     def refetch_transactions_for_address(
             self,
             address: ChecksumEvmAddress,
             start_ts: Timestamp,
             end_ts: Timestamp,
-    ) -> None:
+            return_queried_hashes: bool = False,
+    ) -> list[EVMTxHash] | None:
         """Force refetch transactions for an address within a time range.
 
        Directly queries for transactions, internal transactions, and ERC20
@@ -970,25 +1115,35 @@ class EvmTransactions(ABC):  # noqa: B024
        - pysqlcipher3.dbapi2.OperationalError
        - RemoteError if any of the remote queries fail.
        """
-        self._query_and_save_transactions_for_range(
-            address=address,
-            period=(period := TimestampOrBlockRange(
-                range_type='timestamps',
-                from_value=start_ts,
-                to_value=end_ts,
-            )),
-            location_string=(location_string := f'{self.evm_inquirer.blockchain.to_range_prefix("txs")}_{address}'),  # noqa: E501
-            update_ranges=False,
+        period = TimestampOrBlockRange(
+            range_type='timestamps',
+            from_value=start_ts,
+            to_value=end_ts,
         )
-        self._query_and_save_internal_transactions_for_range_or_parent_hash(
-            address=address,
-            period_or_hash=period,
-            location_string=location_string,
-            update_ranges=False,
-        )
-        self._query_and_save_erc20_transfers_for_range(
+        location_string = f'{self.evm_inquirer.blockchain.to_range_prefix("txs")}_{address}'
+        new_tx_hashes = self._query_and_save_transactions_for_range(
             address=address,
             period=period,
             location_string=location_string,
             update_ranges=False,
+            return_queried_hashes=return_queried_hashes,
         )
+        internal_hashes = self._query_and_save_internal_transactions_for_range_or_parent_hash(
+            address=address,
+            period_or_hash=period,
+            location_string=location_string,
+            update_ranges=False,
+            return_queried_hashes=return_queried_hashes,
+        )
+        erc20_hashes = self._query_and_save_erc20_transfers_for_range(
+            address=address,
+            period=period,
+            location_string=location_string,
+            update_ranges=False,
+            return_queried_hashes=return_queried_hashes,
+        )
+        if not return_queried_hashes:
+            return None
+
+        assert new_tx_hashes is not None and internal_hashes is not None and erc20_hashes is not None  # mypy doesn't detect the condition based on the if properly  # noqa: E501
+        return new_tx_hashes + internal_hashes + erc20_hashes

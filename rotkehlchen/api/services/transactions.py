@@ -564,34 +564,50 @@ class TransactionsService:
         )
 
         if chain == SupportedBlockchain.SOLANA:
-            transaction_count = self._query_txs_for_range(
+            new_transactions = self._query_txs_for_range(
                 from_timestamp=from_timestamp,
                 to_timestamp=to_timestamp,
                 address=address,
                 blockchain=SupportedBlockchain.SOLANA,
-                get_count_fn=DBSolanaTx(self.rotkehlchen.data.db).count_transactions_in_range,
-                query_for_range_fn=self.rotkehlchen.chains_aggregator.solana.transactions.query_transactions_in_range,
+                query_for_range_fn=lambda addr, start_ts, end_ts: (
+                    self.rotkehlchen.chains_aggregator.solana.transactions.query_transactions_in_range(
+                        address=addr,
+                        start_ts=start_ts,
+                        end_ts=end_ts,
+                        return_queried_hashes=True,
+                    ) or []
+                ),
             )
         else:
-            db_evmtx = DBEvmTx(self.rotkehlchen.data.db)
             chain_manager: EvmManager = self.rotkehlchen.chains_aggregator.get_evm_manager(
-                chain_id=(chain_id := chain.to_chain_id()),
+                chain_id=chain.to_chain_id(),
             )
-            transaction_count = self._query_txs_for_range(
+            new_transactions = self._query_txs_for_range(
                 from_timestamp=from_timestamp,
                 to_timestamp=to_timestamp,
                 address=address,
                 blockchain=chain,
-                get_count_fn=lambda from_ts, to_ts, _chain_id=chain_id: db_evmtx.count_transactions_in_range(  # type: ignore[misc]  # noqa: E501
-                    chain_id=_chain_id,
-                    from_ts=from_ts,
-                    to_ts=to_ts,
+                query_for_range_fn=lambda addr, start_ts, end_ts: (
+                    chain_manager.transactions.refetch_transactions_for_address(
+                        address=addr,
+                        start_ts=start_ts,
+                        end_ts=end_ts,
+                        return_queried_hashes=True,
+                    ) or []
                 ),
-                query_for_range_fn=chain_manager.transactions.refetch_transactions_for_address,
             )
 
+        formatted_new_transactions: defaultdict[str, list[str]] = defaultdict(list)
+        for chain_key, tx_hash in new_transactions:
+            formatted_new_transactions[chain_key].append(tx_hash)
+        new_transactions_count = sum(
+            len(tx_hashes) for tx_hashes in formatted_new_transactions.values()
+        )
         return {
-            'result': {'new_transactions_count': transaction_count},
+            'result': {
+                'new_transactions': formatted_new_transactions,
+                'new_transactions_count': new_transactions_count,
+            },
             'message': '',
             'status_code': HTTPStatus.OK,
         }
@@ -602,12 +618,11 @@ class TransactionsService:
             to_timestamp: Timestamp,
             address: ChecksumEvmAddress | SolanaAddress | None,
             blockchain: CHAINS_WITH_TRANSACTION_DECODERS_TYPE,
-            get_count_fn: Callable[[Timestamp, Timestamp], int],
             query_for_range_fn: (
-                Callable[[ChecksumEvmAddress, Timestamp, Timestamp], None] |
-                Callable[[SolanaAddress, Timestamp, Timestamp], None]
+                Callable[[ChecksumEvmAddress, Timestamp, Timestamp], list[EVMTxHash]] |
+                Callable[[SolanaAddress, Timestamp, Timestamp], list[Signature]]
             ),
-    ) -> int:
+    ) -> set[tuple[str, str]]:
         if address:
             addresses_to_query: tuple[ChecksumEvmAddress | SolanaAddress, ...] = (address,)
         else:
@@ -615,21 +630,27 @@ class TransactionsService:
                 addresses_to_query = self.rotkehlchen.data.db.get_blockchain_accounts(cursor).get(blockchain)  # noqa: E501
 
         if len(addresses_to_query) == 0:
-            return 0
+            return set()
 
-        before_count = get_count_fn(from_timestamp, to_timestamp)
+        new_transactions: set[tuple[str, str]] = set()
+        chain_key = blockchain.serialize()
         for addr in addresses_to_query:
             try:
-                query_for_range_fn(addr, from_timestamp, to_timestamp)  # type: ignore[arg-type]
+                new_hashes = query_for_range_fn(addr, from_timestamp, to_timestamp)  # type: ignore[arg-type]
             except (sqlcipher.OperationalError, RemoteError, DeserializationError) as e:  # pylint: disable=no-member
                 log.debug(
                     f'Skipping transaction refetching for {addr} on {blockchain.name.lower()} '
                     f'due to: {e!s}',
                 )
                 continue
+            if len(new_hashes) == 0:
+                continue
+            new_transactions.update(
+                (chain_key, str(tx_hash))
+                for tx_hash in new_hashes
+            )
 
-        after_count = get_count_fn(from_timestamp, to_timestamp)
-        return after_count - before_count
+        return new_transactions
 
     def addresses_interacted_before(
             self,
