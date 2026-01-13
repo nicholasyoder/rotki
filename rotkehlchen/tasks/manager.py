@@ -333,38 +333,38 @@ class TaskManager:
         """Schedules the evm transaction query task if enough time has passed"""
         shuffled_chains = list(EVM_CHAINS_WITH_TRANSACTIONS)
         random.shuffle(shuffled_chains)
-        for blockchain in shuffled_chains:
-            with self.database.conn.read_ctx() as cursor:
-                accounts = self.database.get_blockchain_accounts(cursor).get(blockchain)
-                if len(accounts) == 0:
+        now = ts_now()
+        dbevmtx = DBEvmTx(self.database)
+        with self.database.conn.read_ctx() as cursor:
+            tracked_accounts = self.database.get_blockchain_accounts(cursor)
+            for blockchain in shuffled_chains:
+                if len(accounts := tracked_accounts.get(blockchain)) == 0:
                     continue
 
-                now = ts_now()
-                dbevmtx = DBEvmTx(self.database)
                 queriable_accounts: list[ChecksumEvmAddress] = []
                 for account in accounts:
                     _, end_ts = dbevmtx.get_queried_range(cursor, account, blockchain)
                     if now - max(self.last_evm_tx_query_ts[account, blockchain], end_ts) > EVM_TX_QUERY_FREQUENCY:  # noqa: E501
                         queriable_accounts.append(account)
 
-            if len(queriable_accounts) == 0:
-                continue
+                if len(queriable_accounts) == 0:
+                    continue
 
-            evm_manager = self.chains_aggregator.get_chain_manager(blockchain)
-            address = random.choice(queriable_accounts)
-            task_name = f'Query {blockchain!s} transactions for {address}'
-            log.debug(f'Scheduling task to {task_name}')
-            self.last_evm_tx_query_ts[address, blockchain] = now
-            # Since this task is heavy we spawn it only for one chain at a time.
-            return [self.greenlet_manager.spawn_and_track(
-                after_seconds=None,
-                task_name=task_name,
-                exception_is_error=True,
-                method=evm_manager.transactions.single_address_query_transactions,
-                address=address,
-                start_ts=0,
-                end_ts=now,
-            )]
+                evm_manager = self.chains_aggregator.get_chain_manager(blockchain)
+                address = random.choice(queriable_accounts)
+                task_name = f'Query {blockchain!s} transactions for {address}'
+                log.debug(f'Scheduling task to {task_name}')
+                self.last_evm_tx_query_ts[address, blockchain] = now
+                # Since this task is heavy we spawn it only for one chain at a time.
+                return [self.greenlet_manager.spawn_and_track(
+                    after_seconds=None,
+                    task_name=task_name,
+                    exception_is_error=True,
+                    method=evm_manager.transactions.single_address_query_transactions,
+                    address=address,
+                    start_ts=0,
+                    end_ts=now,
+                )]
         return None
 
     def _maybe_schedule_evm_txreceipts(self) -> Optional[list[gevent.Greenlet]]:
