@@ -1612,3 +1612,27 @@ def test_process_historical_balances(
             (event7_id, CPT_AAVE_V3, '500', a_ethdai_asset.identifier),
             (event8_id, None, '700', A_DAI.identifier),
         ]
+
+
+@pytest.mark.parametrize('max_tasks_num', [5])
+@pytest.mark.parametrize('ethereum_accounts', [[make_evm_address()]])
+def test_maybe_decode_transactions(task_manager: TaskManager) -> None:
+    task_manager.should_schedule = True
+    task_manager.potential_tasks = [task_manager._maybe_decode_transactions]
+
+    # When there are no transactions to decode we expect None
+    with patch('rotkehlchen.tasks.manager.DBSolanaTx') as mock_solana_tx:
+        mock_solana_tx.return_value.count_hashes_not_decoded.return_value = 0
+        result = task_manager._maybe_decode_transactions()
+        assert result is None
+
+    with (  # When there are Solana transactions to decode a greenlet should be spawned
+        patch('rotkehlchen.tasks.manager.DBSolanaTx') as mock_solana_tx,
+        patch(
+            'rotkehlchen.tasks.manager.CHAINS_WITH_TRANSACTION_DECODERS',
+            new=(SupportedBlockchain.SOLANA,),
+        ),
+    ):
+        mock_solana_tx.return_value.count_hashes_not_decoded.return_value = 5
+        result = task_manager._maybe_decode_transactions()
+        assert result is not None and len(result) == 1
