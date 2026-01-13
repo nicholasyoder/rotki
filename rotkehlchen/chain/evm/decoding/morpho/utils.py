@@ -4,8 +4,12 @@ from typing import TYPE_CHECKING, Any, Final
 
 import requests
 
-from rotkehlchen.chain.evm.decoding.morpho.constants import MORPHO_VAULT_ABI
+from rotkehlchen.chain.evm.decoding.morpho.constants import CPT_MORPHO, MORPHO_VAULT_ABI
 from rotkehlchen.chain.evm.decoding.utils import get_vault_price
+from rotkehlchen.chain.evm.utils import (
+    maybe_notify_cache_query_status,
+    maybe_notify_new_pools_status,
+)
 from rotkehlchen.constants import EXP18_INT
 from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.errors.serialization import DeserializationError
@@ -20,12 +24,14 @@ from rotkehlchen.types import (
     CacheType,
     ChainID,
     Price,
+    Timestamp,
 )
 
 if TYPE_CHECKING:
     from rotkehlchen.assets.asset import EvmToken
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.inquirer import Inquirer
+    from rotkehlchen.user_messages import MessagesAggregator
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -36,10 +42,13 @@ VAULT_QUERY_PAGE_SIZE: Final = 200
 VAULT_QUERY: Final = 'items {address symbol name asset {address symbol name decimals} chain {id}}'
 
 
-def _query_morpho_vaults_api(chain_id: ChainID) -> list[dict[str, Any]] | None:
+def _query_morpho_vaults_api(
+        chain_id: ChainID,
+        msg_aggregator: 'MessagesAggregator',
+) -> list[dict[str, Any]] | None:
     """Query morpho vaults from the morpho blue api.
     Returns vault list or None if there was an error."""
-    all_vaults, offset = [], 0
+    all_vaults, offset, last_notified_ts = [], 0, Timestamp(0)
     while True:
         try:
             response_data = requests.post(
@@ -51,6 +60,13 @@ def _query_morpho_vaults_api(chain_id: ChainID) -> list[dict[str, Any]] | None:
             vault_list = response_data.json()['data']['vaults']['items']
             all_vaults.extend(vault_list)
             offset += VAULT_QUERY_PAGE_SIZE
+            last_notified_ts = maybe_notify_new_pools_status(
+                msg_aggregator=msg_aggregator,
+                last_notified_ts=last_notified_ts,
+                protocol=CPT_MORPHO,
+                chain=chain_id,
+                get_new_pools_count=lambda: len(all_vaults),
+            )
             if len(vault_list) < VAULT_QUERY_PAGE_SIZE:
                 break  # no more vaults to retrieve
 
@@ -62,9 +78,12 @@ def _query_morpho_vaults_api(chain_id: ChainID) -> list[dict[str, Any]] | None:
     return all_vaults
 
 
-def query_morpho_vaults(chain_id: ChainID) -> None:
+def query_morpho_vaults(chain_id: ChainID, msg_aggregator: 'MessagesAggregator') -> None:
     """Query list of Morpho vaults and add the vault tokens to the global database."""
-    if (vault_list := _query_morpho_vaults_api(chain_id=chain_id)) is None:
+    if (vault_list := _query_morpho_vaults_api(
+            chain_id=chain_id,
+            msg_aggregator=msg_aggregator,
+    )) is None:
         with GlobalDBHandler().conn.write_ctx() as write_cursor:
             globaldb_update_cache_last_ts(
                 write_cursor=write_cursor,
@@ -73,8 +92,8 @@ def query_morpho_vaults(chain_id: ChainID) -> None:
             )  # Update cache timestamp to prevent repeated errors.
         return
 
-    cache_entries = []
-    for vault in vault_list:
+    cache_entries, last_notified_ts, total_entries = [], Timestamp(0), len(vault_list)
+    for idx, vault in enumerate(vault_list):
         try:
             cache_entries.append(','.join((
                 deserialize_evm_address(vault['address']),
@@ -86,6 +105,15 @@ def query_morpho_vaults(chain_id: ChainID) -> None:
                 f'Failed to cache Morpho vault address and underlying token address for vault '
                 f'{vault} due to {error}. Skipping.',
             )
+
+        last_notified_ts = maybe_notify_cache_query_status(
+            msg_aggregator=msg_aggregator,
+            last_notified_ts=last_notified_ts,
+            protocol=CPT_MORPHO,
+            chain=chain_id,
+            processed=idx + 1,
+            total=total_entries,
+        )
 
     if len(cache_entries) > 0:
         with GlobalDBHandler().conn.write_ctx() as write_cursor:

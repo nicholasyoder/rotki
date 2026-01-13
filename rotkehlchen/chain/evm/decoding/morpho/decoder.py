@@ -76,7 +76,10 @@ class MorphoCommonDecoder(EvmDecoderInterface, ReloadableDecoderMixin):
                 cache_key=CacheType.MORPHO_VAULTS,
                 args=(str(self.node_inquirer.chain_id.serialize()),),
         ) is True:
-            query_morpho_vaults(chain_id=self.node_inquirer.chain_id)
+            query_morpho_vaults(
+                chain_id=self.node_inquirer.chain_id,
+                msg_aggregator=self.msg_aggregator,
+            )
             updated = True
         if should_update_protocol_cache(
                 userdb=self.base.database,

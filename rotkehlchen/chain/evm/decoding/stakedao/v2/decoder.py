@@ -59,7 +59,10 @@ class Stakedaov2CommonDecoder(EvmDecoderInterface, ReloadableDecoderMixin):
             cache_key=CacheType.STAKEDAO_V2_VAULTS,
             args=(str(self.node_inquirer.chain_id.serialize()),),
         ):
-            query_stakedao_v2_vaults(chain_id=self.node_inquirer.chain_id)
+            query_stakedao_v2_vaults(
+                chain_id=self.node_inquirer.chain_id,
+                msg_aggregator=self.msg_aggregator,
+            )
         elif len(self.vaults) != 0:
             return None  # didn't update cache and we already have the vault info
 
