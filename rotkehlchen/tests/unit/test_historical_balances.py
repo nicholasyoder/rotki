@@ -4,7 +4,7 @@ import gevent
 
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.balances.historical import HistoricalBalancesManager
-from rotkehlchen.constants.assets import A_ETH
+from rotkehlchen.constants.assets import A_BTC, A_ETH
 from rotkehlchen.constants.misc import ONE
 from rotkehlchen.db.cache import DBCacheStatic
 from rotkehlchen.db.filtering import HistoricalBalancesFilterQuery
@@ -207,3 +207,55 @@ def test_get_balances_with_unprocessed_events_and_timestamp_filter(
 
     assert processing_required is True
     assert balances is None
+
+
+def test_get_balances_skips_zero_amounts(
+        database: 'DBHandler',
+        messages_aggregator: 'MessagesAggregator',
+) -> None:
+    """Test that get_balances excludes assets with zero balance from results."""
+    manager = HistoricalBalancesManager(database)
+
+    with database.user_write() as write_cursor:
+        # ETH: +10 -10 = 0 (should be excluded), BTC: +5 (should be included)
+        DBHistoryEvents(database).add_history_events(
+            write_cursor=write_cursor,
+            history=[EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                group_identifier='grp1',
+                sequence_index=0,
+                timestamp=TimestampMS(1000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=FVal('10'),
+                location_label=TEST_ADDR1,
+            ), EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                group_identifier='grp2',
+                sequence_index=0,
+                timestamp=TimestampMS(2000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.SPEND,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=FVal('10'),
+                location_label=TEST_ADDR1,
+            ), EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                group_identifier='grp3',
+                sequence_index=0,
+                timestamp=TimestampMS(3000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_BTC,
+                amount=FVal('5'),
+                location_label=TEST_ADDR1,
+            )],
+        )
+
+    process_historical_balances(database, messages_aggregator)
+    _, balances = manager.get_balances(HistoricalBalancesFilterQuery.make(timestamp=Timestamp(4)))
+    assert balances == {A_BTC: FVal('5')}
