@@ -5,7 +5,9 @@ import gevent
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.balances.historical import HistoricalBalancesManager
 from rotkehlchen.constants.assets import A_ETH
+from rotkehlchen.constants.misc import ONE
 from rotkehlchen.db.cache import DBCacheStatic
+from rotkehlchen.db.filtering import HistoricalBalancesFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
@@ -167,3 +169,41 @@ def test_has_unprocessed_events(
     with database.user_write() as write_cursor:
         write_cursor.execute('DELETE FROM event_metrics WHERE event_identifier IN (SELECT identifier FROM history_events WHERE timestamp >= 5000)')  # noqa: E501
     assert manager._has_unprocessed_events('timestamp <= ?', [TimestampMS(9999)]) is True
+
+
+def test_get_balances_with_unprocessed_events_and_timestamp_filter(
+        database: 'DBHandler',
+        messages_aggregator: 'MessagesAggregator',
+) -> None:
+    """Regression test ensuring FVal timestamp scaling results are int-converted for SQL binding.
+
+    When querying historical balances with a timestamp filter, the timestamp is multiplied by
+    scaling_factor, producing an FVal that must be explicitly converted to int before passing
+    to SQL to avoid type binding errors.
+    """
+    with database.user_write() as write_cursor:
+        DBHistoryEvents(database).add_history_event(
+            write_cursor=write_cursor,
+            event=EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                group_identifier='grp_test',
+                sequence_index=0,
+                timestamp=TimestampMS(1729787659000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=ONE,
+                location_label=TEST_ADDR1,
+            ),
+        )
+
+    filter_query = HistoricalBalancesFilterQuery.make(
+        timestamp=Timestamp(1729787659),
+        location=Location.ETHEREUM,
+    )
+    manager = HistoricalBalancesManager(database)
+    processing_required, balances = manager.get_balances(filter_query=filter_query)
+
+    assert processing_required is True
+    assert balances is None
