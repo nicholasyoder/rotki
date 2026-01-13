@@ -10,7 +10,9 @@ from rotkehlchen.constants import (
     CONTRACT_TAG_FOREGROUND_COLOR,
     CONTRACT_TAG_NAME,
 )
+from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED
 from rotkehlchen.db.utils import update_table_schema
+from rotkehlchen.history.events.structures.base import HistoryBaseEntryType
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter, enter_exit_debug_log
 from rotkehlchen.utils.progress import perform_userdb_upgrade_steps, progress_step
@@ -178,6 +180,52 @@ def upgrade_v50_to_v51(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
         write_cursor.execute(
             'UPDATE key_value_cache SET name=? WHERE name=?',
             ('last_eth2_events_processing_ts', 'last_events_processing_task_ts'),
+        )
+
+    @progress_step(description='Migrating deposit/withdrawal subtypes for customized events.')
+    def _migrate_defi_protocol_subtypes(write_cursor: 'DBCursor') -> None:
+        """Migrate customized events from deposit_asset/remove_asset to
+        deposit_to_protocol/withdraw_from_protocol subtypes.
+
+        Only affects customized events that:
+        - Are not asset movements
+        - Have a counterparty set (indicating DeFi protocol interaction)
+        """
+        write_cursor.execute(
+            """
+            UPDATE history_events
+            SET subtype = CASE
+                WHEN type = ? AND subtype = ? THEN ?
+                WHEN type = ? AND subtype = ? THEN ?
+            END
+            FROM chain_events_info
+            WHERE history_events.identifier = chain_events_info.identifier
+                AND chain_events_info.counterparty IS NOT NULL
+                AND entry_type != ?
+                AND history_events.identifier IN (
+                    SELECT parent_identifier FROM history_events_mappings
+                    WHERE name = ? AND value = ?
+                )
+                AND ((type = ? AND subtype = ?) OR (type = ? AND subtype = ?))
+            """,
+            (
+                # CASE: deposit/deposit_asset -> deposit_to_protocol
+                HistoryEventType.DEPOSIT.serialize(),
+                HistoryEventSubType.DEPOSIT_ASSET.serialize(),
+                HistoryEventSubType.DEPOSIT_TO_PROTOCOL.serialize(),
+                # CASE: withdrawal/remove_asset -> withdraw_from_protocol
+                HistoryEventType.WITHDRAWAL.serialize(),
+                HistoryEventSubType.REMOVE_ASSET.serialize(),
+                HistoryEventSubType.WITHDRAW_FROM_PROTOCOL.serialize(),
+                # WHERE: exclude asset movements, only customized, only with counterparty
+                HistoryBaseEntryType.ASSET_MOVEMENT_EVENT.value,
+                HISTORY_MAPPING_KEY_STATE,
+                HISTORY_MAPPING_STATE_CUSTOMIZED,
+                HistoryEventType.DEPOSIT.serialize(),
+                HistoryEventSubType.DEPOSIT_ASSET.serialize(),
+                HistoryEventType.WITHDRAWAL.serialize(),
+                HistoryEventSubType.REMOVE_ASSET.serialize(),
+            ),
         )
 
     perform_userdb_upgrade_steps(db=db, progress_handler=progress_handler, should_vacuum=True)
