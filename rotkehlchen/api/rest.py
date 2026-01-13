@@ -151,7 +151,8 @@ from rotkehlchen.serialization.serialize import process_result, process_result_l
 from rotkehlchen.tasks.events import (
     find_asset_movement_matches,
     get_unmatched_asset_movements,
-    match_asset_movements,
+    process_asset_movements,
+    should_exclude_possible_match,
     update_asset_movement_matched_event,
 )
 from rotkehlchen.tasks.historical_balances import process_historical_balances
@@ -3112,8 +3113,7 @@ class RestAPI:
                 from_ts=stale_from_ts,
             )
         else:  # task == TaskName.ASSET_MOVEMENT_MATCHING
-            with self.rotkehlchen.data.db.match_asset_movements_lock:
-                match_asset_movements(database=self.rotkehlchen.data.db)
+            process_asset_movements(database=self.rotkehlchen.data.db)
 
         return OK_RESULT
 
@@ -3593,15 +3593,14 @@ class RestAPI:
                 ),
             )
 
-        # Return the close_matches and other_events, filtering the other_events to remove
-        # informational / approve events and events from the same exchange as the asset movement
+        # Return the close_matches and filtered other_events.
         return api_response(_wrap_in_ok_result(result={
             'close_matches': close_match_identifiers,
-            'other_events': [x.identifier for x in other_events if not ((
-                x.location == asset_movement.location and
-                x.location_label == asset_movement.location_label
-            ) or (
-                x.event_type == HistoryEventType.INFORMATIONAL and
-                x.event_subtype == HistoryEventSubType.APPROVE
-            ))],
+            'other_events': [
+                event.identifier for event in other_events
+                if not should_exclude_possible_match(
+                    asset_movement=asset_movement,  # type: ignore[arg-type]  # will be an asset movement - the query is filtered by entry type
+                    event=event,
+                )
+            ],
         }))

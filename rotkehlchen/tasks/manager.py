@@ -67,7 +67,7 @@ from rotkehlchen.types import (
 )
 from rotkehlchen.utils.misc import ts_now
 
-from .events import process_events
+from .events import process_asset_movements, process_eth2_events
 from .historical_balances import process_historical_balances
 
 if TYPE_CHECKING:
@@ -165,7 +165,8 @@ class TaskManager:
             self._maybe_update_ilk_cache,
             self._maybe_query_produced_blocks,
             self._maybe_query_withdrawals,
-            self._maybe_run_events_processing,
+            self._maybe_process_eth2_events,
+            self._maybe_process_asset_movements,
             self._maybe_detect_withdrawal_exits,
             self._maybe_detect_new_spam_tokens,
             self._maybe_update_owned_assets,
@@ -624,26 +625,39 @@ class TaskManager:
             method=eth2.detect_exited_validators,
         )]
 
-    def _maybe_run_events_processing(self) -> Optional[list[gevent.Greenlet]]:
-        """Schedules the events processing task which may combine/edit events"""
-        with self.database.conn.read_ctx() as cursor:
-            if (
-                (result := self.database.get_static_cache(
-                    cursor=cursor,
-                    name=DBCacheStatic.LAST_EVENTS_PROCESSING_TASK_TS,
-                )) is not None and
-                ts_now() - result <= CachedSettings().get_settings().events_processing_frequency
-            ):
-                return None
+    def _maybe_process_eth2_events(self) -> Optional[list[gevent.Greenlet]]:
+        if (
+            (self.chains_aggregator.get_module('eth2')) is None or
+            should_run_periodic_task(
+                database=self.database,
+                key_name=DBCacheStatic.LAST_ETH2_EVENTS_PROCESSING_TS,
+                refresh_period=HOUR_IN_SECONDS,
+            ) is False
+        ):
+            return None
 
-        task_name = 'Periodically process events'
-        log.debug(f'Scheduling task to {task_name}')
         return [self.greenlet_manager.spawn_and_track(
             after_seconds=None,
-            task_name=task_name,
+            task_name='Process eth2 events',
             exception_is_error=True,
-            method=process_events,
+            method=process_eth2_events,
             chains_aggregator=self.chains_aggregator,
+            database=self.database,
+        )]
+
+    def _maybe_process_asset_movements(self) -> Optional[list[gevent.Greenlet]]:
+        if not should_run_periodic_task(
+            database=self.database,
+            key_name=DBCacheStatic.LAST_ASSET_MOVEMENT_PROCESSING_TS,
+            refresh_period=CachedSettings().get_settings().events_processing_frequency,
+        ):
+            return None
+
+        return [self.greenlet_manager.spawn_and_track(
+            after_seconds=None,
+            task_name='Process asset movements',
+            exception_is_error=True,
+            method=process_asset_movements,
             database=self.database,
         )]
 

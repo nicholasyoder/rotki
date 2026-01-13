@@ -170,4 +170,14 @@ def upgrade_v50_to_v51(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
              HistoryEventSubType.CREATE.serialize()),
         )
 
+    @progress_step(description='Migrate last event processing ts cache key.')
+    def _migrate_last_event_processing_ts_cache_key(write_cursor: 'DBCursor') -> None:
+        """Migrates the last event processing ts cache key to a new eth2 events specific key.
+        This is to differentiate it from the new last processing ts key for asset movements.
+        """
+        write_cursor.execute(
+            'UPDATE key_value_cache SET name=? WHERE name=?',
+            ('last_eth2_events_processing_ts', 'last_events_processing_task_ts'),
+        )
+
     perform_userdb_upgrade_steps(db=db, progress_handler=progress_handler, should_vacuum=True)
