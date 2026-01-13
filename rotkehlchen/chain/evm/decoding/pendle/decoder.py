@@ -526,7 +526,7 @@ class PendleCommonDecoder(EvmDecoderInterface, ReloadableDecoderMixin):
             ):
                 event.counterparty = CPT_PENDLE
                 event.event_type = HistoryEventType.WITHDRAWAL
-                event.event_subtype = HistoryEventSubType.REMOVE_ASSET
+                event.event_subtype = HistoryEventSubType.WITHDRAW_FROM_PROTOCOL
                 event.notes = f'Withdraw {event.amount} {token_in.symbol} from Pendle'
 
         if not sy_in_event or not sy_out_event:

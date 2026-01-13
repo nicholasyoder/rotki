@@ -258,7 +258,7 @@ class VelodromeLikeDecoder(EvmDecoderInterface, ReloadablePoolsAndGaugesDecoderM
                 found_event_modifying_balances = True
                 if context.tx_log.topics[0] == GAUGE_DEPOSIT_V2:
                     event.event_type = HistoryEventType.DEPOSIT
-                    event.event_subtype = HistoryEventSubType.DEPOSIT_ASSET
+                    event.event_subtype = HistoryEventSubType.DEPOSIT_TO_PROTOCOL
                     event.notes = f'Deposit {event.amount} {crypto_asset.symbol} into {gauge_address} {self.counterparty} gauge'  # noqa: E501
                     GlobalDBHandler.set_tokens_protocol_if_missing(
                         tokens=[event.asset.resolve_to_evm_token()],
@@ -266,7 +266,7 @@ class VelodromeLikeDecoder(EvmDecoderInterface, ReloadablePoolsAndGaugesDecoderM
                     )
                 elif context.tx_log.topics[0] == WITHDRAW_TOPIC_V2:
                     event.event_type = HistoryEventType.WITHDRAWAL
-                    event.event_subtype = HistoryEventSubType.REMOVE_ASSET
+                    event.event_subtype = HistoryEventSubType.WITHDRAW_FROM_PROTOCOL
                     event.notes = f'Withdraw {event.amount} {crypto_asset.symbol} from {gauge_address} {self.counterparty} gauge'  # noqa: E501
                 else:  # CLAIM_REWARDS
                     event.event_type = HistoryEventType.RECEIVE
@@ -312,7 +312,7 @@ class VelodromeLikeDecoder(EvmDecoderInterface, ReloadablePoolsAndGaugesDecoderM
             ):
                 event.counterparty = self.counterparty
                 event.event_type = HistoryEventType.WITHDRAWAL
-                event.event_subtype = HistoryEventSubType.REMOVE_ASSET
+                event.event_subtype = HistoryEventSubType.WITHDRAW_FROM_PROTOCOL
                 event.notes = f'Receive {amount} {self.token_symbol} from vote escrow after burning veNFT-{token_id}'  # noqa: E501
 
         return DEFAULT_EVM_DECODING_OUTPUT
@@ -344,7 +344,7 @@ class VelodromeLikeDecoder(EvmDecoderInterface, ReloadablePoolsAndGaugesDecoderM
                     event.amount == amount
             ):
                 event.notes = f'Lock {amount} {self.token_symbol} in vote escrow until {timestamp_to_date((lock_time := deserialize_timestamp(int.from_bytes(context.tx_log.data[32:64]))), formatstr="%d/%m/%Y")}'  # noqa: E501
-                event.event_subtype = HistoryEventSubType.DEPOSIT_ASSET
+                event.event_subtype = HistoryEventSubType.DEPOSIT_TO_PROTOCOL
                 event.extra_data = {
                     'token_id': token_id,
                     'lock_time': lock_time,
@@ -364,7 +364,7 @@ class VelodromeLikeDecoder(EvmDecoderInterface, ReloadablePoolsAndGaugesDecoderM
         for event in context.decoded_events:
             if (
                     event.event_type == HistoryEventType.DEPOSIT and
-                    event.event_subtype == HistoryEventSubType.DEPOSIT_ASSET and
+                    event.event_subtype == HistoryEventSubType.DEPOSIT_TO_PROTOCOL and
                     event.counterparty == self.counterparty
             ):  # increase amount locked
                 token_id = event.extra_data['token_id']  # type: ignore[index]  # it is always available
