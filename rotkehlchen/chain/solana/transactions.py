@@ -193,13 +193,25 @@ class SolanaTransactions:
         solana_tx_db = DBSolanaTx(database=self.database)
         queried_signatures: list[Signature] | None = [] if return_queried_hashes else None
         for chunk in get_chunks(signatures, RPC_TX_BATCH_SIZE):
+            existing_signatures: set[bytes] = set()
+            if queried_signatures is not None:
+                with self.database.conn.read_ctx() as cursor:
+                    existing_signatures = solana_tx_db.get_existing_signatures(
+                        cursor=cursor,
+                        signatures=[signature.to_bytes() for signature in chunk],
+                    )
+
             txs, token_accounts_mappings = [], {}
             for signature in chunk:
                 try:
                     tx, token_accounts_mapping = self.node_inquirer.get_transaction_for_signature(signature)  # noqa: E501
                     txs.append(tx)
                     if queried_signatures is not None:
+                        signature_bytes_entry = tx.signature.to_bytes()
+                        if signature_bytes_entry in existing_signatures:
+                            continue
                         queried_signatures.append(tx.signature)
+                        existing_signatures.add(signature_bytes_entry)
                     token_accounts_mappings.update(token_accounts_mapping)
                 except (RemoteError, DeserializationError) as e_:
                     log.error(

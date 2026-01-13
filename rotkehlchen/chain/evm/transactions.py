@@ -23,6 +23,7 @@ from rotkehlchen.db.cache import DBCacheDynamic
 from rotkehlchen.db.evmtx import DBEvmTx
 from rotkehlchen.db.filtering import EvmTransactionsFilterQuery
 from rotkehlchen.db.ranges import DBQueryRanges
+from rotkehlchen.db.utils import get_query_chunks
 from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.errors.misc import AlreadyExists, InputError, NoAvailableIndexers, RemoteError
 from rotkehlchen.errors.serialization import DeserializationError
@@ -39,6 +40,7 @@ from rotkehlchen.types import (
     EVMTxHash,
     Timestamp,
     TokenKind,
+    deserialize_evm_tx_hash,
 )
 from rotkehlchen.utils.hexbytes import hexstring_to_bytes
 from rotkehlchen.utils.misc import ts_now
@@ -113,6 +115,33 @@ class EvmTransactions(ABC):  # noqa: B024
         self.missing_receipts_lock = Semaphore()
         self.msg_aggregator = database.msg_aggregator
         self.dbevmtx = DBEvmTx(database)
+
+    def _get_existing_evm_tx_hashes(
+            self,
+            cursor: 'DBCursor',
+            tx_hashes: Sequence[EVMTxHash],
+    ) -> set[EVMTxHash]:
+        """Return tx hashes already stored for this chain to filter return_queried_hashes.
+
+        We need this because add_transactions uses INSERT OR IGNORE, so we must pre-check
+        to avoid reporting hashes that were not newly saved.
+        """
+        existing_hashes: set[EVMTxHash] = set()
+        if len(tx_hashes) == 0:
+            return existing_hashes
+
+        serialized_chain_id = self.evm_inquirer.chain_id.serialize_for_db()
+        for tx_hash_chunk, placeholders in get_query_chunks(tx_hashes):
+            cursor.execute(
+                f'SELECT tx_hash FROM evm_transactions '
+                f'WHERE chain_id=? AND tx_hash IN ({placeholders})',
+                (serialized_chain_id, *tx_hash_chunk),
+            )
+            existing_hashes.update(
+                deserialize_evm_tx_hash(entry[0]) for entry in cursor
+            )
+
+        return existing_hashes
 
     @contextmanager
     def wait_until_no_query_for(self, addresses: list[ChecksumEvmAddress]) -> Iterator[None]:
@@ -226,6 +255,7 @@ class EvmTransactions(ABC):  # noqa: B024
 
         If update_ranges is True, updates the database tracking for this query range.
         Otherwise, data is fetched without updating the query range.
+        If return_queried_hashes is True, returns only the transaction hashes that were saved.
         """
         period_as_blocks = self.evm_inquirer.maybe_timestamp_to_block_range(period)
         queried_hashes: list[EVMTxHash] | None = [] if return_queried_hashes else None
@@ -238,14 +268,25 @@ class EvmTransactions(ABC):  # noqa: B024
             if len(new_transactions) == 0:
                 continue
 
+            if queried_hashes is not None:
+                with self.database.conn.read_ctx() as cursor:
+                    existing_hashes = self._get_existing_evm_tx_hashes(
+                        cursor=cursor,
+                        tx_hashes=[tx.tx_hash for tx in new_transactions],
+                    )
+
+                for tx in new_transactions:
+                    if tx.tx_hash not in existing_hashes:
+                        queried_hashes.append(tx.tx_hash)
+                        existing_hashes.add(tx.tx_hash)
+
             with self.database.user_write() as write_cursor:
                 self.dbevmtx.add_transactions(
                     write_cursor=write_cursor,
                     evm_transactions=new_transactions,
                     relevant_address=address,
                 )
-                if queried_hashes is not None:
-                    queried_hashes.extend(tx.tx_hash for tx in new_transactions)
+
                 if period.range_type == 'timestamps':
                     assert location_string, 'should always be given for timestamps'
                     if update_ranges:  # update last queried time for the address
@@ -388,6 +429,20 @@ class EvmTransactions(ABC):  # noqa: B024
             if len(new_internal_txs) == 0:
                 continue
 
+            existing_hashes: set[EVMTxHash] = set()
+            if queried_hashes is not None:
+                parent_hashes = [
+                    internal_tx.parent_tx_hash
+                    for internal_tx in new_internal_txs
+                    if internal_tx.value != 0
+                ]
+                if len(parent_hashes) != 0:
+                    with self.database.conn.read_ctx() as cursor:
+                        existing_hashes = self._get_existing_evm_tx_hashes(
+                            cursor=cursor,
+                            tx_hashes=parent_hashes,
+                        )
+
             for internal_tx in new_internal_txs:
                 if internal_tx.value == 0:
                     continue  # Only reason we need internal is for ether transfer. Ignore 0
@@ -401,8 +456,9 @@ class EvmTransactions(ABC):  # noqa: B024
                             tx_hash=internal_tx.parent_tx_hash,
                             relevant_address=address,
                         )
-                    if queried_hashes is not None:
+                    if queried_hashes is not None and tx.tx_hash not in existing_hashes:
                         queried_hashes.append(tx.tx_hash)
+                        existing_hashes.add(tx.tx_hash)
 
                     timestamp = tx.timestamp
                     parent_tx_timestamps[internal_tx.parent_tx_hash] = timestamp
@@ -604,6 +660,14 @@ class EvmTransactions(ABC):  # noqa: B024
             from_block=from_block,
             to_block=to_block,
         ):
+            existing_hashes: set[EVMTxHash] = set()
+            if queried_hashes is not None and len(erc20_tx_hashes) != 0:
+                with self.database.conn.read_ctx() as cursor:
+                    existing_hashes = self._get_existing_evm_tx_hashes(
+                        cursor=cursor,
+                        tx_hashes=erc20_tx_hashes,
+                    )
+
             for tx_hash in erc20_tx_hashes:
                 with self.database.conn.read_ctx() as cursor:
                     tx, _ = self.get_or_create_transaction(
@@ -611,8 +675,9 @@ class EvmTransactions(ABC):  # noqa: B024
                         tx_hash=tx_hash,
                         relevant_address=address,
                     )
-                if queried_hashes is not None:
+                if queried_hashes is not None and tx.tx_hash not in existing_hashes:
                     queried_hashes.append(tx.tx_hash)
+                    existing_hashes.add(tx.tx_hash)
 
                 if period.range_type == 'timestamps':
                     log.debug(f'{self.evm_inquirer.chain_name} ERC20 Transfers for {address} -> update range {period.from_value} - {tx.timestamp}')  # noqa: E501
