@@ -1,6 +1,7 @@
 import random
 from http import HTTPStatus
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 import requests
@@ -467,3 +468,37 @@ def test_history_status_summary(
         'has_evm_accounts': False,
         'has_exchanges_accounts': False,
     }
+
+
+@pytest.mark.parametrize('ethereum_accounts', [[TEST_ADDR1]])
+def test_force_refetch_transactions_without_chain(
+        rotkehlchen_api_server: 'APIServer',
+        ethereum_accounts: list['ChecksumEvmAddress'],
+) -> None:
+    """Test that force refetching transactions without specifying a chain works."""
+    now = ts_now()
+    four_days_ago = Timestamp(now - 4 * DAY_IN_SECONDS)
+
+    for extra_params in [
+        {},  # no chain, no address: queries all tracked chains
+        {'address': ethereum_accounts[0]},  # address but no chain
+    ]:
+        with patch(
+            'rotkehlchen.chain.evm.transactions.EvmTransactions.refetch_transactions_for_address',
+            return_value=[],
+        ) as mock_refetch:
+            assert assert_proper_sync_response_with_result(requests.post(
+                api_url_for(rotkehlchen_api_server, 'refetchtransactionsresource'),
+                json={
+                    'async_query': False,
+                    'from_timestamp': four_days_ago,
+                    'to_timestamp': now,
+                    **extra_params,
+                },
+            )) == {'new_transactions': {}, 'new_transactions_count': 0}
+            mock_refetch.assert_called_once_with(
+                address=ethereum_accounts[0],
+                start_ts=four_days_ago,
+                end_ts=now,
+                return_queried_hashes=True,
+            )

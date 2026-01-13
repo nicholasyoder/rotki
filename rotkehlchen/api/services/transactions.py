@@ -33,6 +33,7 @@ from rotkehlchen.premium.premium import has_premium_check
 from rotkehlchen.serialization.serialize import process_result_list
 from rotkehlchen.types import (
     CHAINS_WITH_NODES,
+    CHAINS_WITH_TRANSACTION_DECODERS,
     CHAINS_WITH_TRANSACTION_DECODERS_TYPE,
     CHAINS_WITH_TRANSACTIONS,
     CHAINS_WITH_TRANSACTIONS_TYPE,
@@ -56,7 +57,6 @@ if TYPE_CHECKING:
 
     from rotkehlchen.assets.asset import CryptoAsset, EvmToken
     from rotkehlchen.chain.accounts import OptionalBlockchainAccount
-    from rotkehlchen.chain.evm.manager import EvmManager
     from rotkehlchen.chain.evm.types import EvmIndexer, WeightedNode
     from rotkehlchen.chain.manager import ChainManagerWithNodesMixin
     from rotkehlchen.db.drivers.gevent import DBCursor
@@ -552,7 +552,7 @@ class TransactionsService:
             self,
             from_timestamp: Timestamp,
             to_timestamp: Timestamp,
-            chain: CHAINS_WITH_TRANSACTION_DECODERS_TYPE,
+            chain: CHAINS_WITH_TRANSACTION_DECODERS_TYPE | None = None,
             address: ChecksumEvmAddress | SolanaAddress | None = None,
     ) -> dict[str, Any]:
         log.debug(
@@ -563,39 +563,57 @@ class TransactionsService:
             address=address or 'all addresses',
         )
 
-        if chain == SupportedBlockchain.SOLANA:
-            new_transactions = self._query_txs_for_range(
-                from_timestamp=from_timestamp,
-                to_timestamp=to_timestamp,
-                address=address,
-                blockchain=SupportedBlockchain.SOLANA,
-                query_for_range_fn=lambda addr, start_ts, end_ts: (
-                    self.rotkehlchen.chains_aggregator.solana.transactions.query_transactions_in_range(
-                        address=addr,
-                        start_ts=start_ts,
-                        end_ts=end_ts,
-                        return_queried_hashes=True,
-                    ) or []
-                ),
-            )
+        chains_to_query: list[CHAINS_WITH_TRANSACTION_DECODERS_TYPE] = []
+        if chain is not None:
+            chains_to_query.append(chain)
         else:
-            chain_manager: EvmManager = self.rotkehlchen.chains_aggregator.get_evm_manager(
-                chain_id=chain.to_chain_id(),
-            )
-            new_transactions = self._query_txs_for_range(
-                from_timestamp=from_timestamp,
-                to_timestamp=to_timestamp,
-                address=address,
-                blockchain=chain,
-                query_for_range_fn=lambda addr, start_ts, end_ts: (
-                    chain_manager.transactions.refetch_transactions_for_address(
-                        address=addr,
-                        start_ts=start_ts,
-                        end_ts=end_ts,
-                        return_queried_hashes=True,
-                    ) or []
-                ),
-            )
+            query_str = 'SELECT DISTINCT blockchain FROM blockchain_accounts'
+            bindings: list[str] = []
+            if address is not None:
+                query_str += ' WHERE account=?'
+                bindings.append(address)
+
+            with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
+                chains_to_query.extend([
+                    blockchain  # type: ignore[misc]  # the check guarantees valid types
+                    for row in cursor.execute(query_str, bindings)
+                    if (blockchain := SupportedBlockchain.deserialize(row[0])) in CHAINS_WITH_TRANSACTION_DECODERS  # noqa: E501
+                ])
+
+        new_transactions: set[tuple[str, str]] = set()
+        for query_chain in chains_to_query:
+            if query_chain == SupportedBlockchain.SOLANA:
+                new_transactions |= self._query_txs_for_range(
+                    from_timestamp=from_timestamp,
+                    to_timestamp=to_timestamp,
+                    address=address,
+                    blockchain=SupportedBlockchain.SOLANA,
+                    query_for_range_fn=lambda addr, start_ts, end_ts: (
+                        self.rotkehlchen.chains_aggregator.solana.transactions.query_transactions_in_range(
+                            address=addr,
+                            start_ts=start_ts,
+                            end_ts=end_ts,
+                            return_queried_hashes=True,
+                        ) or []
+                    ),
+                )
+            else:
+                new_transactions |= self._query_txs_for_range(
+                    from_timestamp=from_timestamp,
+                    to_timestamp=to_timestamp,
+                    address=address,
+                    blockchain=query_chain,
+                    query_for_range_fn=lambda addr, start_ts, end_ts, qc=query_chain: (
+                        self.rotkehlchen.chains_aggregator.get_evm_manager(
+                            chain_id=qc.to_chain_id(),
+                        ).transactions.refetch_transactions_for_address(
+                            address=addr,
+                            start_ts=start_ts,
+                            end_ts=end_ts,
+                            return_queried_hashes=True,
+                        ) or []
+                    ),
+                )
 
         formatted_new_transactions: defaultdict[str, list[str]] = defaultdict(list)
         for chain_key, tx_hash in new_transactions:

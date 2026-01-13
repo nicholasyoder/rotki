@@ -4504,7 +4504,8 @@ class RefreshProtocolDataSchema(AsyncQueryArgumentSchema):
 class RefetchTransactionsSchema(AsyncQueryArgumentSchema, TimestampRangeSchema):
     address = EmptyAsNoneStringField(load_default=None)
     chain = BlockchainField(
-        required=True,
+        required=False,
+        load_default=None,
         allow_only=CHAINS_WITH_TRANSACTION_DECODERS,
     )
 
@@ -4537,15 +4538,17 @@ class RefetchTransactionsSchema(AsyncQueryArgumentSchema, TimestampRangeSchema):
                     field_name='address',
                 )
 
-            with self.db.conn.read_ctx() as cursor:
-                if cursor.execute(
-                    'SELECT COUNT(*) FROM blockchain_accounts WHERE account=? AND blockchain=?',
-                    (address, (chain := data['chain']).value),
-                ).fetchone()[0] == 0:
-                    raise ValidationError(
-                        message=f'Account {address} with chain {chain.name.lower()} is not tracked by rotki',  # noqa: E501
-                        field_name='address',
-                    )
+            # Only validate address belongs to chain if chain is specified
+            if (chain := data['chain']) is not None:
+                with self.db.conn.read_ctx() as cursor:
+                    if cursor.execute(
+                        'SELECT COUNT(*) FROM blockchain_accounts WHERE account=? AND blockchain=?',  # noqa: E501
+                        (address, chain.value),
+                    ).fetchone()[0] == 0:
+                        raise ValidationError(
+                            message=f'Account {address} with chain {chain.name.lower()} is not tracked by rotki',  # noqa: E501
+                            field_name='address',
+                        )
 
 
 class AddressesInteraction(Schema):

@@ -3576,7 +3576,7 @@ class RefetchTransactionsResource(BaseMethodView):
             async_query: bool,
             to_timestamp: Timestamp,
             from_timestamp: Timestamp,
-            chain: CHAINS_WITH_TRANSACTION_DECODERS_TYPE,
+            chain: CHAINS_WITH_TRANSACTION_DECODERS_TYPE | None = None,
             address: ChecksumEvmAddress | SolanaAddress | None = None,
     ) -> Response:
         return self.rest_api.force_refetch_transactions(
