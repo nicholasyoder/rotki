@@ -50,6 +50,10 @@ Exchange asset movement events may now be manually matched with specific onchain
   - New optional ``actual_group_identifier`` field in the response, containing the actual group identifier of the event as stored in the DB.
   - This change preserves the actual group identifier when asset movements are combined with the group of their matched event for display as a single unit in the frontend.
 
+* **New Settings** (new fields in both ``PUT`` and ``POST`` on ``/api/(version)/settings``)
+  - ``events_processing_frequency`` Boolean flag indicating the frequency in seconds at which to process events and match asset movements. Must be >= 60 seconds. Default is 86400 (24 hours).
+  - ``asset_movement_amount_tolerance`` The tolerance value used when matching asset movement amounts with onchain events. Must be a positive decimal number. Default is ``"0.000001"``.
+
 Event/Group Identifier Renaming
 -------------------------------
 

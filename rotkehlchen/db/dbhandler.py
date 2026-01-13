@@ -455,8 +455,9 @@ class DBHandler:
                 'main_currency',
                 'non_syncing_exchanges',
                 'ask_user_upon_size_discrepancy',
+                'asset_movement_amount_tolerance',
             ],
-            value: int | (Timestamp | Asset) | str | bool,
+            value: int | (Timestamp | Asset) | str | bool | FVal,
     ) -> None:
         write_cursor.execute(
             'INSERT OR REPLACE INTO settings(name, value) VALUES(?, ?)',

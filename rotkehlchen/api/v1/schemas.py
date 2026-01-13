@@ -90,6 +90,7 @@ from rotkehlchen.exchanges.constants import (
 )
 from rotkehlchen.exchanges.kraken import KrakenAccountType
 from rotkehlchen.exchanges.okx import OkxLocation
+from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.asset_movement import (
     AssetMovement,
     AssetMovementExtraData,
@@ -1667,6 +1668,11 @@ class ModifiableSettingsSchema(Schema):
             error='The frequency should be >= 60 seconds',
         ),
     )
+    asset_movement_amount_tolerance = fields.Decimal(
+        load_default=None,
+        as_string=True,
+        validate=validate.Range(min=0, max=1, min_inclusive=False, max_inclusive=False),
+    )
 
     @validates_schema
     def validate_settings_schema(
@@ -1733,6 +1739,7 @@ class ModifiableSettingsSchema(Schema):
             auto_detect_tokens=data['auto_detect_tokens'],
             csv_export_delimiter=data['csv_export_delimiter'],
             events_processing_frequency=data['events_processing_frequency'],
+            asset_movement_amount_tolerance=FVal(data['asset_movement_amount_tolerance']) if data['asset_movement_amount_tolerance'] is not None else None,  # noqa: E501
         )
 
 
