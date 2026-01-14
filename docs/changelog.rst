@@ -2,6 +2,7 @@
 Changelog
 =========
 
+* :bug:`11339` Restoring the DB while background tasks that modify the DB are running will no longer result in malformed DB disk image errors.
 * :bug:`11258` 1inch v6 limit order swaps will now be understood properly.
 * :feature:`-` Users can now search blockchain accounts by either address or label using a single unified filter.
 * :bug:`11267` PnL report generation will no longer crash when a fiat asset's price is unavailable for a swap event.
