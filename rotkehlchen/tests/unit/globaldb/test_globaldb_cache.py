@@ -562,6 +562,7 @@ def test_gearbox_cache(ethereum_inquirer: EthereumInquirer):
     assert mock_notify.call_args_list == [
         make_call_object(CPT_GEARBOX, ChainID.ETHEREUM, processed=0, total=0),
         make_call_object(CPT_GEARBOX, ChainID.ETHEREUM, processed=1, total=8),
+        make_call_object(CPT_GEARBOX, ChainID.ETHEREUM, processed=8, total=8),
     ]
 
 
