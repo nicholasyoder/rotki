@@ -68,7 +68,7 @@ class HistoricalBalancesManager:
                     FROM event_metrics em
                     INNER JOIN history_events he ON em.event_identifier = he.identifier
                     WHERE he.ignored = 0 AND em.metric_key = ? {filter_str}
-                    GROUP BY he.location, he.location_label, em.protocol, he.asset
+                    GROUP BY he.location, em.location_label, em.protocol, he.asset
                 ) GROUP BY asset HAVING SUM(metric_value) > 0
                 """,
                 query_bindings,
@@ -131,7 +131,7 @@ class HistoricalBalancesManager:
                         WITH all_events AS (
                             SELECT
                                 he.timestamp,
-                                he.location || COALESCE(he.location_label, '') || COALESCE(em.protocol, '') || he.asset as bucket,
+                                he.location || COALESCE(em.location_label, '') || COALESCE(em.protocol, '') || he.asset as bucket,
                                 CAST(em.metric_value AS REAL) as balance,
                                 he.timestamp + he.sequence_index as sort_key
                             FROM event_metrics em
@@ -200,7 +200,7 @@ class HistoricalBalancesManager:
                     WITH all_events AS (
                         SELECT he.timestamp, he.asset, CAST(em.metric_value AS REAL) as balance,
                                he.timestamp + he.sequence_index as sort_key,
-                               he.location || COALESCE(he.location_label, '') || COALESCE(em.protocol, '') || he.asset as bucket
+                               he.location || COALESCE(em.location_label, '') || COALESCE(em.protocol, '') || he.asset as bucket
                         FROM event_metrics em
                         INNER JOIN history_events he ON em.event_identifier = he.identifier
                         WHERE em.metric_key = ? AND he.ignored = 0

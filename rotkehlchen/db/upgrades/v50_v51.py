@@ -101,15 +101,20 @@ def upgrade_v50_to_v51(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
         CREATE TABLE IF NOT EXISTS event_metrics (
             id INTEGER NOT NULL PRIMARY KEY,
             event_identifier INTEGER NOT NULL REFERENCES history_events(identifier) ON DELETE CASCADE,
+            location_label TEXT,
             protocol TEXT,
             metric_key TEXT NOT NULL,
             metric_value TEXT NOT NULL,
-            UNIQUE(event_identifier, protocol, metric_key)
+            UNIQUE(event_identifier, location_label, protocol, metric_key)
         );
         """)  # noqa: E501
         write_cursor.execute(
             'CREATE INDEX IF NOT EXISTS idx_event_metrics_event '
             'ON event_metrics(event_identifier);',
+        )
+        write_cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_event_metrics_location_label '
+            'ON event_metrics(location_label);',
         )
         write_cursor.execute(
             'CREATE INDEX IF NOT EXISTS idx_event_metrics_protocol '

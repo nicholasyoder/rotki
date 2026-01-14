@@ -3,7 +3,13 @@ from typing import TYPE_CHECKING
 import gevent
 
 from rotkehlchen.assets.asset import Asset
+from rotkehlchen.assets.utils import get_or_create_evm_token
 from rotkehlchen.balances.historical import HistoricalBalancesManager
+from rotkehlchen.chain.ethereum.modules.eigenlayer.constants import CPT_EIGENLAYER
+from rotkehlchen.chain.evm.decoding.aave.constants import CPT_AAVE_V3
+from rotkehlchen.chain.evm.decoding.aura_finance.constants import CPT_AURA_FINANCE
+from rotkehlchen.chain.evm.decoding.balancer.constants import CPT_BALANCER_V2
+from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants.assets import A_BTC, A_ETH
 from rotkehlchen.constants.misc import ONE
 from rotkehlchen.db.cache import DBCacheStatic
@@ -13,9 +19,9 @@ from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.tasks.historical_balances import process_historical_balances
-from rotkehlchen.tests.utils.ethereum import TEST_ADDR1
+from rotkehlchen.tests.utils.ethereum import TEST_ADDR1, TEST_ADDR2
 from rotkehlchen.tests.utils.factories import make_evm_tx_hash
-from rotkehlchen.types import Location, Timestamp, TimestampMS
+from rotkehlchen.types import ChainID, Location, Timestamp, TimestampMS
 from rotkehlchen.utils.misc import ts_now
 
 if TYPE_CHECKING:
@@ -259,3 +265,377 @@ def test_get_balances_skips_zero_amounts(
     process_historical_balances(database, messages_aggregator)
     _, balances = manager.get_balances(HistoricalBalancesFilterQuery.make(timestamp=Timestamp(4)))
     assert balances == {A_BTC: FVal('5')}
+
+
+def test_transfer_updates_sender_and_receiver_buckets(
+        database: 'DBHandler',
+        messages_aggregator: 'MessagesAggregator',
+) -> None:
+    """Test TRANSFER/NONE events create metrics for sender and receiver buckets.
+
+    Regular token transfer uses wallet buckets:
+    1. Receive 10 ETH -> wallet1 = 10
+    2. Transfer 3 ETH to wallet2 -> wallet1 = 7, wallet2 = 3
+
+    Protocol token transfer uses protocol buckets:
+    3. Receive 10 Balancer LP -> wallet1 Balancer = 10
+    4. Transfer 3 LP to wallet2 -> wallet1 Balancer = 7, wallet2 Balancer = 3
+
+    Protocol tokens from untracked address use protocol bucket:
+    5. Receive 5 LP via RECEIVE/NONE -> wallet1 Balancer = 12
+    """
+    balancer_lp_token = get_or_create_evm_token(
+        userdb=database,
+        evm_address=string_to_evm_address('0x5c6Ee304399DBdB9C8Ef030aB642B10820DB8F56'),
+        chain_id=ChainID.ETHEREUM,
+        protocol=CPT_BALANCER_V2,
+    )
+
+    with database.user_write() as write_cursor:
+        DBHistoryEvents(database).add_history_events(
+            write_cursor=write_cursor,
+            history=[EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(1000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=FVal('10'),
+                location_label=TEST_ADDR1,
+            ), EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(2000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.TRANSFER,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=FVal('3'),
+                location_label=TEST_ADDR1,
+                address=TEST_ADDR2,
+            ), EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(3000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.RECEIVE_WRAPPED,
+                asset=balancer_lp_token,
+                amount=FVal('10'),
+                location_label=TEST_ADDR1,
+                counterparty=CPT_BALANCER_V2,
+            ), EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(4000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.TRANSFER,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=balancer_lp_token,
+                amount=FVal('3'),
+                location_label=TEST_ADDR1,
+                address=TEST_ADDR2,
+            ), EvmEvent(  # protocol token from untracked address uses protocol bucket
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(5000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=balancer_lp_token,
+                amount=FVal('5'),
+                location_label=TEST_ADDR1,
+            )],
+        )
+
+    process_historical_balances(database, messages_aggregator)
+
+    with database.conn.read_ctx() as cursor:
+        assert cursor.execute(
+            'SELECT he.timestamp, he.asset, em.location_label, em.protocol, em.metric_value '
+            'FROM event_metrics em '
+            'JOIN history_events he ON em.event_identifier = he.identifier '
+            'ORDER BY he.timestamp, em.metric_value',
+        ).fetchall() == [
+            (1000, A_ETH.identifier, TEST_ADDR1, None, '10'),  # wallet1: 0 + 10 = 10
+            (2000, A_ETH.identifier, TEST_ADDR2, None, '3'),  # wallet2: 0 + 3 = 3
+            (2000, A_ETH.identifier, TEST_ADDR1, None, '7'),  # wallet1: 10 - 3 = 7
+            (3000, balancer_lp_token.identifier, TEST_ADDR1, CPT_BALANCER_V2, '10'),  # 0 + 10 = 10
+            (4000, balancer_lp_token.identifier, TEST_ADDR2, CPT_BALANCER_V2, '3'),  # 0 + 3 = 3
+            (4000, balancer_lp_token.identifier, TEST_ADDR1, CPT_BALANCER_V2, '7'),  # 10 - 3 = 7
+            (5000, balancer_lp_token.identifier, TEST_ADDR1, CPT_BALANCER_V2, '12'),  # 7 + 5 = 12
+        ]
+
+
+def test_deposit_to_protocol_updates_wallet_and_protocol_buckets(
+        database: 'DBHandler',
+        messages_aggregator: 'MessagesAggregator',
+) -> None:
+    """Test DEPOSIT/DEPOSIT_TO_PROTOCOL and WITHDRAWAL/WITHDRAW_FROM_PROTOCOL events.
+
+    1. Receive 10 ETH -> wallet = 10
+    2. Deposit 5 ETH to Aave -> wallet = 5, Aave = 5
+    3. Withdraw 2 ETH from Aave -> wallet = 7, Aave = 3
+    """
+    with database.user_write() as write_cursor:
+        DBHistoryEvents(database).add_history_events(
+            write_cursor=write_cursor,
+            history=[EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(1000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=FVal('10'),
+                location_label=TEST_ADDR1,
+            ), EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(2000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.DEPOSIT,
+                event_subtype=HistoryEventSubType.DEPOSIT_TO_PROTOCOL,
+                asset=A_ETH,
+                amount=FVal('5'),
+                location_label=TEST_ADDR1,
+                counterparty=CPT_AAVE_V3,
+            ), EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(3000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.WITHDRAWAL,
+                event_subtype=HistoryEventSubType.WITHDRAW_FROM_PROTOCOL,
+                asset=A_ETH,
+                amount=FVal('2'),
+                location_label=TEST_ADDR1,
+                counterparty=CPT_AAVE_V3,
+            )],
+        )
+
+    process_historical_balances(database, messages_aggregator)
+
+    with database.conn.read_ctx() as cursor:
+        assert cursor.execute(
+            'SELECT he.timestamp, em.location_label, em.protocol, em.metric_value '
+            'FROM event_metrics em '
+            'JOIN history_events he ON em.event_identifier = he.identifier '
+            'ORDER BY he.timestamp, em.protocol NULLS FIRST',
+        ).fetchall() == [
+            (1000, TEST_ADDR1, None, '10'),  # wallet: 0 + 10 = 10
+            (2000, TEST_ADDR1, None, '5'),  # wallet: 10 - 5 = 5
+            (2000, TEST_ADDR1, CPT_AAVE_V3, '5'),  # protocol: 0 + 5 = 5
+            (3000, TEST_ADDR1, None, '7'),  # wallet: 5 + 2 = 7
+            (3000, TEST_ADDR1, CPT_AAVE_V3, '3'),  # protocol: 5 - 2 = 3
+        ]
+
+
+def test_staking_deposit_and_withdraw_updates_wallet_and_protocol_buckets(
+        database: 'DBHandler',
+        messages_aggregator: 'MessagesAggregator',
+) -> None:
+    """Test STAKING DEPOSIT_ASSET and REMOVE_ASSET events.
+
+    1. Receive 10 ETH -> wallet = 10
+    2. Stake 4 ETH to Eigenlayer -> wallet = 6, Eigenlayer = 4
+    3. Unstake 2 ETH from Eigenlayer -> wallet = 8, Eigenlayer = 2
+    """
+    with database.user_write() as write_cursor:
+        DBHistoryEvents(database).add_history_events(
+            write_cursor=write_cursor,
+            history=[EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(1000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=FVal('10'),
+                location_label=TEST_ADDR1,
+            ), EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(2000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.STAKING,
+                event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+                asset=A_ETH,
+                amount=FVal('4'),
+                location_label=TEST_ADDR1,
+                counterparty=CPT_EIGENLAYER,
+            ), EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(3000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.STAKING,
+                event_subtype=HistoryEventSubType.REMOVE_ASSET,
+                asset=A_ETH,
+                amount=FVal('2'),
+                location_label=TEST_ADDR1,
+                counterparty=CPT_EIGENLAYER,
+            )],
+        )
+
+    process_historical_balances(database, messages_aggregator)
+
+    with database.conn.read_ctx() as cursor:
+        assert cursor.execute(
+            'SELECT he.timestamp, em.location_label, em.protocol, em.metric_value '
+            'FROM event_metrics em '
+            'JOIN history_events he ON em.event_identifier = he.identifier '
+            'ORDER BY he.timestamp, em.protocol NULLS FIRST',
+        ).fetchall() == [
+            (1000, TEST_ADDR1, None, '10'),  # wallet: 0 + 10 = 10
+            (2000, TEST_ADDR1, None, '6'),  # wallet: 10 - 4 = 6
+            (2000, TEST_ADDR1, CPT_EIGENLAYER, '4'),  # protocol: 0 + 4 = 4
+            (3000, TEST_ADDR1, None, '8'),  # wallet: 6 + 2 = 8
+            (3000, TEST_ADDR1, CPT_EIGENLAYER, '2'),  # protocol: 4 - 2 = 2
+        ]
+
+
+def test_wrapped_deposit_and_redeem_moves_between_protocol_buckets(
+        database: 'DBHandler',
+        messages_aggregator: 'MessagesAggregator',
+) -> None:
+    """Test DEPOSIT_FOR_WRAPPED and REDEEM_WRAPPED with protocol assets.
+
+    Simulates Balancer LP token flow through Aura Finance gauge:
+    1. Receive 10 LP from Balancer -> Balancer bucket = 10
+    2. Deposit 6 LP into Aura -> Balancer = 4, Aura = 6
+    3. Redeem 3 LP from Aura -> Balancer = 7, Aura = 3
+    """
+    balancer_lp_token = get_or_create_evm_token(
+        userdb=database,
+        evm_address=string_to_evm_address('0x5c6Ee304399DBdB9C8Ef030aB642B10820DB8F56'),
+        chain_id=ChainID.ETHEREUM,
+        protocol=CPT_BALANCER_V2,
+    )
+
+    with database.user_write() as write_cursor:
+        DBHistoryEvents(database).add_history_events(
+            write_cursor=write_cursor,
+            history=[EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(1000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.RECEIVE_WRAPPED,
+                asset=balancer_lp_token,
+                amount=FVal('10'),
+                location_label=TEST_ADDR1,
+                counterparty=CPT_BALANCER_V2,
+            ), EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(2000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.DEPOSIT,
+                event_subtype=HistoryEventSubType.DEPOSIT_FOR_WRAPPED,
+                asset=balancer_lp_token,
+                amount=FVal('6'),
+                location_label=TEST_ADDR1,
+                counterparty=CPT_AURA_FINANCE,
+            ), EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(3000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.WITHDRAWAL,
+                event_subtype=HistoryEventSubType.REDEEM_WRAPPED,
+                asset=balancer_lp_token,
+                amount=FVal('3'),
+                location_label=TEST_ADDR1,
+                counterparty=CPT_AURA_FINANCE,
+            )],
+        )
+
+    process_historical_balances(database, messages_aggregator)
+
+    with database.conn.read_ctx() as cursor:
+        assert cursor.execute(
+            'SELECT he.timestamp, em.location_label, em.protocol, em.metric_value '
+            'FROM event_metrics em '
+            'JOIN history_events he ON em.event_identifier = he.identifier '
+            'ORDER BY he.timestamp, em.protocol',
+        ).fetchall() == [
+            (1000, TEST_ADDR1, CPT_BALANCER_V2, '10'),  # 0 + 10 = 10
+            (2000, TEST_ADDR1, CPT_AURA_FINANCE, '6'),  # 0 + 6 = 6
+            (2000, TEST_ADDR1, CPT_BALANCER_V2, '4'),  # 10 - 6 = 4
+            (3000, TEST_ADDR1, CPT_AURA_FINANCE, '3'),  # 6 - 3 = 3
+            (3000, TEST_ADDR1, CPT_BALANCER_V2, '7'),  # 4 + 3 = 7
+        ]
+
+
+def test_protocol_bucket_caps_at_zero_when_withdrawing_more_than_deposited(
+        database: 'DBHandler',
+        messages_aggregator: 'MessagesAggregator',
+) -> None:
+    """Test protocol bucket is capped at zero when withdrawing more than deposited.
+
+    This happens legitimately when users earn yield in a protocol and withdraw more
+    than they originally deposited.
+
+    1. Receive 10 ETH -> wallet = 10
+    2. Deposit 5 ETH to Aave -> wallet = 5, Aave = 5
+    3. Withdraw 5.1 ETH from Aave (earned 0.1 ETH yield) -> wallet = 10.1, Aave = 0 (capped)
+    """
+    with database.user_write() as write_cursor:
+        DBHistoryEvents(database).add_history_events(
+            write_cursor=write_cursor,
+            history=[EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(1000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=FVal('10'),
+                location_label=TEST_ADDR1,
+            ), EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(2000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.DEPOSIT,
+                event_subtype=HistoryEventSubType.DEPOSIT_TO_PROTOCOL,
+                asset=A_ETH,
+                amount=FVal('5'),
+                location_label=TEST_ADDR1,
+                counterparty=CPT_AAVE_V3,
+            ), EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(3000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.WITHDRAWAL,
+                event_subtype=HistoryEventSubType.WITHDRAW_FROM_PROTOCOL,
+                asset=A_ETH,
+                amount=FVal('5.1'),
+                location_label=TEST_ADDR1,
+                counterparty=CPT_AAVE_V3,
+            )],
+        )
+
+    process_historical_balances(database, messages_aggregator)
+
+    with database.conn.read_ctx() as cursor:
+        assert cursor.execute(
+            'SELECT he.timestamp, em.location_label, em.protocol, em.metric_value '
+            'FROM event_metrics em '
+            'JOIN history_events he ON em.event_identifier = he.identifier '
+            'ORDER BY he.timestamp, em.protocol NULLS FIRST',
+        ).fetchall() == [
+            (1000, TEST_ADDR1, None, '10'),  # wallet: 0 + 10 = 10
+            (2000, TEST_ADDR1, None, '5'),  # wallet: 10 - 5 = 5
+            (2000, TEST_ADDR1, CPT_AAVE_V3, '5'),  # protocol: 0 + 5 = 5
+            (3000, TEST_ADDR1, None, '10.1'),  # wallet: 5 + 5.1 = 10.1
+            (3000, TEST_ADDR1, CPT_AAVE_V3, '0'),  # protocol: capped at 0 (5 - 5.1 = -0.1)
+        ]
