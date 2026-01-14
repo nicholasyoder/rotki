@@ -158,13 +158,26 @@ class Helius(ExternalServiceWithRecommendedApiKey):
         solana_tx_db = DBSolanaTx(database=self.db)
         queried_signatures: list[Signature] | None = [] if return_queried_hashes else None
         for chunk in get_chunks(signatures, MAX_TX_BATCH_SIZE):
+            existing_signatures: set[bytes] = set()
+            if queried_signatures is not None:
+                signature_bytes = [Signature.from_string(sig).to_bytes() for sig in chunk]
+                with self.db.conn.read_ctx() as cursor:
+                    existing_signatures = solana_tx_db.get_existing_signatures(
+                        cursor=cursor,
+                        signatures=signature_bytes,
+                    )
+
             txs, token_accounts_mappings = [], {}
             for raw_tx in self._query(endpoint='transactions', params={'transactions': chunk}):
                 try:
                     tx, token_accounts_mapping = self._deserialize_raw_tx(raw_tx)
                     txs.append(tx)
                     if queried_signatures is not None:
+                        signature_bytes_entry = tx.signature.to_bytes()
+                        if signature_bytes_entry in existing_signatures:
+                            continue
                         queried_signatures.append(tx.signature)
+                        existing_signatures.add(signature_bytes_entry)
                     token_accounts_mappings.update(token_accounts_mapping)
                 except DeserializationError as e:
                     log.error(e)  # the error from _deserialize_raw_tx is already descriptive.
