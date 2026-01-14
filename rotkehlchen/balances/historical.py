@@ -59,7 +59,6 @@ class HistoricalBalancesManager:
         - processing_required: True if events exist but haven't been processed yet
         - balances: Dict of asset to amount, or None if no data available
         """
-        asset_balances_by_id: dict[str, FVal] = {}
         filter_str, filter_bindings = filter_query.prepare()
         query_bindings: list = [EventMetricKey.BALANCE.serialize(), *filter_bindings]
         with self.db.conn.read_ctx() as cursor:
@@ -70,17 +69,11 @@ class HistoricalBalancesManager:
                     INNER JOIN history_events he ON em.event_identifier = he.identifier
                     WHERE he.ignored = 0 AND em.metric_key = ? {filter_str}
                     GROUP BY he.location, he.location_label, em.protocol, he.asset
-                ) GROUP BY asset
+                ) GROUP BY asset HAVING SUM(metric_value) > 0
                 """,
                 query_bindings,
             )
-            for asset_id, total in cursor:
-                asset_balances_by_id[asset_id] = FVal(total)
-
-        data = {
-            Asset(asset_id): amount
-            for asset_id, amount in asset_balances_by_id.items()
-        } if len(asset_balances_by_id) != 0 else None
+            data = {Asset(asset_id): FVal(total) for asset_id, total in cursor} or None
 
         return self._has_unprocessed_events(
             where_clause=filter_query.unprocessed_where_clause,
