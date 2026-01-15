@@ -20,6 +20,7 @@ from rotkehlchen.db.filtering import (
     SolanaTransactionsFilterQuery,
 )
 from rotkehlchen.db.history_events import DBHistoryEvents
+from rotkehlchen.db.settings import ModifiableDBSettings
 from rotkehlchen.db.solanatx import DBSolanaTx
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.solana_event import SolanaEvent
@@ -50,7 +51,7 @@ from rotkehlchen.tests.utils.factories import (
     make_evm_address,
 )
 from rotkehlchen.tests.utils.rotkehlchen import setup_balances
-from rotkehlchen.types import ChainType, SupportedBlockchain, Timestamp
+from rotkehlchen.types import ChainType, ExternalService, SupportedBlockchain, Timestamp
 from rotkehlchen.utils.misc import ts_sec_to_ms
 
 if TYPE_CHECKING:
@@ -684,24 +685,41 @@ def test_no_etherscan_is_detected(
         rotkehlchen_api_server: 'APIServer',
         websocket_connection: 'WebsocketReader',
 ) -> None:
-    """Make sure that interacting with ethereum without an etherscan key is given a warning"""
+    """Check that the etherscan missing key message is properly sent or not depending on the
+    suppress_missing_key_msg_services setting when interacting with etherscan with no key.
+    """
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
-    new_address = make_evm_address()
-    setup = setup_balances(rotki, ethereum_accounts=[new_address], btc_accounts=None)
+    assert rotki.msg_aggregator.rotki_notifier is not None
+    for suppressed_services, expected_call_count in (
+        ([ExternalService.ETHERSCAN], 0),
+        ([], 1),
+    ):
+        rotki.chains_aggregator.ethereum.node_inquirer.etherscan.warning_given = False
+        with rotki.data.db.conn.write_ctx() as write_cursor:
+            rotki.data.db.set_settings(
+                write_cursor=write_cursor,
+                settings=ModifiableDBSettings(
+                    suppress_missing_key_msg_services=suppressed_services,
+                ),
+            )
 
-    with ExitStack() as stack:
-        setup.enter_ethereum_patches(stack)
-        response = requests.put(api_url_for(
-            rotkehlchen_api_server,
-            'blockchainsaccountsresource',
-            blockchain='ETH',
-        ), json={'accounts': [{'address': new_address}]})
-        assert_proper_response(response)
-        response = requests.get(api_url_for(
-            rotkehlchen_api_server,
-            'blockchainbalancesresource',
-        ))
-        assert_proper_response(response)
+        with ExitStack() as stack:
+            setup_balances(
+                rotki=rotki,
+                ethereum_accounts=[new_address := make_evm_address()],
+                btc_accounts=None,
+            ).enter_ethereum_patches(stack)
+            mock_broadcast = stack.enter_context(patch.object(
+                target=rotki.msg_aggregator.rotki_notifier,
+                attribute='broadcast',
+                wraps=rotki.msg_aggregator.rotki_notifier.broadcast,
+            ))
+            assert_proper_response(requests.put(
+                api_url_for(rotkehlchen_api_server, 'blockchainsaccountsresource', blockchain='ETH'),  # noqa: E501
+                json={'accounts': [{'address': new_address}]},
+            ))
+
+        assert mock_broadcast.call_count == expected_call_count
 
     websocket_connection.wait_until_messages_num(num=1, timeout=10)
     msg = websocket_connection.pop_message()

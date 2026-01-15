@@ -233,6 +233,8 @@ def test_set_settings(rotkehlchen_api_server: 'APIServer') -> None:
             value = HOUR_IN_SECONDS
         elif setting == 'asset_movement_amount_tolerance':
             value = '0.0001'
+        elif setting == 'suppress_missing_key_msg_services':
+            value = [ExternalService.ETHERSCAN.serialize()]
         else:
             raise AssertionError(f'Unexpected setting {setting} encountered')
 
@@ -618,7 +620,7 @@ def test_set_evm_indexers_order(rotkehlchen_api_server: 'APIServer') -> None:
         response=requests.get(settings_url),
         rotkehlchen_api_server=rotkehlchen_api_server,
     )
-    assert settings['evm_indexers_order'][ChainID.OPTIMISM.to_name()] == ['blockscout', 'etherscan', 'routescan']  # noqa: E501
+    assert settings['evm_indexers_order'][ChainID.OPTIMISM.to_name()] == ['blockscout', 'routescan', 'etherscan']  # noqa: E501
 
     # try editing the order of ethereum
     assert_proper_response(

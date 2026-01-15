@@ -1674,6 +1674,11 @@ class ModifiableSettingsSchema(Schema):
         as_string=True,
         validate=validate.Range(min=0, max=1, min_inclusive=False, max_inclusive=False),
     )
+    suppress_missing_key_msg_services = fields.List(
+        SerializableEnumField(enum_class=ExternalService, required=True),
+        required=False,
+        load_default=[],
+    )
 
     @validates_schema
     def validate_settings_schema(
@@ -1741,6 +1746,7 @@ class ModifiableSettingsSchema(Schema):
             csv_export_delimiter=data['csv_export_delimiter'],
             events_processing_frequency=data['events_processing_frequency'],
             asset_movement_amount_tolerance=FVal(data['asset_movement_amount_tolerance']) if data['asset_movement_amount_tolerance'] is not None else None,  # noqa: E501
+            suppress_missing_key_msg_services=data['suppress_missing_key_msg_services'],
         )
 
 

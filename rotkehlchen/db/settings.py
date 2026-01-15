@@ -32,6 +32,7 @@ from rotkehlchen.types import (
     ChainID,
     CostBasisMethod,
     ExchangeLocationID,
+    ExternalService,
     ModuleName,
     SupportedBlockchain,
     Timestamp,
@@ -88,6 +89,7 @@ LIST_KEYS: Final = (
     'non_syncing_exchanges',
     'evmchains_to_skip_detection',
     'default_evm_indexer_order',
+    'suppress_missing_key_msg_services',
 )
 JSON_KEYS: Final = ('evm_indexers_order',)
 BOOLEAN_KEYS: Final = (
@@ -185,6 +187,7 @@ CachedDBSettingsFieldNames = Literal[
     'ask_user_upon_size_discrepancy',
     'events_processing_frequency',
     'asset_movement_amount_tolerance',
+    'suppress_missing_key_msg_services',
 ]
 
 DBSettingsFieldTypes = (
@@ -199,7 +202,8 @@ DBSettingsFieldTypes = (
     dict[ChainID, Sequence[EvmIndexer]] |
     Sequence[ExchangeLocationID] |
     CostBasisMethod |
-    Sequence[AddressNameSource]
+    Sequence[AddressNameSource] |
+    Sequence[ExternalService]
 )
 
 
@@ -254,6 +258,7 @@ class DBSettings:
     csv_export_delimiter: str = DEFAULT_CSV_EXPORT_DELIMITER
     events_processing_frequency: int = DEFAULT_EVENTS_PROCESSING_FREQUENCY
     asset_movement_amount_tolerance: FVal = DEFAULT_ASSET_MOVEMENT_AMOUNT_TOLERANCE
+    suppress_missing_key_msg_services: list[ExternalService] = field(default_factory=list)
 
     def serialize(self) -> dict[str, Any]:
         settings_dict = {}
@@ -319,6 +324,7 @@ class ModifiableDBSettings(NamedTuple):
     btc_mempool_api: str | None = None
     events_processing_frequency: int | None = None
     asset_movement_amount_tolerance: FVal | None = None
+    suppress_missing_key_msg_services: list[ExternalService] | None = None
 
     def serialize(self) -> dict[str, Any]:
         settings_dict = {}
@@ -424,6 +430,8 @@ def db_settings_from_dict(
             specified_args[key] = CostBasisMethod.deserialize(value)
         elif key == 'address_name_priority':
             specified_args[key] = json.loads(value)
+        elif key == 'suppress_missing_key_msg_services':
+            specified_args[key] = [ExternalService.deserialize(x) for x in json.loads(value)]
         else:
             log.error(
                 f'Unknown DB setting {key} given. Ignoring it. Should not '

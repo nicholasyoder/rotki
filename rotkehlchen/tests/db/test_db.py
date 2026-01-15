@@ -543,6 +543,7 @@ def test_writing_fetching_data(data_dir, username, sql_vm_instructions_cb):
         'csv_export_delimiter': DEFAULT_CSV_EXPORT_DELIMITER,
         'events_processing_frequency': DEFAULT_EVENTS_PROCESSING_FREQUENCY,
         'asset_movement_amount_tolerance': DEFAULT_ASSET_MOVEMENT_AMOUNT_TOLERANCE,
+        'suppress_missing_key_msg_services': [],
     }
     assert len(expected_dict) == len(dataclasses.fields(DBSettings)), 'One or more settings are missing'  # noqa: E501
 
