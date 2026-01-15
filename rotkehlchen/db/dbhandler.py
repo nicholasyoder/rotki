@@ -581,7 +581,7 @@ class DBHandler:
         than the one supported.
         - AuthenticationError if the wrong password is given
         """
-        self.conn.wal_checkpoint()
+        self.conn.wal_checkpoint(mode='(TRUNCATE)')
         self.disconnect()
         rdbpath = self.user_data_dir / USERDB_NAME
         # Make copy of existing encrypted DB before removing it
