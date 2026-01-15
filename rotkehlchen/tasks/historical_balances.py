@@ -4,10 +4,12 @@ from typing import TYPE_CHECKING, Final, NamedTuple, TypeAlias
 from rotkehlchen.api.websockets.typedefs import ProgressUpdateSubType, WSMessageType
 from rotkehlchen.constants import ZERO
 from rotkehlchen.db.cache import DBCacheStatic
+from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.errors.asset import UnknownAsset, WrongAssetType
 from rotkehlchen.fval import FVal
+from rotkehlchen.history.events.structures.onchain_event import OnchainEvent
 from rotkehlchen.history.events.structures.types import (
     EventDirection,
     HistoryEventSubType,
@@ -39,13 +41,18 @@ PROTOCOL_BUCKET_SUBTYPES: Final = {
     HistoryEventSubType.PAYBACK_DEBT,
 }
 
+# Protocol withdrawals that can trigger synthetic interest events when withdrawal exceeds deposit.
+PROTOCOL_WITHDRAWAL_EVENTS: Final[EventTypeSubtypePairs] = {
+    (HistoryEventType.WITHDRAWAL, HistoryEventSubType.WITHDRAW_FROM_PROTOCOL),
+    (HistoryEventType.STAKING, HistoryEventSubType.REMOVE_ASSET),
+}
+
 # Events that affect both wallet and protocol buckets.
 # Wallet direction comes from get_event_direction, protocol direction is the opposite.
 DUAL_BUCKET_PROTOCOL_EVENTS: Final[EventTypeSubtypePairs] = {
+    *PROTOCOL_WITHDRAWAL_EVENTS,
     (HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_TO_PROTOCOL),
-    (HistoryEventType.WITHDRAWAL, HistoryEventSubType.WITHDRAW_FROM_PROTOCOL),
     (HistoryEventType.STAKING, HistoryEventSubType.DEPOSIT_ASSET),
-    (HistoryEventType.STAKING, HistoryEventSubType.REMOVE_ASSET),
 }
 
 # Events that affect both sender and receiver wallet buckets.
@@ -245,8 +252,7 @@ def process_historical_balances(
 ) -> None:
     """Process events and compute balance metrics."""
     log.debug(f'Starting historical balance processing from_ts={from_ts}')
-    processing_started_at: TimestampMS = ts_now_in_ms()
-    bucket_balances: dict[Bucket, FVal] = {}
+    processing_started_at, bucket_balances = ts_now_in_ms(), {}
     if from_ts is not None:
         bucket_balances = _load_bucket_balances_before_ts(database, from_ts)
 
@@ -276,41 +282,70 @@ def process_historical_balances(
             continue
 
         for bucket, direction in bucket_directions:
-            current_balance = bucket_balances.get(bucket, ZERO)
-            if current_balance < ZERO:
+            if (current_balance := bucket_balances.get(bucket, ZERO)) < ZERO:
                 continue
 
             if direction == EventDirection.IN:
                 new_balance = current_balance + event.amount
-            else:  # direction == EventDirection.OUT
-                new_balance = current_balance - event.amount
-                if new_balance < ZERO:
-                    # Protocol buckets can legitimately go negative when:
-                    # - Users withdraw more than deposited due to earned yields/profits
-                    # - Wrapped tokens are redeemed for underlying (only wrapped is tracked)
-                    if bucket.protocol is not None:
-                        log.debug(
-                            f'Protocol bucket {bucket} would go negative by {abs(new_balance)} '
-                            f'for event {event.identifier}, capping at zero',
+            elif (new_balance := current_balance - event.amount) < ZERO:  # direction == EventDirection.OUT  # noqa: E501
+                # Withdrawal exceeds deposit, meaning yield was earned. Only applies to
+                # protocol withdrawals without wrapped tokens (WITHDRAW_FROM_PROTOCOL,
+                # REMOVE_ASSET). Create an interest event to account for the earned yield.
+                if (
+                    bucket.protocol is not None and
+                    (event.event_type, event.event_subtype) in PROTOCOL_WITHDRAWAL_EVENTS and
+                    isinstance(event, OnchainEvent)
+                ):
+                    with database.user_write() as write_cursor:
+                        write_cursor.execute(
+                            'UPDATE history_events SET sequence_index = sequence_index + 1 '
+                            'WHERE group_identifier = ? AND sequence_index >= ?',
+                            (event.group_identifier, event.sequence_index),
                         )
-                        new_balance = ZERO
-                    else:
-                        msg_aggregator.add_message(
-                            message_type=WSMessageType.NEGATIVE_BALANCE_DETECTED,
-                            data={
-                                'event_identifier': event.identifier,
-                                'group_identifier': event.group_identifier,
-                                'asset': event.asset.identifier,
-                                'balance_before': str(current_balance),
-                                'last_run_ts': last_run_ts,
-                            },
+                        interest_event_id = DBHistoryEvents(database).add_history_event(
+                            write_cursor=write_cursor,
+                            event=type(event)(
+                                tx_ref=event.tx_ref,
+                                sequence_index=event.sequence_index,
+                                timestamp=event.timestamp,
+                                location=event.location,
+                                event_type=HistoryEventType.RECEIVE,
+                                event_subtype=HistoryEventSubType.INTEREST,
+                                asset=event.asset,
+                                amount=(interest_amount := abs(new_balance)),
+                                location_label=event.location_label,
+                                notes=f'Profit earned from {event.asset} in {bucket.protocol}',
+                                counterparty=bucket.protocol,
+                                address=event.address,
+                            ),
+                            mapping_values={HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_CUSTOMIZED},  # noqa: E501
                         )
-                        log.warning(
-                            f'Negative balance detected for {event.asset.identifier} '
-                            f'at event {event.identifier}. Skipping {bucket}.',
-                        )
-                        bucket_balances[bucket] = FVal(-1)
-                        continue
+                    bucket_balances[bucket] += interest_amount
+                    metrics_batch.append((
+                        interest_event_id,
+                        bucket.location_label,
+                        bucket.protocol,
+                        EventMetricKey.BALANCE.serialize(),
+                        str(bucket_balances[bucket]),
+                    ))
+                    new_balance = ZERO
+                else:
+                    msg_aggregator.add_message(
+                        message_type=WSMessageType.NEGATIVE_BALANCE_DETECTED,
+                        data={
+                            'event_identifier': event.identifier,
+                            'group_identifier': event.group_identifier,
+                            'asset': event.asset.identifier,
+                            'balance_before': str(current_balance),
+                            'last_run_ts': last_run_ts,
+                        },
+                    )
+                    log.warning(
+                        f'Negative balance detected for {event.asset.identifier} '
+                        f'at event {event.identifier}. Skipping {bucket}.',
+                    )
+                    bucket_balances[bucket] = new_balance
+                    continue
 
             bucket_balances[bucket] = new_balance
             metrics_batch.append((

@@ -6,6 +6,7 @@ from rotkehlchen.assets.asset import Asset
 from rotkehlchen.assets.utils import get_or_create_evm_token
 from rotkehlchen.balances.historical import HistoricalBalancesManager
 from rotkehlchen.chain.ethereum.modules.eigenlayer.constants import CPT_EIGENLAYER
+from rotkehlchen.chain.ethereum.modules.liquity.constants import CPT_LIQUITY
 from rotkehlchen.chain.evm.decoding.aave.constants import CPT_AAVE_V3
 from rotkehlchen.chain.evm.decoding.aura_finance.constants import CPT_AURA_FINANCE
 from rotkehlchen.chain.evm.decoding.balancer.constants import CPT_BALANCER_V2
@@ -573,18 +574,21 @@ def test_wrapped_deposit_and_redeem_moves_between_protocol_buckets(
         ]
 
 
-def test_protocol_bucket_caps_at_zero_when_withdrawing_more_than_deposited(
+def test_synthetic_interest_event_when_protocol_withdrawal_exceeds_deposit(
         database: 'DBHandler',
         messages_aggregator: 'MessagesAggregator',
 ) -> None:
-    """Test protocol bucket is capped at zero when withdrawing more than deposited.
+    """Test synthetic interest event creation when withdrawing more than deposited.
 
-    This happens legitimately when users earn yield in a protocol and withdraw more
-    than they originally deposited.
+    When WITHDRAWAL/WITHDRAW_FROM_PROTOCOL or STAKING/REMOVE_ASSET events withdraw more
+    than the protocol bucket balance (due to yield earned), a synthetic RECEIVE/INTEREST
+    event is created for the difference.
 
     1. Receive 10 ETH -> wallet = 10
-    2. Deposit 5 ETH to Aave -> wallet = 5, Aave = 5
-    3. Withdraw 5.1 ETH from Aave (earned 0.1 ETH yield) -> wallet = 10.1, Aave = 0 (capped)
+    2. Deposit 5 ETH to Liquity -> wallet = 5, Liquity = 5
+    3. Withdraw 5.1 ETH from Liquity (earned 0.1 ETH yield):
+       - Interest event created: Liquity = 5 + 0.1 = 5.1
+       - Withdrawal processed: wallet = 5 + 5.1 = 10.1, Liquity = 5.1 - 5.1 = 0
     """
     with database.user_write() as write_cursor:
         DBHistoryEvents(database).add_history_events(
@@ -609,7 +613,7 @@ def test_protocol_bucket_caps_at_zero_when_withdrawing_more_than_deposited(
                 asset=A_ETH,
                 amount=FVal('5'),
                 location_label=TEST_ADDR1,
-                counterparty=CPT_AAVE_V3,
+                counterparty=CPT_LIQUITY,
             ), EvmEvent(
                 tx_ref=make_evm_tx_hash(),
                 sequence_index=0,
@@ -620,22 +624,31 @@ def test_protocol_bucket_caps_at_zero_when_withdrawing_more_than_deposited(
                 asset=A_ETH,
                 amount=FVal('5.1'),
                 location_label=TEST_ADDR1,
-                counterparty=CPT_AAVE_V3,
+                counterparty=CPT_LIQUITY,
             )],
         )
 
     process_historical_balances(database, messages_aggregator)
 
     with database.conn.read_ctx() as cursor:
+        assert cursor.execute('SELECT amount, sequence_index, notes FROM history_events ORDER BY timestamp, sequence_index').fetchall() == [  # noqa: E501
+            ('10', 0, None),  # receive 10 ETH
+            ('5', 0, None),  # deposit 5 ETH
+            ('0.1', 0, 'Profit earned from ETH in liquity'),  # synthetic interest event
+            ('5.1', 1, None),  # withdrawal (sequence_index bumped from 0 to 1)
+        ]
+
+        # Verify event metrics
         assert cursor.execute(
             'SELECT he.timestamp, em.location_label, em.protocol, em.metric_value '
             'FROM event_metrics em '
             'JOIN history_events he ON em.event_identifier = he.identifier '
-            'ORDER BY he.timestamp, em.protocol NULLS FIRST',
+            'ORDER BY he.timestamp, em.protocol NULLS FIRST, he.sequence_index',
         ).fetchall() == [
             (1000, TEST_ADDR1, None, '10'),  # wallet: 0 + 10 = 10
             (2000, TEST_ADDR1, None, '5'),  # wallet: 10 - 5 = 5
-            (2000, TEST_ADDR1, CPT_AAVE_V3, '5'),  # protocol: 0 + 5 = 5
+            (2000, TEST_ADDR1, CPT_LIQUITY, '5'),  # protocol: 0 + 5 = 5
             (3000, TEST_ADDR1, None, '10.1'),  # wallet: 5 + 5.1 = 10.1
-            (3000, TEST_ADDR1, CPT_AAVE_V3, '0'),  # protocol: capped at 0 (5 - 5.1 = -0.1)
+            (3000, TEST_ADDR1, CPT_LIQUITY, '5.1'),  # protocol: 5 + 0.1 = 5.1 (interest event)
+            (3000, TEST_ADDR1, CPT_LIQUITY, '0'),  # protocol: 5.1 - 5.1 = 0 (withdrawal)
         ]
