@@ -1077,47 +1077,49 @@ Adding information for web3 nodes
       HTTP/1.1 200 OK
       Content-Type: application/json
 
-      {
-        "result": [
-            {
-                "identifier": 1,
-                "name": "etherscan",
-                "endpoint": "",
-                "owned": false,
-                "weight": "40.00",
-                "active": true,
-                "blockchain": "eth"
-            },
-            {
-                "identifier": 2,
-                "name": "mycrypto",
-                "endpoint": "https://api.mycryptoapi.com/eth",
-                "owned": false,
-                "weight": "20.00",
-                "active": true,
-                "blockchain": "eth"
-            },
-            {
-                "identifier": 3,
-                "name": "blockscout",
-                "endpoint": "https://mainnet-nethermind.blockscout.com/",
-                "owned": false,
-                "weight": "20.00",
-                "active": true,
-                "blockchain": "eth"
-            },
-            {
-                "identifier": 4,
-                "name": "avado pool",
-                "endpoint": "https://mainnet.eth.cloud.ava.do/",
-                "owned": false,
-                "weight": "20.00",
-                "active": true,
-                "blockchain": "eth"
-            }
-        ],
-        "message": ""
-      }
+       {
+         "result": [
+             {
+                 "identifier": 1,
+                 "name": "etherscan",
+                 "endpoint": "",
+                 "owned": false,
+                 "weight": "40.00",
+                 "active": true,
+                 "blockchain": "eth"
+             },
+             {
+                 "identifier": 2,
+                 "name": "mycrypto",
+                 "endpoint": "https://api.mycryptoapi.com/eth",
+                 "owned": false,
+                 "weight": "20.00",
+                 "active": true,
+                 "blockchain": "eth",
+                 "is_archive": true
+             },
+             {
+                 "identifier": 3,
+                 "name": "blockscout",
+                 "endpoint": "https://mainnet-nethermind.blockscout.com/",
+                 "owned": false,
+                 "weight": "20.00",
+                 "active": true,
+                 "blockchain": "eth"
+             },
+             {
+                 "identifier": 4,
+                 "name": "avado pool",
+                 "endpoint": "https://mainnet.eth.cloud.ava.do/",
+                 "owned": false,
+                 "weight": "20.00",
+                 "active": true,
+                 "blockchain": "eth",
+                 "is_archive": false
+             }
+         ],
+         "message": ""
+       }
 
    :resjson list result: A list with information about the web3 nodes.
    :resjson string name: Name and primary key of the node.
@@ -1125,6 +1127,7 @@ Adding information for web3 nodes
    :resjson string weight: Weight of the node in the range of 0 to 100 with 2 decimals.
    :resjson string owned: True if the user owns the node or false if is a public node.
    :resjson string active: True if the node should be used or false if it shouldn't.
+   :resjson bool is_archive: [Optional] Only present for RPC nodes that are currently connected. Not applicable to indexers (e.g., etherscan). True if the node is an archive node, false otherwise.
 
    :statuscode 200: Querying was successful
    :statuscode 409: No user is logged.

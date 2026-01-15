@@ -30,7 +30,6 @@ from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.externalapis.monerium import init_monerium
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.premium.premium import has_premium_check
-from rotkehlchen.serialization.serialize import process_result_list
 from rotkehlchen.types import (
     CHAINS_WITH_NODES,
     CHAINS_WITH_TRANSACTION_DECODERS,
@@ -122,8 +121,22 @@ class TransactionsService:
 
     def get_rpc_nodes(self, blockchain: SupportedBlockchain) -> dict[str, Any]:
         nodes = self.rotkehlchen.data.db.get_rpc_nodes(blockchain=blockchain)
+
+        archive_status: dict[str, bool] = {}
+        if blockchain in CHAINS_WITH_NODES:
+            manager = self.rotkehlchen.chains_aggregator.get_chain_manager(blockchain=blockchain)  # type: ignore[call-overload]
+            for node_info, rpc_node in manager.node_inquirer.rpc_mapping.items():
+                archive_status[node_info.endpoint] = rpc_node.is_archive
+
+        result = []
+        for node in nodes:
+            serialized = node.serialize()
+            if (is_archive := archive_status.get(node.node_info.endpoint)) is not None:
+                serialized['is_archive'] = is_archive
+            result.append(serialized)
+
         return {
-            'result': process_result_list(list(nodes)),
+            'result': result,
             'message': '',
             'status_code': HTTPStatus.OK,
         }
