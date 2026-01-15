@@ -3146,6 +3146,52 @@ class RestAPI:
         return api_response(_wrap_in_ok_result(result=result))
 
     @async_api_call()
+    def get_onchain_historical_balance(
+            self,
+            evm_chain: EVM_CHAIN_IDS_WITH_TRANSACTIONS_TYPE,
+            address: ChecksumEvmAddress,
+            asset: Asset,
+            timestamp: Timestamp,
+    ) -> dict[str, Any]:
+        evm_manager = self.rotkehlchen.chains_aggregator.get_evm_manager(chain_id=evm_chain)
+        if not evm_manager.node_inquirer.has_archive_node():
+            return wrap_in_fail_result(
+                message=f'No archive node available for {evm_chain.to_name()} to query historical balance',  # noqa: E501
+                status_code=HTTPStatus.CONFLICT,
+            )
+
+        try:
+            block_number = evm_manager.node_inquirer.get_blocknumber_by_time(ts=timestamp)
+        except RemoteError as e:
+            return wrap_in_fail_result(
+                message=f'Failed to get block number for timestamp {timestamp}: {e!s}',
+                status_code=HTTPStatus.BAD_GATEWAY,
+            )
+
+        if asset == evm_manager.node_inquirer.native_token:
+            balance = evm_manager.node_inquirer.get_historical_native_balance(
+                address=address,
+                block_number=block_number,
+            )
+        else:
+            balance = evm_manager.node_inquirer.get_historical_token_balance(
+                token=asset.resolve_to_evm_token(),
+                address=address,
+                block_number=block_number,
+            )
+
+        if balance is None:
+            return wrap_in_fail_result(
+                message=(
+                    f'Failed to query historical balance for {asset.identifier} at block {block_number}. '  # noqa: E501
+                    f'The token may not have been deployed at this block or may not be ERC20 compatible.'  # noqa: E501
+                ),
+                status_code=HTTPStatus.CONFLICT,
+            )
+
+        return _wrap_in_ok_result(result={asset.identifier: str(balance)})
+
+    @async_api_call()
     def get_historical_prices_per_asset(
             self,
             asset: Asset,

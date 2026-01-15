@@ -14434,6 +14434,72 @@ Historical Balance Queries
       :statuscode 401: User is not logged in
       :statuscode 500: Internal Rotki error
 
+  .. http:post:: /api/(version)/balances/historical/onchain
+
+    Query the historical on-chain balance of an asset at a specific timestamp using archive nodes.
+    Supports native tokens and ERC20 tokens on EVM chains.
+
+    .. note::
+      This endpoint requires an archive node to be available for the specified chain.
+      This endpoint can also be queried asynchronously by using ``"async_query": true``.
+
+    **Example Request (Native Token):**
+
+      .. http:example:: curl wget httpie python-requests
+
+        POST /api/1/balances/historical/onchain HTTP/1.1
+        Host: localhost:5042
+        Content-Type: application/json;charset=UTF-8
+
+        {
+          "timestamp": 1609459200,
+          "evm_chain": "ethereum",
+          "address": "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+          "asset": "ETH"
+        }
+
+    **Example Request (ERC20 Token):**
+
+      .. http:example:: curl wget httpie python-requests
+
+        POST /api/1/balances/historical/onchain HTTP/1.1
+        Host: localhost:5042
+        Content-Type: application/json;charset=UTF-8
+
+        {
+          "timestamp": 1609459200,
+          "evm_chain": "ethereum",
+          "address": "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+          "asset": "eip155:1/erc20:0x6B175474E89094C44Da98b954EedeAC495271d0F"
+        }
+
+    :reqjson integer timestamp: The Unix timestamp at which to query the balance
+    :reqjson string evm_chain: The EVM chain name (e.g., "ethereum", "optimism", "arbitrum_one")
+    :reqjson string address: The EVM address to query the balance for
+    :reqjson string asset: The asset identifier (native token or ERC20 token on the specified chain)
+
+    **Example Response:**
+
+      .. sourcecode:: http
+
+        HTTP/1.1 200 OK
+        Content-Type: application/json
+
+        {
+          "result": {
+            "ETH": "8.275127966894157145"
+          },
+          "message": ""
+        }
+
+    :resjson object result: Mapping of asset identifier to balance amount as string
+    :statuscode 200: Historical on-chain balance returned successfully
+    :statuscode 400: Invalid request (future timestamp, wrong chain for asset, invalid chain)
+    :statuscode 401: User is not logged in
+    :statuscode 403: User does not have premium access
+    :statuscode 409: No archive node available for the specified chain
+    :statuscode 502: Failed to query balance from archive node
+
 
 Refetch transactions for a specific time period
 ===================================================

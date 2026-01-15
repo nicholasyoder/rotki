@@ -80,6 +80,7 @@ from rotkehlchen.db.filtering import (
 )
 from rotkehlchen.db.settings import ModifiableDBSettings
 from rotkehlchen.db.utils import DBAssetBalance, LocationData, get_query_chunks
+from rotkehlchen.errors.asset import UnknownAsset, WrongAssetType
 from rotkehlchen.errors.misc import AddressNotSupported, InputError, RemoteError, XPUBError
 from rotkehlchen.errors.serialization import DeserializationError, EncodingError
 from rotkehlchen.exchanges.constants import (
@@ -4499,6 +4500,48 @@ class HistoricalPricesPerAssetSchema(AsyncQueryArgumentSchema, TimestampRangeSch
         data['from_timestamp'] = (data['from_timestamp'] // interval) * interval
         data['to_timestamp'] = min(((data['to_timestamp'] + interval - 1) // interval) * interval, ts_now())  # noqa: E501
         return data
+
+
+class OnchainHistoricalBalanceSchema(AsyncQueryArgumentSchema):
+    timestamp = TimestampField(required=True)
+    evm_chain = EvmChainNameField(required=True, limit_to=list(EVM_CHAIN_IDS_WITH_TRANSACTIONS))
+    address = EvmAddressField(required=True)
+    asset = AssetField(expected_type=Asset, required=True)
+
+    @validates_schema
+    def validate_schema(
+            self,
+            data: dict[str, Any],
+            **_kwargs: Any,
+    ) -> None:
+        if data['timestamp'] > ts_now():
+            raise ValidationError(
+                message='Timestamp cannot be in the future',
+                field_name='timestamp',
+            )
+
+        if (chain_id := data['evm_chain']).to_blockchain().get_native_token_id() == (asset := data['asset']).identifier:  # noqa: E501
+            return
+
+        try:
+            token = asset.resolve_to_evm_token()
+        except (WrongAssetType, UnknownAsset):
+            raise ValidationError(
+                message=f'{asset.identifier} is not a valid EVM token',
+                field_name='asset',
+            ) from None
+
+        if token.chain_id != chain_id:
+            raise ValidationError(
+                message=f'{asset.identifier} is not on the {chain_id.to_name()}',
+                field_name='asset',
+            )
+
+        if token.started is not None and data['timestamp'] < token.started:
+            raise ValidationError(
+                message=f'{asset.identifier} did not exist at timestamp {data["timestamp"]}. Token started at {token.started}',  # noqa: E501
+                field_name='timestamp',
+            )
 
 
 class RefreshProtocolDataSchema(AsyncQueryArgumentSchema):

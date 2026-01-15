@@ -145,6 +145,7 @@ from rotkehlchen.api.v1.schemas import (
     NewUserSchema,
     NFTFilterQuerySchema,
     NFTLpFilterSchema,
+    OnchainHistoricalBalanceSchema,
     OptionalAddressesWithBlockchainsListSchema,
     PendingTransactionDecodingSchema,
     QueriedAddressesSchema,
@@ -253,6 +254,7 @@ from rotkehlchen.types import (
     CHAINS_WITH_TRANSACTION_DECODERS_TYPE,
     CHAINS_WITH_TRANSACTIONS_TYPE,
     CHAINS_WITH_TX_DECODING_TYPE,
+    EVM_CHAIN_IDS_WITH_TRANSACTIONS_TYPE,
     SOLANA_TOKEN_KINDS_TYPE,
     SUPPORTED_CHAIN_IDS,
     SUPPORTED_EVM_CHAINS_TYPE,
@@ -3524,6 +3526,29 @@ class HistoricalNetValueResource(BaseMethodView):
         return self.rest_api.get_historical_netvalue(
             from_timestamp=from_timestamp,
             to_timestamp=to_timestamp,
+        )
+
+
+class OnchainHistoricalBalanceResource(BaseMethodView):
+
+    post_schema = OnchainHistoricalBalanceSchema()
+
+    @require_premium_user(active_check=False)
+    @use_kwargs(post_schema, location='json')
+    def post(
+            self,
+            async_query: bool,
+            evm_chain: EVM_CHAIN_IDS_WITH_TRANSACTIONS_TYPE,
+            address: ChecksumEvmAddress,
+            asset: Asset,
+            timestamp: Timestamp,
+    ) -> Response:
+        return self.rest_api.get_onchain_historical_balance(
+            async_query=async_query,
+            evm_chain=evm_chain,
+            address=address,
+            asset=asset,
+            timestamp=timestamp,
         )
 
 

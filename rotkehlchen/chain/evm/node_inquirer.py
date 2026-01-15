@@ -18,7 +18,7 @@ from web3.exceptions import InvalidAddress, TransactionNotFound, Web3Exception
 from web3.types import BlockIdentifier, FilterParams
 
 from rotkehlchen.assets.asset import CryptoAsset
-from rotkehlchen.assets.utils import CHAIN_TO_WRAPPED_TOKEN
+from rotkehlchen.assets.utils import CHAIN_TO_WRAPPED_TOKEN, token_normalized_value_decimals
 from rotkehlchen.chain.constants import DEFAULT_RPC_TIMEOUT, SAFE_BASIC_ABI
 from rotkehlchen.chain.ethereum.constants import EVM_INDEXERS_NODE_NAME
 from rotkehlchen.chain.ethereum.types import LogIterationCallback
@@ -78,6 +78,7 @@ from rotkehlchen.utils.misc import from_wei, get_chunks
 from rotkehlchen.utils.mixins.lockable import LockableQueryMixIn, protect_with_lock
 
 if TYPE_CHECKING:
+    from rotkehlchen.assets.asset import EvmToken
     from rotkehlchen.chain.gnosis.transactions import GnosisWithdrawalsQueryParameters
     from rotkehlchen.db.dbhandler import DBHandler
 
@@ -287,13 +288,13 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
             balances[account] = from_wei(result[idx])
         return balances
 
-    def get_historical_balance(
+    def get_historical_native_balance(
             self,
             address: ChecksumEvmAddress,
             block_number: int,
             web3: Web3 | None = None,
     ) -> FVal | None:
-        """Attempts to get the historical eth balance using the node provided.
+        """Attempts to get the historical native token balance using the node provided.
 
         If `web3` is None, it uses the local own node.
         Returns None if there is no local node or node cannot query historical balance.
@@ -319,10 +320,45 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
 
         return balance
 
+    def get_historical_token_balance(
+            self,
+            address: ChecksumEvmAddress,
+            token: 'EvmToken',
+            block_number: int,
+    ) -> FVal | None:
+        """Query historical ERC20 token balance at a specific block using archive node.
+
+        Returns None if query fails (e.g., no archive node available, contract doesn't exist
+        at that block, etc.).
+        """
+        try:
+            raw_balance = self.call_contract(
+                contract_address=token.evm_address,
+                abi=self.contracts.erc20_abi,
+                method_name='balanceOf',
+                arguments=[address],
+                block_identifier=block_number,
+            )
+        except (RemoteError, BlockchainQueryError) as e:
+            log.error(
+                f'Failed to query historical token balance for {address} '
+                f'token {token.evm_address} at block {block_number}: {e!s}',
+            )
+            return None
+
+        return token_normalized_value_decimals(
+            token_amount=raw_balance,
+            token_decimals=token.decimals,
+        )
+
+    def has_archive_node(self) -> bool:
+        """Check if any connected RPC node is an archive node."""
+        return any(rpc_node.is_archive for rpc_node in self.rpc_mapping.values())
+
     def _have_archive(self, web3: Web3) -> bool:
         """Returns a boolean representing if node is an archive one."""
         address_to_check, block_to_check, expected_balance = self._get_archive_check_data()
-        return self.get_historical_balance(
+        return self.get_historical_native_balance(
             address=address_to_check,
             block_number=block_to_check,
             web3=web3,
