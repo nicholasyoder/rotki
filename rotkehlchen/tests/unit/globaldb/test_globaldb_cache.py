@@ -11,7 +11,6 @@ import requests
 from freezegun import freeze_time
 
 from rotkehlchen.api.websockets.typedefs import ProgressUpdateSubType, WSMessageType
-from rotkehlchen.assets.asset import EvmToken
 from rotkehlchen.assets.resolver import AssetResolver
 from rotkehlchen.chain.aggregator import ChainsAggregator
 from rotkehlchen.chain.ethereum.modules.convex.convex_cache import (
@@ -48,6 +47,7 @@ from rotkehlchen.chain.evm.decoding.superfluid.utils import (
     _get_token_list as get_superfluid_token_list,
     query_superfluid_tokens,
 )
+from rotkehlchen.chain.evm.decoding.velodrome.constants import CPT_VELODROME
 from rotkehlchen.chain.evm.decoding.velodrome.velodrome_cache import (
     POOL_DATA_CHUNK_SIZE,
     query_velodrome_like_data,
@@ -55,6 +55,7 @@ from rotkehlchen.chain.evm.decoding.velodrome.velodrome_cache import (
 )
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.chain.optimism.modules.velodrome.constants import A_VELO
+from rotkehlchen.chain.optimism.modules.velodrome.decoder import VelodromeDecoder
 from rotkehlchen.constants.resolver import evm_address_to_identifier
 from rotkehlchen.constants.timing import WEEK_IN_SECONDS
 from rotkehlchen.db.addressbook import DBAddressbook
@@ -75,7 +76,7 @@ from rotkehlchen.types import (
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.evm.decoding.interfaces import ReloadableDecoderMixin
-    from rotkehlchen.chain.optimism.node_inquirer import OptimismInquirer
+    from rotkehlchen.chain.optimism.decoding.decoder import OptimismTransactionDecoder
 
 
 logger = logging.getLogger(__name__)
@@ -214,14 +215,12 @@ BALANCER_SOME_EXPECTED_POOLS = {string_to_evm_address('0xf01b0684C98CD7aDA480BFD
 BALANCER_SOME_EXPECTED_GAUGES = {string_to_evm_address('0xdf54d2Dd06F8Be3B0c4FfC157bE54EC9cca91F3C')}  # noqa: E501
 
 
-def get_velodrome_addressbook_and_asset_identifiers(optimism_inquirer):
+def get_velodrome_addressbook_entries(optimism_inquirer):
     with GlobalDBHandler().conn.read_ctx() as cursor:
-        addressbook_entries = DBAddressbook(optimism_inquirer.database).get_addressbook_entries(
+        return DBAddressbook(optimism_inquirer.database).get_addressbook_entries(
             cursor=cursor,
             filter_query=AddressbookFilterQuery.make(),
         )[0]
-        asset_identifiers = cursor.execute('SELECT identifier FROM assets').fetchall()
-    return addressbook_entries, asset_identifiers
 
 
 def address_in_addressbook(address, cursor):
@@ -256,9 +255,8 @@ def test_velodrome_cache(optimism_inquirer):
     pools, gauges = read_velodrome_pools_and_gauges_from_cache()
     assert not pools & VELODROME_SOME_EXPECTED_POOLS
     assert not gauges & VELODROME_SOME_EXPECTED_GAUGES
-    addressbook_entries, asset_identifiers = get_velodrome_addressbook_and_asset_identifiers(optimism_inquirer)  # noqa: E501
+    addressbook_entries = get_velodrome_addressbook_entries(optimism_inquirer)
     assert not any(entry in addressbook_entries for entry in VELODROME_SOME_EXPECTED_ADDRESBOOK_ENTRIES)  # noqa: E501
-    assert not any((identifier,) in asset_identifiers for identifier in VELODROME_SOME_EXPECTED_ASSETS)  # noqa: E501
     call_count = 0
 
     def make_mock_call_contract(force_refresh: bool) -> Callable:
@@ -301,46 +299,32 @@ def test_velodrome_cache(optimism_inquirer):
     pools, gauges = read_velodrome_pools_and_gauges_from_cache()
     assert pools >= VELODROME_SOME_EXPECTED_POOLS
     assert gauges >= VELODROME_SOME_EXPECTED_GAUGES
-    addressbook_entries, asset_identifiers = get_velodrome_addressbook_and_asset_identifiers(optimism_inquirer)  # noqa: E501
+    addressbook_entries = get_velodrome_addressbook_entries(optimism_inquirer)
     assert all(entry in addressbook_entries for entry in VELODROME_SOME_EXPECTED_ADDRESBOOK_ENTRIES)  # noqa: E501
-    assert all((identifier,) in asset_identifiers for identifier in VELODROME_SOME_EXPECTED_ASSETS)
 
 
-def test_velodrome_cache_with_no_symbol(optimism_inquirer: 'OptimismInquirer'):
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+def test_velodrome_cache_with_no_symbol(
+        optimism_transaction_decoder: 'OptimismTransactionDecoder',
+) -> None:
     """Test a case when a queried pool is not a valid ERC20 token,
-    in such case the symbol should fallback to the form `CL{tick}-{token0}/{token1}`."""
-    def mock_call_contract(contract, node_inquirer, method_name, **kwargs):
-        """Mock the contract call for velodrome pools."""
-        if method_name == 'all':
-            return [{
-                0: '0x3241738149B24C9164dA14Fa2040159FFC6Dd237',
-                1: '',
-                2: 18,
-                4: 10,
-                7: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85',  # USDC
-                10: '0xdFA46478F9e5EA86d57387849598dbFB2e964b02',  # MAI
-                13: '0xBe3235e341393e43949aAd6F073982F67BFF412f',
-                16: '0x25dEc77FC1c2b67582DD2237dA427d3E3Be94259',
-                17: '0x0000000000000000000000000000000000000000',
-            }]
-        return []
+    in such case the symbol should fallback to the form `CL{tickSpacing}-{token0}/{token1}`."""
+    assert GlobalDBHandler.get_evm_token(
+        address=(pool_address := string_to_evm_address('0xf05cEd0a8dd4e51ecC87B82efF1D6D4Eb38aa277')),  # noqa: E501
+        chain_id=ChainID.OPTIMISM,
+    ) is None
 
-    def mock_multicall_2(require_success, calls):
-        """Mock multicall_2 returning (success, data) tuples for each call."""
-        return [(False, b'') for _ in calls]
+    assert (velodrome_decoder := optimism_transaction_decoder.decoders.get('Velodrome')) is not None  # noqa: E501
+    assert isinstance(velodrome_decoder, VelodromeDecoder)
+    velodrome_decoder._ensure_pool_tokens_exist(pool_address=pool_address)
 
-    with (
-        patch(target='rotkehlchen.chain.evm.contracts.EvmContract.call', new=mock_call_contract),
-        patch.object(optimism_inquirer, 'multicall_2', new=mock_multicall_2),
-    ):
-        query_velodrome_like_data(
-            inquirer=optimism_inquirer,
-            cache_type=CacheType.VELODROME_POOL_ADDRESS,
-            msg_aggregator=optimism_inquirer.database.msg_aggregator,
-            reload_all=False,
-        )
-
-    assert EvmToken('eip155:10/erc20:0x3241738149B24C9164dA14Fa2040159FFC6Dd237').symbol == 'CL10-USDC/MAI'  # noqa: E501
+    assert (pool_token := GlobalDBHandler.get_evm_token(
+        address=pool_address,
+        chain_id=ChainID.OPTIMISM,
+    )) is not None
+    assert pool_token.symbol == 'CL1-WETH/superETH'
+    assert pool_token.name == 'CL1-WETH/superETH Pool'
+    assert pool_token.protocol == CPT_VELODROME
 
 
 @pytest.mark.vcr
