@@ -801,7 +801,8 @@ Getting or modifying settings
               "auto_detect_tokens": true,
               "csv_export_delimiter": ",",
               "events_processing_frequency": 86400,
-              "asset_movement_amount_tolerance": "0.000001"
+              "asset_movement_amount_tolerance": "0.000001",
+              "suppress_missing_key_msg_services": ["etherscan"]
           },
           "message": ""
       }
@@ -844,6 +845,7 @@ Getting or modifying settings
    :resjson string csv_export_delimiter: The delimiter character to use when exporting data to CSV files. Default is ``","``.
    :resjson int events_processing_frequency: The frequency in seconds at which to process events and match asset movements. Must be >= 60 seconds. Default is 86400 (24 hours).
    :resjson string asset_movement_amount_tolerance: The tolerance value used when matching asset movement amounts with onchain events. Must be a positive decimal number. Default is ``"0.000001"``.
+   :resjson list suppress_missing_key_msg_services: A list of services for which the missing api key WS message should be suppressed. Empty list by default.
 
    :statuscode 200: Querying of settings was successful
    :statuscode 409: There is no logged in user
@@ -900,6 +902,7 @@ Getting or modifying settings
    :resjson string[optional] csv_export_delimiter: The delimiter character to use when exporting data to CSV files.
    :resjson int[optional] events_processing_frequency: The frequency in seconds at which to process events and match asset movements. Must be >= 60 seconds.
    :resjson string[optional] asset_movement_amount_tolerance: The tolerance value used when matching asset movement amounts with onchain events. Must be a positive decimal number.
+   :resjson list[optional] suppress_missing_key_msg_services: A list of services for which the missing api key WS message should be suppressed. Empty list by default.
 
    **Example Response**:
 
@@ -936,7 +939,8 @@ Getting or modifying settings
               "auto_detect_tokens": true,
               "csv_export_delimiter": ",",
               "events_processing_frequency": 86400,
-              "asset_movement_amount_tolerance": "0.000001"
+              "asset_movement_amount_tolerance": "0.000001",
+              "suppress_missing_key_msg_services": ["etherscan"]
           },
           "message": ""
       }

@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pysqlcipher3 import dbapi2 as sqlcipher
 
-from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.assets.utils import token_normalized_value
 from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
 from rotkehlchen.chain.evm.types import NodeName
@@ -42,7 +41,6 @@ from rotkehlchen.types import (
     EVM_CHAINS_WITH_TRANSACTIONS,
     SUPPORTED_EVM_CHAINS_TYPE,
     ExternalService,
-    HistoryEventQueryType,
     ListOfBlockchainAddresses,
     Location,
     SupportedBlockchain,
@@ -850,15 +848,9 @@ class TransactionsService:
                 service_name=ExternalService.GNOSIS_PAY,
             ) is None
         ):
-            self.rotkehlchen.msg_aggregator.add_message(
-                message_type=WSMessageType.MISSING_API_KEY,
-                data={'service': HistoryEventQueryType.GNOSIS_PAY.serialize()},
-            )
+            self.rotkehlchen.msg_aggregator.add_missing_key_message(ExternalService.GNOSIS_PAY)
         elif has_monerium and init_monerium(self.rotkehlchen.data.db) is None:
-            self.rotkehlchen.msg_aggregator.add_message(
-                message_type=WSMessageType.MISSING_API_KEY,
-                data={'service': HistoryEventQueryType.MONERIUM.serialize()},
-            )
+            self.rotkehlchen.msg_aggregator.add_missing_key_message(ExternalService.MONERIUM)
 
     def _decode_given_evmlike_tx(self, tx_ref: EVMTxHash, delete_custom: bool) -> None:
         with self.rotkehlchen.data.db.user_write() as write_cursor:

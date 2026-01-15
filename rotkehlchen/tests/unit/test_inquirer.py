@@ -44,7 +44,12 @@ from rotkehlchen.chain.evm.decoding.uniswap.constants import (
 )
 from rotkehlchen.chain.evm.decoding.velodrome.constants import CPT_AERODROME, CPT_VELODROME
 from rotkehlchen.chain.evm.node_inquirer import _query_web3_get_logs, construct_event_filter_params
-from rotkehlchen.chain.evm.types import NodeName, string_to_evm_address
+from rotkehlchen.chain.evm.types import (
+    EvmIndexer,
+    NodeName,
+    SerializableChainIndexerOrder,
+    string_to_evm_address,
+)
 from rotkehlchen.chain.gnosis.transactions import ADDED_RECEIVER_ABI, BLOCKREWARDS_ADDRESS
 from rotkehlchen.constants import ONE, ZERO
 from rotkehlchen.constants.assets import (
@@ -1488,6 +1493,12 @@ def test_find_beefy_finance_reward_pool_vault_price(ethereum_inquirer: 'Ethereum
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'], match_on=['uri', 'method', 'body'])
+@pytest.mark.parametrize('db_settings', [{
+    'evm_indexers_order': SerializableChainIndexerOrder(order={
+        ChainID.OPTIMISM: [EvmIndexer.BLOCKSCOUT, EvmIndexer.ETHERSCAN, EvmIndexer.ROUTESCAN],
+        ChainID.BASE: [EvmIndexer.BLOCKSCOUT, EvmIndexer.ETHERSCAN, EvmIndexer.ROUTESCAN],
+    }),  # Use the order the VCR was originally recorded with
+}])
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
 def test_find_uniswap_v3_position_price(database: 'DBHandler', inquirer_defi: 'Inquirer') -> None:

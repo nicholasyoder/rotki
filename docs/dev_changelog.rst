@@ -51,8 +51,9 @@ Exchange asset movement events may now be manually matched with specific onchain
   - This change preserves the actual group identifier when asset movements are combined with the group of their matched event for display as a single unit in the frontend.
 
 * **New Settings** (new fields in both ``PUT`` and ``POST`` on ``/api/(version)/settings``)
-  - ``events_processing_frequency`` Boolean flag indicating the frequency in seconds at which to process events and match asset movements. Must be >= 60 seconds. Default is 86400 (24 hours).
+  - ``events_processing_frequency`` The frequency in seconds at which to process events and match asset movements. Must be >= 60 seconds. Default is 86400 (24 hours).
   - ``asset_movement_amount_tolerance`` The tolerance value used when matching asset movement amounts with onchain events. Must be a positive decimal number. Default is ``"0.000001"``.
+  - ``suppress_missing_key_msg_services`` A list of services for which the missing api key WS message should be suppressed. Empty list by default.
 
 Event/Group Identifier Renaming
 -------------------------------

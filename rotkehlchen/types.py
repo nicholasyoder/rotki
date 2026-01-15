@@ -106,6 +106,7 @@ class ExternalService(SerializableEnumNameMixin):
     BLOCKSCOUT = auto()
     THEGRAPH = auto()
     GNOSIS_PAY = auto()
+    MONERIUM = auto()
     OPTIMISM_BLOCKSCOUT = auto()
     POLYGON_POS_BLOCKSCOUT = auto()
     ARBITRUM_ONE_BLOCKSCOUT = auto()
