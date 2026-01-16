@@ -131,7 +131,7 @@ class Bucket(NamedTuple):
                 (cls(
                     location=location,
                     location_label=event.location_label,
-                    protocol=None,
+                    protocol=asset_protocol,
                     asset=asset,
                 ), wallet_direction),
                 (cls(

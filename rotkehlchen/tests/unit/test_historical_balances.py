@@ -10,6 +10,7 @@ from rotkehlchen.chain.ethereum.modules.liquity.constants import CPT_LIQUITY
 from rotkehlchen.chain.evm.decoding.aave.constants import CPT_AAVE_V3
 from rotkehlchen.chain.evm.decoding.aura_finance.constants import CPT_AURA_FINANCE
 from rotkehlchen.chain.evm.decoding.balancer.constants import CPT_BALANCER_V2
+from rotkehlchen.chain.evm.decoding.hop.constants import CPT_HOP
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants.assets import A_BTC, A_ETH
 from rotkehlchen.constants.misc import ONE
@@ -660,12 +661,8 @@ def test_synthetic_interest_event_when_protocol_withdrawal_without_deposit(
 ) -> None:
     """Test synthetic interest event when withdrawing from a protocol without a tracked deposit.
 
-    This can happen when:
-    - The deposit occurred before we started tracking
-    - The deposit event is missing or not decoded
-    - The user started tracking an address that already had protocol positions
-
-    In this case, the entire withdrawal amount is treated as interest/yield.
+    This can happen when the deposit event is missing. In this case, the entire withdrawal
+    amount is treated as interest/yield.
 
     1. Withdraw 5 ETH from Liquity (no prior deposit tracked):
        - Interest event created: Liquity = 0 + 5 = 5
@@ -689,15 +686,13 @@ def test_synthetic_interest_event_when_protocol_withdrawal_without_deposit(
         )
 
     process_historical_balances(database, messages_aggregator)
-
     with database.conn.read_ctx() as cursor:
         assert cursor.execute('SELECT amount, sequence_index, notes FROM history_events ORDER BY timestamp, sequence_index').fetchall() == [  # noqa: E501
             ('5', 0, 'Profit earned from ETH in liquity'),  # synthetic interest event
             ('5', 1, None),  # withdrawal (sequence_index bumped from 0 to 1)
         ]
 
-        # Verify event metrics
-        assert cursor.execute(
+        assert cursor.execute(  # Verify event metrics
             'SELECT he.timestamp, em.location_label, em.protocol, em.metric_value '
             'FROM event_metrics em '
             'JOIN history_events he ON em.event_identifier = he.identifier '
@@ -706,4 +701,68 @@ def test_synthetic_interest_event_when_protocol_withdrawal_without_deposit(
             (1000, TEST_ADDR1, None, '5'),  # wallet: 0 + 5 = 5
             (1000, TEST_ADDR1, CPT_LIQUITY, '5'),  # protocol: 0 + 5 = 5 (interest event)
             (1000, TEST_ADDR1, CPT_LIQUITY, '0'),  # protocol: 5 - 5 = 0 (withdrawal)
+        ]
+
+
+def test_staking_protocol_lp_token_received_from_untracked_address(
+        database: 'DBHandler',
+        messages_aggregator: 'MessagesAggregator',
+) -> None:
+    """Test staking a protocol LP token that was received via RECEIVE/NONE from untracked address.
+
+    When a protocol LP token (e.g., HOP LP) is received from an untracked address, it goes into
+    the protocol bucket. When later staking that token, the withdrawal should come from the
+    protocol bucket, not the wallet bucket.
+
+    Since asset_protocol == counterparty (both 'hop'), both buckets are the same, so the net
+    balance remains unchanged (10 - 5 + 5 = 10). The key is that no negative balance error occurs.
+
+    1. Receive 10 HOP LP via RECEIVE/NONE -> hop bucket = 10
+    2. Stake 5 HOP LP to HOP -> hop bucket = 10 (same bucket: -5 out, +5 in)
+    """
+    hop_lp_token = get_or_create_evm_token(
+        userdb=database,
+        evm_address=string_to_evm_address('0x5C2048094bAaDe483D0b1DA85c3Da6200A88a849'),
+        chain_id=ChainID.ETHEREUM,
+        protocol=CPT_HOP,
+    )
+
+    with database.user_write() as write_cursor:
+        DBHistoryEvents(database).add_history_events(
+            write_cursor=write_cursor,
+            history=[EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(1000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=hop_lp_token,
+                amount=FVal('10'),
+                location_label=TEST_ADDR1,
+            ), EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(2000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.STAKING,
+                event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+                asset=hop_lp_token,
+                amount=FVal('5'),
+                location_label=TEST_ADDR1,
+                counterparty=CPT_HOP,
+            )],
+        )
+
+    process_historical_balances(database, messages_aggregator)
+
+    with database.conn.read_ctx() as cursor:
+        assert cursor.execute(
+            'SELECT he.timestamp, em.location_label, em.protocol, em.metric_value '
+            'FROM event_metrics em '
+            'JOIN history_events he ON em.event_identifier = he.identifier '
+            'ORDER BY he.timestamp, em.protocol',
+        ).fetchall() == [
+            (1000, TEST_ADDR1, CPT_HOP, '10'),  # hop bucket: 0 + 10 = 10
+            (2000, TEST_ADDR1, CPT_HOP, '10'),  # hop bucket: 10 - 5 + 5 = 10 (same bucket)
         ]
