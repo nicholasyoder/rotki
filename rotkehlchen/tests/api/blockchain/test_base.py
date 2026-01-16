@@ -51,7 +51,13 @@ from rotkehlchen.tests.utils.factories import (
     make_evm_address,
 )
 from rotkehlchen.tests.utils.rotkehlchen import setup_balances
-from rotkehlchen.types import ChainType, ExternalService, SupportedBlockchain, Timestamp
+from rotkehlchen.types import (
+    ADDRESSBOOK_BLOCKCHAIN_GROUP_PREFIX,
+    ChainType,
+    ExternalService,
+    SupportedBlockchain,
+    Timestamp,
+)
 from rotkehlchen.utils.misc import ts_sec_to_ms
 
 if TYPE_CHECKING:
@@ -994,6 +1000,75 @@ def test_add_blockchain_accounts_with_tags_and_label_and_querying_them(rotkehlch
             assert set(entry['tags']) == set(compare_account['tags'])
         else:
             assert 'tags' not in compare_account
+
+
+@pytest.mark.parametrize('number_of_eth_accounts', [0])
+def test_blockchain_account_tags_no_duplicates_with_group_label(
+        rotkehlchen_api_server: 'APIServer',
+) -> None:
+    """Ensure tags are not duplicated when both chain and group labels exist."""
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+    response = requests.put(
+        api_url_for(
+            rotkehlchen_api_server,
+            'tagsresource',
+        ), json={
+            'name': 'public',
+            'description': 'My public accounts',
+            'background_color': 'ffffff',
+            'foreground_color': '000000',
+        },
+    )
+    assert_proper_response(response)
+    response = requests.put(
+        api_url_for(
+            rotkehlchen_api_server,
+            'tagsresource',
+        ), json={
+            'name': 'multisig',
+            'description': 'Multisig accounts',
+            'background_color': '000000',
+            'foreground_color': 'ffffff',
+        },
+    )
+    assert_proper_response(response)
+
+    accounts_data: list[dict] = [{
+        'address': (address := make_evm_address()),
+        'tags': ['public', 'multisig'],
+    }]
+    response = requests.put(api_url_for(
+        rotkehlchen_api_server,
+        'blockchainsaccountsresource',
+        blockchain='ETH',
+    ), json={'accounts': accounts_data})
+    assert_proper_response(response)
+
+    with rotki.data.db.user_write() as write_cursor:
+        write_cursor.execute(
+            'INSERT OR REPLACE INTO address_book (address, blockchain, name) VALUES (?, ?, ?)',
+            (address, SupportedBlockchain.ETHEREUM.value, 'eth label'),
+        )
+        write_cursor.execute(
+            'INSERT OR REPLACE INTO address_book (address, blockchain, name) VALUES (?, ?, ?)',
+            (
+                address,
+                f'{ADDRESSBOOK_BLOCKCHAIN_GROUP_PREFIX}{SupportedBlockchain.ETHEREUM.get_address_chain_group().name}',
+                'group label',
+            ),
+        )
+
+    response = requests.get(api_url_for(
+        rotkehlchen_api_server,
+        'blockchainsaccountsresource',
+        blockchain='ETH',
+    ))
+    response_data: list[dict] = assert_proper_sync_response_with_result(response)
+    entry = next(item for item in response_data if item['address'] == address)
+    assert entry['label'] == 'eth label'
+    assert entry['tags'] is not None
+    assert len(entry['tags']) == len(set(entry['tags']))
+    assert set(entry['tags']) == {'public', 'multisig'}
 
 
 @pytest.mark.parametrize('number_of_eth_accounts', [3])
