@@ -1,7 +1,9 @@
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import gevent
 
+from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.assets.utils import get_or_create_evm_token
 from rotkehlchen.balances.historical import HistoricalBalancesManager
@@ -13,7 +15,7 @@ from rotkehlchen.chain.evm.decoding.balancer.constants import CPT_BALANCER_V2
 from rotkehlchen.chain.evm.decoding.hop.constants import CPT_HOP
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants.assets import A_BTC, A_ETH
-from rotkehlchen.constants.misc import ONE
+from rotkehlchen.constants.misc import ONE, ZERO
 from rotkehlchen.db.cache import DBCacheStatic
 from rotkehlchen.db.filtering import HistoricalBalancesFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
@@ -575,20 +577,20 @@ def test_wrapped_deposit_and_redeem_moves_between_protocol_buckets(
         ]
 
 
-def test_synthetic_interest_event_when_protocol_withdrawal_exceeds_deposit(
+def test_synthetic_profit_event_when_protocol_withdrawal_exceeds_deposit(
         database: 'DBHandler',
         messages_aggregator: 'MessagesAggregator',
 ) -> None:
-    """Test synthetic interest event creation when withdrawing more than deposited.
+    """Test synthetic profit event creation when withdrawing more than deposited.
 
     When WITHDRAWAL/WITHDRAW_FROM_PROTOCOL or STAKING/REMOVE_ASSET events withdraw more
-    than the protocol bucket balance (due to yield earned), a synthetic RECEIVE/INTEREST
+    than the protocol bucket balance (due to yield earned), a synthetic RECEIVE/REWARD
     event is created for the difference.
 
     1. Receive 10 ETH -> wallet = 10
     2. Deposit 5 ETH to Liquity -> wallet = 5, Liquity = 5
     3. Withdraw 5.1 ETH from Liquity (earned 0.1 ETH yield):
-       - Interest event created: Liquity = 5 + 0.1 = 5.1
+       - Profit event created: Liquity = 5 + 0.1 = 5.1
        - Withdrawal processed: wallet = 5 + 5.1 = 10.1, Liquity = 5.1 - 5.1 = 0
     """
     with database.user_write() as write_cursor:
@@ -616,7 +618,7 @@ def test_synthetic_interest_event_when_protocol_withdrawal_exceeds_deposit(
                 location_label=TEST_ADDR1,
                 counterparty=CPT_LIQUITY,
             ), EvmEvent(
-                tx_ref=make_evm_tx_hash(),
+                tx_ref=(tx_hash := make_evm_tx_hash()),
                 sequence_index=0,
                 timestamp=TimestampMS(3000),
                 location=Location.ETHEREUM,
@@ -626,43 +628,58 @@ def test_synthetic_interest_event_when_protocol_withdrawal_exceeds_deposit(
                 amount=FVal('5.1'),
                 location_label=TEST_ADDR1,
                 counterparty=CPT_LIQUITY,
+                notes='Withdraw 5.1 ETH from Liquity',
+            ), EvmEvent(
+                tx_ref=tx_hash,
+                sequence_index=1,  # event with sequence index immediately after the withdrawal
+                # to ensure indexes are incremented for multiple sequential events without error.
+                timestamp=TimestampMS(3000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.INFORMATIONAL,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=ZERO,
+                location_label=TEST_ADDR1,
             )],
         )
 
-    process_historical_balances(database, messages_aggregator)
+    for _ in range(2):  # Ensure a second run after the profit event is present gets the same result.  # noqa: E501
+        process_historical_balances(database, messages_aggregator)
 
-    with database.conn.read_ctx() as cursor:
-        assert cursor.execute('SELECT amount, sequence_index, notes FROM history_events ORDER BY timestamp, sequence_index').fetchall() == [  # noqa: E501
-            ('10', 0, None),  # receive 10 ETH
-            ('5', 0, None),  # deposit 5 ETH
-            ('0.1', 0, 'Profit earned from ETH in liquity'),  # synthetic interest event
-            ('5.1', 1, None),  # withdrawal (sequence_index bumped from 0 to 1)
-        ]
+        with database.conn.read_ctx() as cursor:
+            assert cursor.execute('SELECT amount, sequence_index, notes FROM history_events ORDER BY timestamp, sequence_index').fetchall() == [  # noqa: E501
+                ('10', 0, None),  # receive 10 ETH
+                ('5', 0, None),  # deposit 5 ETH
+                ('0.1', 0, 'Profit earned from ETH in liquity'),  # synthetic profit event
+                ('5', 1, 'Withdraw 5 ETH from Liquity'),  # withdrawal (sequence_index bumped from 0 to 1, and amount bumped from 5.1 to 5)  # noqa: E501
+                ('0', 2, None),  # informational event (sequence_index bumped from 1 to 2)
+            ]
 
-        # Verify event metrics
-        assert cursor.execute(
-            'SELECT he.timestamp, em.location_label, em.protocol, em.metric_value '
-            'FROM event_metrics em '
-            'JOIN history_events he ON em.event_identifier = he.identifier '
-            'ORDER BY he.timestamp, em.protocol NULLS FIRST, he.sequence_index',
-        ).fetchall() == [
-            (1000, TEST_ADDR1, None, '10'),  # wallet: 0 + 10 = 10
-            (2000, TEST_ADDR1, None, '5'),  # wallet: 10 - 5 = 5
-            (2000, TEST_ADDR1, CPT_LIQUITY, '5'),  # protocol: 0 + 5 = 5
-            (3000, TEST_ADDR1, None, '10.1'),  # wallet: 5 + 5.1 = 10.1
-            (3000, TEST_ADDR1, CPT_LIQUITY, '5.1'),  # protocol: 5 + 0.1 = 5.1 (interest event)
-            (3000, TEST_ADDR1, CPT_LIQUITY, '0'),  # protocol: 5.1 - 5.1 = 0 (withdrawal)
-        ]
+            # Verify event metrics
+            assert cursor.execute(
+                'SELECT he.timestamp, em.location_label, em.protocol, em.metric_value '
+                'FROM event_metrics em '
+                'JOIN history_events he ON em.event_identifier = he.identifier '
+                'ORDER BY he.timestamp, em.protocol NULLS FIRST, he.sequence_index',
+            ).fetchall() == [
+                (1000, TEST_ADDR1, None, '10'),  # wallet: 0 + 10 = 10
+                (2000, TEST_ADDR1, None, '5'),  # wallet: 10 - 5 = 5
+                (2000, TEST_ADDR1, CPT_LIQUITY, '5'),  # protocol: 0 + 5 = 5
+                (3000, TEST_ADDR1, None, '5.1'),  # wallet: 5 + 0.1 = 5.1
+                (3000, TEST_ADDR1, None, '10.1'),  # wallet: 5.1 + 5 = 10.1
+                (3000, TEST_ADDR1, CPT_LIQUITY, '0'),  # protocol: 5 - 5 = 0 (withdrawal)
+            ]
 
 
-def test_synthetic_interest_event_when_protocol_withdrawal_without_deposit(
+def test_profit_event_when_protocol_withdrawal_amount_is_all_profit(
         database: 'DBHandler',
-        messages_aggregator: 'MessagesAggregator',
 ) -> None:
-    """Test synthetic interest event when withdrawing from a protocol without a tracked deposit.
+    """Test the profit event when withdrawing from a protocol when the full withdrawal amount
+    is all profit. This can happen when the deposit event is missing, or if all the deposited
+    funds have been withdrawn earlier but now the profit earned is being withdrawn.
 
-    This can happen when the deposit event is missing. In this case, the entire withdrawal
-    amount is treated as interest/yield.
+    In these cases, the entire withdrawal amount is treated as profit/yield by converting the
+    withdrawal event into a profit event.
 
     1. Withdraw 5 ETH from Liquity (no prior deposit tracked):
        - Interest event created: Liquity = 0 + 5 = 5
@@ -685,11 +702,15 @@ def test_synthetic_interest_event_when_protocol_withdrawal_without_deposit(
             ),
         )
 
-    process_historical_balances(database, messages_aggregator)
+    with patch.object(database.msg_aggregator, 'add_message') as msg_mock:
+        process_historical_balances(database, database.msg_aggregator)
+
+    assert WSMessageType.NEGATIVE_BALANCE_DETECTED not in [
+        x.kwargs['message_type'] for x in msg_mock.call_args_list
+    ]  # Ensure no negative balances were detected.
     with database.conn.read_ctx() as cursor:
         assert cursor.execute('SELECT amount, sequence_index, notes FROM history_events ORDER BY timestamp, sequence_index').fetchall() == [  # noqa: E501
-            ('5', 0, 'Profit earned from ETH in liquity'),  # synthetic interest event
-            ('5', 1, None),  # withdrawal (sequence_index bumped from 0 to 1)
+            ('5', 0, 'Profit earned from ETH in liquity'),  # profit event (was the withdrawal)
         ]
 
         assert cursor.execute(  # Verify event metrics
@@ -698,9 +719,7 @@ def test_synthetic_interest_event_when_protocol_withdrawal_without_deposit(
             'JOIN history_events he ON em.event_identifier = he.identifier '
             'ORDER BY he.timestamp, em.protocol NULLS FIRST, he.sequence_index',
         ).fetchall() == [
-            (1000, TEST_ADDR1, None, '5'),  # wallet: 0 + 5 = 5
-            (1000, TEST_ADDR1, CPT_LIQUITY, '5'),  # protocol: 0 + 5 = 5 (interest event)
-            (1000, TEST_ADDR1, CPT_LIQUITY, '0'),  # protocol: 5 - 5 = 0 (withdrawal)
+            (1000, TEST_ADDR1, None, '5'),  # wallet: 0 + 5 = 5 (withdrawal/profit event)
         ]
 
 

@@ -277,12 +277,7 @@ class DBHistoryEvents:
             else:  # all other data
                 write_cursor.execute(f'{updatestr} WHERE identifier=?', (*bindings, event.identifier))  # noqa: E501
 
-        # Also mark it as customized
-        write_cursor.execute(
-            'INSERT OR IGNORE INTO history_events_mappings(parent_identifier, name, value) '
-            'VALUES(?, ?, ?)',
-            (event.identifier, HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED),
-        )
+        self.mark_event_customized(write_cursor=write_cursor, event=event)
 
         # Track modification only if balance-affecting fields changed. cannot be None here
         if old_data == (
@@ -298,6 +293,14 @@ class DBHistoryEvents:
         self._mark_events_modified(
             write_cursor=write_cursor,
             timestamp=TimestampMS(min(old_data[0], event.timestamp)),
+        )
+
+    def mark_event_customized(self, write_cursor: 'DBCursor', event: HistoryBaseEntry) -> None:
+        """Mark an event as customized."""
+        write_cursor.execute(
+            'INSERT OR IGNORE INTO history_events_mappings(parent_identifier, name, value) '
+            'VALUES(?, ?, ?)',
+            (event.identifier, HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED),
         )
 
     def delete_history_events_by_identifier(
