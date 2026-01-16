@@ -652,3 +652,58 @@ def test_synthetic_interest_event_when_protocol_withdrawal_exceeds_deposit(
             (3000, TEST_ADDR1, CPT_LIQUITY, '5.1'),  # protocol: 5 + 0.1 = 5.1 (interest event)
             (3000, TEST_ADDR1, CPT_LIQUITY, '0'),  # protocol: 5.1 - 5.1 = 0 (withdrawal)
         ]
+
+
+def test_synthetic_interest_event_when_protocol_withdrawal_without_deposit(
+        database: 'DBHandler',
+        messages_aggregator: 'MessagesAggregator',
+) -> None:
+    """Test synthetic interest event when withdrawing from a protocol without a tracked deposit.
+
+    This can happen when:
+    - The deposit occurred before we started tracking
+    - The deposit event is missing or not decoded
+    - The user started tracking an address that already had protocol positions
+
+    In this case, the entire withdrawal amount is treated as interest/yield.
+
+    1. Withdraw 5 ETH from Liquity (no prior deposit tracked):
+       - Interest event created: Liquity = 0 + 5 = 5
+       - Withdrawal processed: wallet = 0 + 5 = 5, Liquity = 5 - 5 = 0
+    """
+    with database.user_write() as write_cursor:
+        DBHistoryEvents(database).add_history_event(
+            write_cursor=write_cursor,
+            event=EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(1000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.WITHDRAWAL,
+                event_subtype=HistoryEventSubType.WITHDRAW_FROM_PROTOCOL,
+                asset=A_ETH,
+                amount=FVal('5'),
+                location_label=TEST_ADDR1,
+                counterparty=CPT_LIQUITY,
+            ),
+        )
+
+    process_historical_balances(database, messages_aggregator)
+
+    with database.conn.read_ctx() as cursor:
+        assert cursor.execute('SELECT amount, sequence_index, notes FROM history_events ORDER BY timestamp, sequence_index').fetchall() == [  # noqa: E501
+            ('5', 0, 'Profit earned from ETH in liquity'),  # synthetic interest event
+            ('5', 1, None),  # withdrawal (sequence_index bumped from 0 to 1)
+        ]
+
+        # Verify event metrics
+        assert cursor.execute(
+            'SELECT he.timestamp, em.location_label, em.protocol, em.metric_value '
+            'FROM event_metrics em '
+            'JOIN history_events he ON em.event_identifier = he.identifier '
+            'ORDER BY he.timestamp, em.protocol NULLS FIRST, he.sequence_index',
+        ).fetchall() == [
+            (1000, TEST_ADDR1, None, '5'),  # wallet: 0 + 5 = 5
+            (1000, TEST_ADDR1, CPT_LIQUITY, '5'),  # protocol: 0 + 5 = 5 (interest event)
+            (1000, TEST_ADDR1, CPT_LIQUITY, '0'),  # protocol: 5 - 5 = 0 (withdrawal)
+        ]

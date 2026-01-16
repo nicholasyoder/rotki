@@ -320,7 +320,7 @@ def process_historical_balances(
                             ),
                             mapping_values={HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_CUSTOMIZED},  # noqa: E501
                         )
-                    bucket_balances[bucket] += interest_amount
+                    bucket_balances[bucket] = current_balance + interest_amount
                     metrics_batch.append((
                         interest_event_id,
                         bucket.location_label,
