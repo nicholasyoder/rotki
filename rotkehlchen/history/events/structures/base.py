@@ -80,8 +80,12 @@ def get_event_direction(
             return EventDirection.IN
         if (event_type, event_subtype) == (HistoryEventType.WITHDRAWAL, HistoryEventSubType.REMOVE_ASSET):  # noqa: E501
             return EventDirection.OUT
-        # TODO: Handle TRANSFER/NONE in a follow-up PR. Requires generating two events
-        # (TRANSFER for sender, RECEIVE for recipient) during decoding.
+        if (event_type, event_subtype) == (HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_TO_PROTOCOL):  # noqa: E501
+            return EventDirection.OUT
+        if (event_type, event_subtype) == (HistoryEventType.WITHDRAWAL, HistoryEventSubType.WITHDRAW_FROM_PROTOCOL):  # noqa: E501
+            return EventDirection.IN
+        if (event_type, event_subtype) == (HistoryEventType.TRANSFER, HistoryEventSubType.NONE):
+            return EventDirection.OUT
 
     return direction
 

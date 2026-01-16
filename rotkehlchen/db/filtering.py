@@ -2457,7 +2457,7 @@ class HistoricalBalancesFilterQuery(DBFilterQuery, FilterWithTimestamp):
                 and_op=True,
                 column='location_label',
                 value=location_label,
-                alias='he',
+                alias='em',
             )
             filters.append(label_filter)
             unprocessed_clauses.append('location_label = ?')
