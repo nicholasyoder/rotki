@@ -1,10 +1,9 @@
 import logging
-from typing import TYPE_CHECKING, Final, NamedTuple, TypeAlias
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias
 
 from rotkehlchen.api.websockets.typedefs import ProgressUpdateSubType, WSMessageType
 from rotkehlchen.constants import ZERO
 from rotkehlchen.db.cache import DBCacheStatic
-from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.errors.asset import UnknownAsset, WrongAssetType
@@ -16,7 +15,7 @@ from rotkehlchen.history.events.structures.types import (
     HistoryEventType,
 )
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.types import EventMetricKey, Location, TimestampMS
+from rotkehlchen.types import EventMetricKey, Location, Timestamp, TimestampMS
 from rotkehlchen.utils.misc import ts_ms_to_sec, ts_now, ts_now_in_ms
 from rotkehlchen.utils.mixins.lockable import skip_if_running
 
@@ -108,7 +107,10 @@ class Bucket(NamedTuple):
         }
 
     @classmethod
-    def from_event(cls, event: 'HistoryBaseEntry') -> list[tuple['Bucket', EventDirection]]:
+    def from_event(
+            cls,
+            event: 'HistoryBaseEntry',
+    ) -> list[tuple['Bucket', Literal[EventDirection.IN, EventDirection.OUT]]]:
         """Returns list of (Bucket, direction) pairs affected by this event.
 
         Handles the following cases:
@@ -134,9 +136,8 @@ class Bucket(NamedTuple):
             counterparty is not None and
             (wallet_direction := event.maybe_get_direction(for_balance_tracking=True)) is not None
         ):
-            protocol_direction = EventDirection.IN if wallet_direction == EventDirection.OUT else EventDirection.OUT  # noqa: E501
             return [
-                (cls(
+                (cls(  # type: ignore[list-item]  # wallet_direction will not be neutral for dual bucket protocol events.
                     location=location,
                     location_label=event.location_label,
                     protocol=asset_protocol,
@@ -147,7 +148,7 @@ class Bucket(NamedTuple):
                     location_label=event.location_label,
                     protocol=counterparty,
                     asset=asset,
-                ), protocol_direction),
+                ), EventDirection.IN if wallet_direction == EventDirection.OUT else EventDirection.OUT),  # noqa: E501
             ]
 
         if (  # Transfers affect both sender and receiver. Protocol tokens use protocol buckets.
@@ -286,84 +287,18 @@ def process_historical_balances(
     metrics_batch: list[tuple[int | None, str | None, str | None, str, str]] = []
     first_batch_written, send_ws_every = False, msg_aggregator.how_many_events_per_ws(total_events)
     for idx, event in enumerate(events):
-        if len(bucket_directions := Bucket.from_event(event)) == 0:
-            continue
-
-        for bucket, direction in bucket_directions:
-            if (current_balance := bucket_balances.get(bucket, ZERO)) < ZERO:
-                continue
-
-            if direction == EventDirection.IN:
-                new_balance = current_balance + event.amount
-            elif (new_balance := current_balance - event.amount) < ZERO:  # direction == EventDirection.OUT  # noqa: E501
-                # Withdrawal exceeds deposit, meaning yield was earned. Only applies to
-                # protocol withdrawals without wrapped tokens (WITHDRAW_FROM_PROTOCOL,
-                # REMOVE_ASSET). Create an interest event to account for the earned yield.
-                if (
-                    bucket.protocol is not None and
-                    (event.event_type, event.event_subtype) in PROTOCOL_WITHDRAWAL_EVENTS and
-                    isinstance(event, OnchainEvent)
-                ):
-                    with database.user_write() as write_cursor:
-                        write_cursor.execute(
-                            'UPDATE history_events SET sequence_index = sequence_index + 1 '
-                            'WHERE group_identifier = ? AND sequence_index >= ?',
-                            (event.group_identifier, event.sequence_index),
-                        )
-                        interest_event_id = DBHistoryEvents(database).add_history_event(
-                            write_cursor=write_cursor,
-                            event=type(event)(
-                                tx_ref=event.tx_ref,
-                                sequence_index=event.sequence_index,
-                                timestamp=event.timestamp,
-                                location=event.location,
-                                event_type=HistoryEventType.RECEIVE,
-                                event_subtype=HistoryEventSubType.INTEREST,
-                                asset=event.asset,
-                                amount=(interest_amount := abs(new_balance)),
-                                location_label=event.location_label,
-                                notes=f'Profit earned from {event.asset} in {bucket.protocol}',
-                                counterparty=bucket.protocol,
-                                address=event.address,
-                            ),
-                            mapping_values={HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_CUSTOMIZED},  # noqa: E501
-                        )
-                    bucket_balances[bucket] = current_balance + interest_amount
-                    metrics_batch.append((
-                        interest_event_id,
-                        bucket.location_label,
-                        bucket.protocol,
-                        EventMetricKey.BALANCE.serialize(),
-                        str(bucket_balances[bucket]),
-                    ))
-                    new_balance = ZERO
-                else:
-                    msg_aggregator.add_message(
-                        message_type=WSMessageType.NEGATIVE_BALANCE_DETECTED,
-                        data={
-                            'event_identifier': event.identifier,
-                            'group_identifier': event.group_identifier,
-                            'asset': event.asset.identifier,
-                            'bucket': bucket.serialize(),
-                            'balance_before': str(current_balance),
-                            'last_run_ts': last_run_ts,
-                        },
-                    )
-                    log.warning(
-                        f'Negative balance detected for {event.asset.identifier} '
-                        f'at event {event.identifier}. Skipping {bucket}.',
-                    )
-                    bucket_balances[bucket] = new_balance
-                    continue
-
-            bucket_balances[bucket] = new_balance
-            metrics_batch.append((
-                event.identifier,
-                bucket.location_label,
-                bucket.protocol,
-                EventMetricKey.BALANCE.serialize(),
-                str(new_balance),
-            ))
+        for event_to_apply in events_to_apply if (events_to_apply := _maybe_add_profit_event(
+            database=database,
+            event=event,
+            bucket_balances=bucket_balances,
+        )) is not None else (event,):
+            _apply_to_buckets(
+                database=database,
+                event=event_to_apply,
+                bucket_balances=bucket_balances,
+                metrics_batch=metrics_batch,
+                last_run_ts=last_run_ts,
+            )
 
         if idx % send_ws_every == 0:
             msg_aggregator.add_message(
@@ -458,3 +393,163 @@ def _write_metrics_batch(
         'VALUES (?, ?, ?, ?, ?)',
         metrics_batch,
     )
+
+
+def _apply_to_buckets(
+        database: 'DBHandler',
+        event: 'HistoryBaseEntry',
+        bucket_balances: dict[Bucket, FVal],
+        metrics_batch: list[tuple[int | None, str | None, str | None, str, str]],
+        last_run_ts: Timestamp | None,
+) -> None:
+    """Apply the given event to the buckets it affects."""
+    if len(bucket_directions := Bucket.from_event(event)) == 0:
+        return
+
+    for bucket, direction in bucket_directions:
+        if (current_balance := bucket_balances.get(bucket, ZERO)) < ZERO:
+            continue
+
+        if direction == EventDirection.IN:
+            new_balance = current_balance + event.amount
+        elif (new_balance := current_balance - event.amount) < ZERO:  # direction == EventDirection.OUT (direction from from_event will not be NEUTRAL) # noqa: E501
+            database.msg_aggregator.add_message(
+                message_type=WSMessageType.NEGATIVE_BALANCE_DETECTED,
+                data={
+                    'event_identifier': event.identifier,
+                    'group_identifier': event.group_identifier,
+                    'asset': event.asset.identifier,
+                    'bucket': bucket.serialize(),
+                    'balance_before': str(current_balance),
+                    'last_run_ts': last_run_ts,
+                },
+            )
+            log.warning(
+                f'Negative balance detected for {event.asset.identifier} '
+                f'at event {event.identifier}. Skipping {bucket}.',
+            )
+            bucket_balances[bucket] = new_balance
+            continue
+
+        bucket_balances[bucket] = new_balance
+        metrics_batch.append((
+            event.identifier,
+            bucket.location_label,
+            bucket.protocol,
+            EventMetricKey.BALANCE.serialize(),
+            str(new_balance),
+        ))
+
+
+def _maybe_add_profit_event(
+        database: 'DBHandler',
+        event: 'HistoryBaseEntry',
+        bucket_balances: dict[Bucket, FVal],
+) -> tuple[OnchainEvent, ...] | None:
+    """Maybe add a receive/reward event for the profit earned while an asset was in a protocol.
+    If the profit event is already present, take no action and return None. Otherwise, update the
+    amount of the given withdrawal event, and create the profit event.
+    Returns a tuple containing the new profit event and the updated withdrawal event or None
+    if there is no profit event needed or if it is already present.
+    """
+    if len(bucket_directions := Bucket.from_event(event)) == 0:
+        return None
+
+    for bucket, direction in bucket_directions:
+        if (current_balance := bucket_balances.get(bucket, ZERO)) < ZERO:
+            continue
+
+        if (
+            direction == EventDirection.OUT and
+            (new_balance := current_balance - event.amount) < ZERO and
+            bucket.protocol is not None and
+            (event.event_type, event.event_subtype) in PROTOCOL_WITHDRAWAL_EVENTS and
+            isinstance(event, OnchainEvent)
+        ):
+            # Withdrawal exceeds deposit, meaning yield was earned. Only applies to
+            # protocol withdrawals without wrapped tokens (WITHDRAW_FROM_PROTOCOL,
+            # REMOVE_ASSET). Create a profit event to account for the earned yield.
+            break  # Break loop and create profit event.
+    else:
+        return None  # no yield earned detected
+
+    with database.conn.read_ctx() as cursor:
+        if cursor.execute(
+            'SELECT COUNT(*) FROM history_events he '
+            'JOIN chain_events_info cei ON he.identifier = cei.identifier '
+            'WHERE group_identifier=? AND type=? AND subtype=? '
+            'AND location_label=? AND asset=? AND amount=? AND counterparty=?',
+            (
+                event.group_identifier,
+                HistoryEventType.RECEIVE.serialize(),
+                HistoryEventSubType.REWARD.serialize(),
+                event.location_label,
+                event.asset.identifier,
+                str(profit_amount := abs(new_balance)),
+                bucket.protocol,
+            ),
+        ).fetchone()[0] != 0:
+            return None
+
+    db_events = DBHistoryEvents(database)
+    with database.user_write() as write_cursor:
+        # If the entire amount of the withdrawal is profit, convert the withdrawal itself
+        # to an receive/reward event
+        if (new_withdraw_amount := event.amount - profit_amount) == ZERO:
+            event.event_type = HistoryEventType.RECEIVE
+            event.event_subtype = HistoryEventSubType.REWARD
+            event.notes = f'Profit earned from {event.asset} in {bucket.protocol}'
+            write_cursor.execute(
+                'UPDATE history_events SET type=?, subtype=?, notes=? WHERE identifier=?',
+                (
+                    event.event_type.serialize(),
+                    event.event_subtype.serialize(),
+                    event.notes,
+                    event.identifier,
+                ),
+            )
+            return (event,)
+
+        # First increment the sequence indexes to ensure an unused index for the
+        # new event. Can't adjust in a single query or it may try to set an index
+        # to an existing index and cause unique constraint errors.
+        write_cursor.execute(  # Increment but make negative so it is unique
+            'UPDATE history_events SET sequence_index = -(sequence_index + 1) '
+            'WHERE group_identifier = ? AND sequence_index >= ?',
+            (event.group_identifier, event.sequence_index),
+        )
+        write_cursor.execute(  # Shift back to positive
+            'UPDATE history_events SET sequence_index = -sequence_index '
+            'WHERE group_identifier = ? AND sequence_index < 0',
+            (event.group_identifier,),
+        )
+        # Update the amount of the withdrawal event in both the amount and notes columns.
+        # Replace the amount in the notes with spaces on each side to prevent matching part of
+        # an address or something if the amount is only a single digit.
+        if event.notes is not None:
+            event.notes = event.notes.replace(f' {event.amount} ', f' {new_withdraw_amount} ')
+        event.amount = new_withdraw_amount
+        write_cursor.execute(
+            'UPDATE history_events SET amount=?, notes=? WHERE identifier=?',
+            (str(event.amount), event.notes, event.identifier),
+        )
+        # Add the profit event
+        identifier = db_events.add_history_event(
+            write_cursor=write_cursor,
+            event=(profit_event := type(event)(
+                tx_ref=event.tx_ref,
+                sequence_index=event.sequence_index,
+                timestamp=event.timestamp,
+                location=event.location,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.REWARD,
+                asset=event.asset,
+                amount=profit_amount,
+                location_label=event.location_label,
+                notes=f'Profit earned from {event.asset} in {bucket.protocol}',
+                counterparty=bucket.protocol,
+                address=event.address,
+            )),
+        )
+        profit_event.identifier = identifier
+        return profit_event, event
