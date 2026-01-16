@@ -1638,11 +1638,15 @@ class DBHandler:
         Each account entry contains address and potentially label and tags
         """
         query = cursor.execute(
-            "SELECT A.account, C.name, group_concat(B.tag_name,',') "
+            "SELECT A.account, COALESCE(C1.name, C2.name), "
+            "(SELECT group_concat(tag_name, ',') "
+            "FROM tag_mappings WHERE object_reference = A.account) "
             "FROM blockchain_accounts AS A "
-            "LEFT OUTER JOIN tag_mappings AS B ON B.object_reference = A.account "
-            "LEFT OUTER JOIN address_book AS C ON C.address = A.account AND (A.blockchain IS C.blockchain OR C.blockchain IS ?) "  # noqa: E501
-            "WHERE A.blockchain=? GROUP BY account;",
+            "LEFT OUTER JOIN address_book AS C1 "
+            "ON C1.address = A.account AND C1.blockchain = A.blockchain "
+            "LEFT OUTER JOIN address_book AS C2 "
+            "ON C2.address = A.account AND C2.blockchain = ? "
+            "WHERE A.blockchain=?;",
             (f'{ADDRESSBOOK_BLOCKCHAIN_GROUP_PREFIX}{blockchain.get_address_chain_group().name}', blockchain.value),  # noqa: E501
         )
 
