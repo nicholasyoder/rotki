@@ -23,6 +23,7 @@ import { createAccountWithBalance } from '@/utils/blockchain/accounts/create-acc
 import { getAccountAddress, getAccountLabel } from '@/utils/blockchain/accounts/utils';
 import { assetSum, balanceSum } from '@/utils/calculation';
 import { uniqueStrings } from '@/utils/data';
+import { deduplicateTags } from '@/utils/tags';
 
 interface AccountBalances {
   assets: AssetBalance[];
@@ -193,12 +194,14 @@ export function useBlockchainAccountData(): UseBlockchainAccountDataReturn {
 
           balance.value = balance.value.plus(subBalance.value);
         }
+        const tags = account.tags ? deduplicateTags(account.tags) : undefined;
         return {
           ...omit(account, ['chain', 'groupId', 'groupHeader']),
           ...balance,
           category: getChainAccountType(account.chain),
           chains: [account.chain],
           expansion: groupAccounts.length > 0 ? 'accounts' : undefined,
+          tags,
           type: 'group',
         } satisfies BlockchainAccountGroupWithBalance;
       });
