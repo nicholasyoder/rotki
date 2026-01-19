@@ -1,12 +1,11 @@
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING
 
 from rotkehlchen.api.v1.types import IncludeExcludeFilterData
 from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
-from rotkehlchen.constants import HOUR_IN_SECONDS
 from rotkehlchen.db.cache import ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE, DBCacheDynamic, DBCacheStatic
 from rotkehlchen.db.constants import (
     CHAIN_EVENT_FIELDS,
@@ -44,8 +43,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
-
-ASSET_MOVEMENT_MATCH_WINDOW: Final = HOUR_IN_SECONDS
 
 
 @dataclass(frozen=True)
@@ -298,6 +295,7 @@ def match_asset_movements(database: 'DBHandler') -> None:
     log.debug('Analyzing asset movements for corresponding onchain events...')
     events_db = DBHistoryEvents(database=database)
     asset_movements, fee_events = get_unmatched_asset_movements(database)
+    match_window = CachedSettings().get_settings().asset_movement_time_range
     unmatched_asset_movements, movement_ids_to_ignore = [], []
     for asset_movement in asset_movements:
         if _should_auto_ignore_movement(asset_movement=asset_movement):
@@ -309,6 +307,7 @@ def match_asset_movements(database: 'DBHandler') -> None:
             asset_movement=asset_movement,
             is_deposit=(is_deposit := asset_movement.event_type == HistoryEventType.DEPOSIT),
             fee_event=fee_events.get(asset_movement.group_identifier),
+            match_window=match_window,
         )) == 1:
             success, error_msg = update_asset_movement_matched_event(
                 events_db=events_db,
@@ -565,7 +564,7 @@ def find_asset_movement_matches(
         asset_movement: AssetMovement,
         is_deposit: bool,
         fee_event: AssetMovement | None,
-        match_window: int = ASSET_MOVEMENT_MATCH_WINDOW,
+        match_window: int,
 ) -> list[HistoryBaseEntry]:
     """Find events that closely match what the corresponding event for the given asset movement
     should look like. Returns a list of events that match.
