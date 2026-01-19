@@ -28,14 +28,33 @@ def evm_address_to_identifier(
     return ident
 
 
+def _split_evm_identifier(identifier: str) -> tuple[str, str, str] | None:
+    """Split a CAIPs identifier on `:` and return its three substrings or None if it is invalid."""
+    if len(parts := identifier.split(':')) != 3 or parts[0] != EVM_CHAIN_DIRECTIVE:
+        return None
+
+    return tuple(parts)  # type: ignore[return-value]  # Checked the len above, will be 3 items.
+
+
 def identifier_to_evm_address(identifier: str) -> ChecksumEvmAddress | None:
     """Parse CAIPs identifier format and return the EVM address or None on error."""
-    if len(parts := identifier.split(':')) < 3 or parts[0] != EVM_CHAIN_DIRECTIVE:
+    if (parts := _split_evm_identifier(identifier)) is None:
         return None
 
     try:
         return deserialize_evm_address(parts[2].split('/')[0])  # Don't include the token id for erc721  # noqa: E501
     except DeserializationError:
+        return None
+
+
+def identifier_to_evm_chain(identifier: str) -> ChainID | None:
+    """Parse CAIPs identifier format and return the EVM chain or None on error."""
+    if (parts := _split_evm_identifier(identifier)) is None:
+        return None
+
+    try:
+        return ChainID.deserialize(int(parts[1].split('/')[0]))
+    except (DeserializationError, TypeError, ValueError):
         return None
 
 
