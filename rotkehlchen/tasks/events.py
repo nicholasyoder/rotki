@@ -1,11 +1,12 @@
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from rotkehlchen.api.v1.types import IncludeExcludeFilterData
 from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
+from rotkehlchen.constants.resolver import SOLANA_CHAIN_DIRECTIVE, identifier_to_evm_chain
 from rotkehlchen.db.cache import ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE, DBCacheDynamic, DBCacheStatic
 from rotkehlchen.db.constants import (
     CHAIN_EVENT_FIELDS,
@@ -32,7 +33,13 @@ from rotkehlchen.history.events.structures.types import (
     HistoryEventType,
 )
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.types import CHAINS_WITH_TRANSACTIONS, Location, SupportedBlockchain, Timestamp
+from rotkehlchen.types import (
+    CHAINS_WITH_TRANSACTIONS,
+    EVM_CHAIN_IDS_WITH_TRANSACTIONS,
+    Location,
+    SupportedBlockchain,
+    Timestamp,
+)
 from rotkehlchen.utils.misc import ts_ms_to_sec, ts_now
 
 if TYPE_CHECKING:
@@ -43,6 +50,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
+
+NATIVE_TOKEN_IDS_OF_CHAINS_WITH_TXS: Final = {
+    x.get_native_token_id() for x in CHAINS_WITH_TRANSACTIONS
+}
 
 
 @dataclass(frozen=True)
@@ -272,6 +283,8 @@ def _should_auto_ignore_movement(asset_movement: AssetMovement) -> bool:
     """Check if the given asset movement should be auto ignored.
     Returns True if the asset movement has a fiat asset, or if it is a movement to/from a
     blockchain that we will not have txs for. Otherwise returns False.
+    To determine if the chain is supported, first check if it is specified in the extra data.
+    If not, check if the event's asset (or any asset in its collection) is from a supported chain.
     """
     if asset_movement.asset.is_fiat():
         return True
@@ -285,7 +298,13 @@ def _should_auto_ignore_movement(asset_movement: AssetMovement) -> bool:
         except DeserializationError:
             return True  # not even a valid SupportedBlockchain
 
-    return False
+    return not any(
+        (
+            asset.identifier in NATIVE_TOKEN_IDS_OF_CHAINS_WITH_TXS or
+            asset.identifier.startswith(f'{SOLANA_CHAIN_DIRECTIVE}/') or
+            identifier_to_evm_chain(asset.identifier) in EVM_CHAIN_IDS_WITH_TRANSACTIONS
+        ) for asset in GlobalDBHandler.get_assets_in_same_collection(asset_movement.asset.identifier)  # noqa: E501
+    )
 
 
 def match_asset_movements(database: 'DBHandler') -> None:

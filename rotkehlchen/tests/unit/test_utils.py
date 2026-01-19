@@ -16,7 +16,7 @@ from packaging.version import Version
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.ethereum.utils import generate_address_via_create2
 from rotkehlchen.constants.assets import A_USDC
-from rotkehlchen.constants.resolver import identifier_to_evm_address
+from rotkehlchen.constants.resolver import identifier_to_evm_address, identifier_to_evm_chain
 from rotkehlchen.errors.serialization import ConversionError
 from rotkehlchen.externalapis.github import Github
 from rotkehlchen.fval import FVal
@@ -528,6 +528,24 @@ def test_identifier_to_evm_address():
     assert identifier_to_evm_address(identifier='eip155:/:') is None
     assert identifier_to_evm_address(identifier='eip155:1/erc20:') is None
     assert identifier_to_evm_address(identifier='eip155:1/erc20:xyz') is None
+
+
+def test_identifier_to_evm_chain():
+    """Test various identifier_to_evm_chain conversions.
+    Checks that valid identifier gets the correct chain, and also that a number of invalid
+    identifiers return None without raising exceptions.
+    """
+    assert identifier_to_evm_chain(
+        identifier=A_USDC.identifier,
+    ) == A_USDC.resolve_to_evm_token().chain_id
+
+    # check various invalid identifiers to ensure they return None without raising exceptions.
+    assert identifier_to_evm_chain(identifier='') is None
+    assert identifier_to_evm_chain(identifier='xyz:1/erc20:0x1B073382E63411E3BcfFE90aC1B9A43feFa1Ec6F') is None  # noqa: E501
+    assert identifier_to_evm_chain(identifier='1/erc20:0x1B073382E63411E3BcfFE90aC1B9A43feFa1Ec6F') is None  # noqa: E501
+    assert identifier_to_evm_chain(identifier='eip155:1:erc20:0x1B073382E63411E3BcfFE90aC1B9A43feFa1Ec6F') is None  # noqa: E501
+    assert identifier_to_evm_chain(identifier='eip155:xyz/erc20:0x1B073382E63411E3BcfFE90aC1B9A43feFa1Ec6F') is None  # noqa: E501
+    assert identifier_to_evm_chain(identifier='eip155:/:') is None
 
 
 def test_skip_if_running():

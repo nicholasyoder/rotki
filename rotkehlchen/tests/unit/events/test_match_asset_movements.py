@@ -4,9 +4,10 @@ from unittest.mock import patch
 import pytest
 
 from rotkehlchen.api.websockets.typedefs import WSMessageType
+from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
-from rotkehlchen.constants import HOUR_IN_SECONDS
-from rotkehlchen.constants.assets import A_BTC, A_ETH, A_USD, A_USDC
+from rotkehlchen.constants import HOUR_IN_SECONDS, ONE
+from rotkehlchen.constants.assets import A_BTC, A_ETH, A_USD, A_USDC, A_WETH_OPT, A_WSOL
 from rotkehlchen.db.cache import ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE, DBCacheDynamic
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
@@ -406,3 +407,40 @@ def test_match_asset_movements_settings(database: 'DBHandler') -> None:
     assert all_events[1].event_subtype == HistoryEventSubType.FEE
     assert all_events[1].amount == movement_event.amount - matched_event.amount
     assert all_events[2].group_identifier == matched_event.group_identifier
+
+
+def test_auto_ignore_by_asset(database: 'DBHandler') -> None:
+    """Test that movements are auto-ignored if their asset is for an unsupported chain."""
+    events_db = DBHistoryEvents(database)
+    with database.conn.write_ctx() as write_cursor:
+        events_db.add_history_events(
+            write_cursor=write_cursor,
+            history=[AssetMovement(
+                identifier=idx + 1,
+                location=Location.KRAKEN,
+                event_type=HistoryEventType.WITHDRAWAL,
+                timestamp=TimestampMS(1520000000000),
+                asset=asset,
+                amount=ONE,
+                unique_id=f'xyz{idx}',
+                location_label='Kraken 1',
+            ) for idx, asset in enumerate([
+                A_BTC,  # Native token for supported chain
+                A_WETH_OPT,  # EVM token from a supported chain
+                A_WSOL,  # Solana token
+                Asset('ICP'),  # Native token for unsupported chain
+                Asset('eip155:250/erc20:0xc60D7067dfBc6f2caf30523a064f416A5Af52963'),  # Unsupported EVM chain.  # noqa: E501
+                Asset('STRK'),  # STRK is an unsupported chain but another token in the collection
+                # is from a supported chain, so don't ignore since it may be either token.
+            ])],
+        )
+
+    match_asset_movements(database=database)
+    with database.conn.read_ctx() as cursor:
+        assert cursor.execute(
+            'SELECT * FROM key_value_cache WHERE name LIKE ?',
+            ('matched_asset_movement_%',),
+        ).fetchall() == [  # only 4 & 5 (ICP, and unsupported EVM chain token) are ignored
+            ('matched_asset_movement_4', str(ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE)),
+            ('matched_asset_movement_5', str(ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE)),
+        ]
