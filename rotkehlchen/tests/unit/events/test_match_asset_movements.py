@@ -10,6 +10,7 @@ from rotkehlchen.constants.assets import A_BTC, A_ETH, A_USD, A_USDC
 from rotkehlchen.db.cache import ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE, DBCacheDynamic
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
+from rotkehlchen.db.settings import ModifiableDBSettings
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.asset_movement import (
     AssetMovement,
@@ -21,6 +22,7 @@ from rotkehlchen.history.events.structures.solana_event import SolanaEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.tasks.events import match_asset_movements
 from rotkehlchen.tests.fixtures import MockedWsMessage
+from rotkehlchen.tests.unit.test_eth2 import HOUR_IN_MILLISECONDS
 from rotkehlchen.tests.utils.factories import (
     make_evm_address,
     make_evm_tx_hash,
@@ -338,9 +340,9 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
     assert find_match_mock.call_args_list[1].kwargs['asset_movement'] == withdrawal2
 
 
-def test_match_asset_movements_tolerance(database: 'DBHandler') -> None:
-    """Test that the asset_movement_amount_tolerance setting works correctly, with the match
-    failing with too low of tolerance and succeeding with higher tolerance.
+def test_match_asset_movements_settings(database: 'DBHandler') -> None:
+    """Test that the amount tolerance and time range settings works correctly, with the match
+    failing when tolerance or time range is too small but succeeding with higher values.
     """
     events_db = DBHistoryEvents(database)
     with database.conn.write_ctx() as write_cursor:
@@ -359,7 +361,7 @@ def test_match_asset_movements_tolerance(database: 'DBHandler') -> None:
                 identifier=(match_id := 2),
                 tx_ref=make_evm_tx_hash(),
                 sequence_index=0,
-                timestamp=movement_event.timestamp,
+                timestamp=TimestampMS(movement_event.timestamp + HOUR_IN_MILLISECONDS * 2),
                 location=Location.ARBITRUM_ONE,
                 event_type=HistoryEventType.RECEIVE,
                 event_subtype=HistoryEventSubType.NONE,
@@ -369,15 +371,18 @@ def test_match_asset_movements_tolerance(database: 'DBHandler') -> None:
             ))],
         )
 
-    for tolerance, expected_value in (
-        (FVal('0.0001'), None),  # First test with tolerance too low - match should fail
-        (FVal('0.01'), match_id),  # Then test with higher tolerance - match should succeed
+    for tolerance, time_range, expected_value in (
+        (FVal('0.01'), HOUR_IN_SECONDS, None),  # ok tolerance, but range too small - Fail
+        (FVal('0.0001'), HOUR_IN_SECONDS * 3, None),  # ok range, but tolerance too low - Fail
+        (FVal('0.01'), HOUR_IN_SECONDS * 3, match_id),  # ok tolerance, and ok range - Success
     ):
         with database.user_write() as write_cursor:
-            database.set_setting(
+            database.set_settings(
                 write_cursor=write_cursor,
-                name='asset_movement_amount_tolerance',
-                value=tolerance,
+                settings=ModifiableDBSettings(
+                    asset_movement_amount_tolerance=tolerance,
+                    asset_movement_time_range=time_range,
+                ),
             )
 
         match_asset_movements(database=database)
@@ -396,8 +401,8 @@ def test_match_asset_movements_tolerance(database: 'DBHandler') -> None:
         )
 
     assert len(all_events) == 3
-    assert all_events[0].group_identifier == matched_event.group_identifier
+    assert all_events[0].group_identifier == movement_event.group_identifier
     assert all_events[1].group_identifier == movement_event.group_identifier
-    assert all_events[2].group_identifier == movement_event.group_identifier
-    assert all_events[2].event_subtype == HistoryEventSubType.FEE
-    assert all_events[2].amount == movement_event.amount - matched_event.amount
+    assert all_events[1].event_subtype == HistoryEventSubType.FEE
+    assert all_events[1].amount == movement_event.amount - matched_event.amount
+    assert all_events[2].group_identifier == matched_event.group_identifier

@@ -5,6 +5,7 @@ from unittest.mock import patch
 import requests
 
 from rotkehlchen.api.v1.types import TaskName
+from rotkehlchen.constants import HOUR_IN_SECONDS
 from rotkehlchen.constants.assets import A_BTC, A_ETH, A_WETH
 from rotkehlchen.db.cache import ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE, DBCacheDynamic
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
@@ -396,6 +397,7 @@ def test_get_possible_matches(rotkehlchen_api_server: 'APIServer') -> None:
                 api_url_for(rotkehlchen_api_server, 'matchassetmovementsresource'),
                 json={
                     'asset_movement': matched_movement.group_identifier,
+                    'time_range': HOUR_IN_SECONDS,
                     'only_expected_assets': only_expected_assets,
                 },
             ),

@@ -12,6 +12,7 @@ from rotkehlchen.chain.evm.types import (
     EvmIndexer,
     SerializableChainIndexerOrder,
 )
+from rotkehlchen.constants import HOUR_IN_SECONDS
 from rotkehlchen.constants.assets import A_USD
 from rotkehlchen.constants.timing import DAY_IN_SECONDS, YEAR_IN_SECONDS
 from rotkehlchen.data_migrations.constants import LAST_USERDB_DATA_MIGRATION
@@ -82,6 +83,7 @@ DEFAULT_AUTO_DETECT_TOKENS: Final = True
 DEFAULT_CSV_EXPORT_DELIMITER: Final = ','
 DEFAULT_EVENTS_PROCESSING_FREQUENCY: Final = DAY_IN_SECONDS
 DEFAULT_ASSET_MOVEMENT_AMOUNT_TOLERANCE: Final = FVal('0.000001')
+DEFAULT_ASSET_MOVEMENT_TIME_RANGE: Final = HOUR_IN_SECONDS
 
 LIST_KEYS: Final = (
     'current_price_oracles',
@@ -124,6 +126,7 @@ INTEGER_KEYS: Final = (
     'oracle_penalty_threshold_count',
     'oracle_penalty_duration',
     'events_processing_frequency',
+    'asset_movement_time_range',
 )
 STRING_KEYS: Final = (
     'ksm_rpc_endpoint',
@@ -187,6 +190,7 @@ CachedDBSettingsFieldNames = Literal[
     'ask_user_upon_size_discrepancy',
     'events_processing_frequency',
     'asset_movement_amount_tolerance',
+    'asset_movement_time_range',
     'suppress_missing_key_msg_services',
 ]
 
@@ -258,6 +262,7 @@ class DBSettings:
     csv_export_delimiter: str = DEFAULT_CSV_EXPORT_DELIMITER
     events_processing_frequency: int = DEFAULT_EVENTS_PROCESSING_FREQUENCY
     asset_movement_amount_tolerance: FVal = DEFAULT_ASSET_MOVEMENT_AMOUNT_TOLERANCE
+    asset_movement_time_range: int = DEFAULT_ASSET_MOVEMENT_TIME_RANGE
     suppress_missing_key_msg_services: list[ExternalService] = field(default_factory=list)
 
     def serialize(self) -> dict[str, Any]:
@@ -324,6 +329,7 @@ class ModifiableDBSettings(NamedTuple):
     btc_mempool_api: str | None = None
     events_processing_frequency: int | None = None
     asset_movement_amount_tolerance: FVal | None = None
+    asset_movement_time_range: int | None = None
     suppress_missing_key_msg_services: list[ExternalService] | None = None
 
     def serialize(self) -> dict[str, Any]:
