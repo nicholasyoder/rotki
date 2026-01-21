@@ -1933,7 +1933,9 @@ def test_remove_solana_address_with_transactions(rotkehlchen_api_server: 'APISer
     solana_tx_db = DBSolanaTx(rotki.data.db)
     events_db = DBHistoryEvents(rotki.data.db)
     txs_for_addy1, address1, _, _ = create_test_solana_transactions()
+    txs_for_addy1_ata, address1_ata, _, _ = create_test_solana_transactions()
     txs_for_addy2, address2, _, _ = create_test_solana_transactions()
+    txs_for_addy2_ata, address2_ata, _, _ = create_test_solana_transactions()
 
     with rotki.data.db.user_write() as write_cursor:
         rotki.data.db.add_blockchain_accounts(
@@ -1946,9 +1948,16 @@ def test_remove_solana_address_with_transactions(rotkehlchen_api_server: 'APISer
         rotki.chains_aggregator.accounts.add(SupportedBlockchain.SOLANA, address1)
         rotki.chains_aggregator.accounts.add(SupportedBlockchain.SOLANA, address2)
 
+        write_cursor.executemany(
+            'INSERT INTO solana_ata_address_mappings(account, ata_address) VALUES (?, ?)',
+            [(address1, address1_ata), (address2, address2_ata)],
+        )
+
         for txs_data, address, event_type in [
             (txs_for_addy1, address1, HistoryEventType.SPEND),
+            (txs_for_addy1_ata, address1_ata, HistoryEventType.SPEND),
             (txs_for_addy2, address2, HistoryEventType.RECEIVE),
+            (txs_for_addy2_ata, address2_ata, HistoryEventType.RECEIVE),
         ]:
             solana_tx_db.add_transactions(
                 write_cursor=write_cursor,
@@ -1970,9 +1979,10 @@ def test_remove_solana_address_with_transactions(rotkehlchen_api_server: 'APISer
             )
 
     # Verify data exists before deletion
+    expected_tx_count = len(txs_for_addy1) + len(txs_for_addy1_ata) + len(txs_for_addy2) + len(txs_for_addy2_ata)  # noqa: E501
     with rotki.data.db.conn.read_ctx() as cursor:
-        assert len(solana_tx_db.get_transactions(cursor, SolanaTransactionsFilterQuery.make())) == len(txs_for_addy1) + len(txs_for_addy2)  # noqa: E501
-        assert len(events_db.get_history_events_internal(cursor, HistoryEventFilterQuery.make())) == len(txs_for_addy1) + len(txs_for_addy2)  # noqa: E501
+        assert len(solana_tx_db.get_transactions(cursor, SolanaTransactionsFilterQuery.make())) == expected_tx_count  # noqa: E501
+        assert len(events_db.get_history_events_internal(cursor, HistoryEventFilterQuery.make())) == expected_tx_count  # noqa: E501
 
     assert_proper_response(requests.delete(
         api_url_for(
@@ -1985,8 +1995,15 @@ def test_remove_solana_address_with_transactions(rotkehlchen_api_server: 'APISer
     assert address1 not in rotki.chains_aggregator.accounts.get(SupportedBlockchain.SOLANA)
     assert address2 in rotki.chains_aggregator.accounts.get(SupportedBlockchain.SOLANA)
 
+    expected_remaining_count = len(txs_for_addy2) + len(txs_for_addy2_ata)
     with rotki.data.db.conn.read_ctx() as cursor:
-        assert len(remaining_txs := solana_tx_db.get_transactions(cursor, SolanaTransactionsFilterQuery.make())) == len(txs_for_addy2)  # noqa: E501
-        assert len(remaining_events := events_db.get_history_events_internal(cursor, HistoryEventFilterQuery.make())) == len(txs_for_addy2)  # noqa: E501
-        assert all(address2 in event.location_label for event in remaining_events)  # type: ignore[operator]  # location label cannot be None
-        assert all(address2 in tx.account_keys for tx in remaining_txs)
+        assert len(remaining_txs := solana_tx_db.get_transactions(cursor, SolanaTransactionsFilterQuery.make())) == expected_remaining_count  # noqa: E501
+        assert len(remaining_events := events_db.get_history_events_internal(cursor, HistoryEventFilterQuery.make())) == expected_remaining_count  # noqa: E501
+        assert all(
+            event.location_label in (address2, address2_ata)
+            for event in remaining_events
+        )
+        assert all(
+            address2 in tx.account_keys or address2_ata in tx.account_keys
+            for tx in remaining_txs
+        )

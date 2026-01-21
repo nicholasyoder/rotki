@@ -3361,6 +3361,7 @@ def test_latest_upgrade_correctness(user_data_dir):
         'lido_csm_node_operators',
         'lido_csm_node_operator_metrics',
         'event_metrics',
+        'solana_ata_address_mappings',
     }
     new_views = views_after_upgrade - views_before
     assert new_views == set()
@@ -3793,6 +3794,7 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
         assert not table_exists(cursor=cursor, name='lido_csm_node_operators')
         assert not table_exists(cursor=cursor, name='lido_csm_node_operator_metrics')
         assert not table_exists(cursor=cursor, name='event_metrics')
+        assert not table_exists(cursor=cursor, name='solana_ata_address_mappings')
         assert cursor.execute(
             "SELECT COUNT(*) FROM location WHERE location = 'x'",
         ).fetchone()[0] == 0
@@ -3836,6 +3838,7 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
         assert table_exists(cursor=cursor, name='lido_csm_node_operators')
         assert table_exists(cursor=cursor, name='lido_csm_node_operator_metrics')
         assert table_exists(cursor=cursor, name='event_metrics')
+        assert table_exists(cursor=cursor, name='solana_ata_address_mappings')
         assert cursor.execute(
             "SELECT COUNT(*) FROM location WHERE location = 'x' AND seq = 56",
         ).fetchone()[0] == 1

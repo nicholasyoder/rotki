@@ -74,6 +74,7 @@ def upgrade_v50_to_v51(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
         - lido_csm_node_operators
         - lido_csm_node_operator_metrics
         - event_metrics
+        - solana_ata_address_mappings
         """
         write_cursor.execute("""
         CREATE TABLE IF NOT EXISTS lido_csm_node_operators (
@@ -132,6 +133,15 @@ def upgrade_v50_to_v51(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
             'CREATE INDEX IF NOT EXISTS idx_event_metrics_asset '
             'ON event_metrics(asset);',
         )
+        write_cursor.execute("""
+        CREATE TABLE IF NOT EXISTS solana_ata_address_mappings (
+            blockchain TEXT GENERATED ALWAYS AS ('SOLANA') VIRTUAL,
+            account TEXT NOT NULL,
+            ata_address TEXT NOT NULL,
+            PRIMARY KEY(account, ata_address),
+            FOREIGN KEY(blockchain, account) REFERENCES blockchain_accounts(blockchain, account) ON DELETE CASCADE
+        );
+        """)  # noqa: E501
 
     @progress_step(description='Adding reserved Contract tag.')
     def _add_contract_tag(write_cursor: 'DBCursor') -> None:

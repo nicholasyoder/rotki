@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import pytest
 import requests
+from solders.solders import Signature
 
 from rotkehlchen.chain.solana.types import SolanaTransaction
 from rotkehlchen.db.filtering import SolanaEventFilterQuery, SolanaTransactionsFilterQuery
@@ -78,6 +79,11 @@ def test_query_solana_transactions(
                 attribute='get_transaction_for_signature',
                 wraps=rotki.chains_aggregator.solana.node_inquirer.get_transaction_for_signature,
             ) as mock_rpc_get_transaction,
+            patch.object(
+                target=rotki.chains_aggregator.solana.node_inquirer,
+                attribute='query_token_accounts_by_owner',
+                side_effect=lambda account: [],
+            ),
         ):
             response = requests.post(
                 api_url_for(rotkehlchen_api_server, 'blockchaintransactionsresource'),
@@ -129,6 +135,115 @@ def test_query_solana_transactions(
             deserialize_tx_signature(x.group_identifier) for x in events
         }
         assert str(fake_signature) in rotki.data.db.get_ignored_action_ids(cursor=cursor)
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize('ethereum_accounts', [[]])
+@pytest.mark.parametrize('solana_accounts', [['7T8ckKtdc5DH7ACS5AnCny7rVXYJPEsaAbdBri1FhPxY']])
+def test_query_associated_token_account_transactions(
+        rotkehlchen_api_server: 'APIServer',
+        solana_accounts: list[SolanaAddress],
+) -> None:
+    """Test that an account's ATAs (Associated Token Accounts) also get their transactions queried
+    when querying the account's transaction history.
+    """
+    usdc_ata = SolanaAddress('BeWvKX4GCSzfQdWgvzH1nzNFujCAktbV2wYrUMGpQz3')  # USDC
+    jl_usdc_ata = SolanaAddress('5jwXuKpgFctqmJFRevWDXto3kAETYg4DrT9sXq6ZefKK')  # Jupiter Lend USDC  # noqa: E501
+    user_address = solana_accounts[0]
+    usdc_ata_signature = deserialize_tx_signature('3bg38hZgFD5xwnwf3gj3oik8F22kF3GtKZmQd3bj1syK7b9GCNqbGKnir4XuhjUXhpe4qQbeYPZjCzowLUH17Rx1')  # noqa: E501
+    jlusdc_ata_signature = deserialize_tx_signature('2Cxrz8NWZvN7r13GbahJPHVjL21Japmp7ThvpA2AzCjwznA72Vbb2mkD4crGVnXEajJDVHJpkC1WueGMaKJToTks')  # noqa: E501
+    main_account_signature = deserialize_tx_signature('5vBFfTGrcdkE7ZdsUDSU2kRkhoFp4EgKtLLB6h2m1uQoG5wCddCkFGnNjXaHrV2r1kZ8CpJfh7UcWJ9tFXAyKc8Q')  # noqa: E501
+
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+    with rotki.data.db.conn.write_ctx() as write_cursor:
+        # Add a couple ATAs to the DB. The actual ATA query is patched below.
+        write_cursor.executemany(
+            'INSERT INTO solana_ata_address_mappings(account, ata_address) VALUES (?, ?)',
+            [(user_address, ata_address) for ata_address in [usdc_ata, jl_usdc_ata]],
+        )
+
+    def query_sigs_for_addr_mock(address: SolanaAddress, until: Signature) -> list[Signature]:
+        """Mock returned signatures to avoid so many remote calls in this test"""
+        if address == usdc_ata:
+            return [usdc_ata_signature]
+        elif address == jl_usdc_ata:
+            return [jlusdc_ata_signature]
+        else:  # address == user_address
+            # the jlusdc sig is also returned here since the user_address paid the tx fee etc
+            return [main_account_signature, jlusdc_ata_signature]
+
+    with (
+        patch.object(
+            target=rotki.chains_aggregator.solana.node_inquirer,
+            attribute='query_tx_signatures_for_address',
+            side_effect=query_sigs_for_addr_mock,
+        ) as mock_query_tx_signatures_for_address,
+        patch.object(
+            target=rotki.chains_aggregator.solana.node_inquirer,
+            attribute='get_transaction_for_signature',
+            wraps=rotki.chains_aggregator.solana.node_inquirer.get_transaction_for_signature,
+        ) as mock_rpc_get_transaction,
+        patch.object(
+            target=rotki.chains_aggregator.solana.node_inquirer,
+            attribute='query_token_accounts_by_owner',
+            side_effect=lambda account: [],
+        ),
+    ):
+        response = requests.post(
+            api_url_for(rotkehlchen_api_server, 'blockchaintransactionsresource'),
+            json={
+                'accounts': [{'address': user_address, 'blockchain': 'solana'}],
+                'async_query': (async_query := random.choice([False, True])),
+            },
+        )
+        assert assert_proper_response_with_result(response, rotkehlchen_api_server, async_query)
+
+    with rotki.data.db.conn.read_ctx() as cursor:
+        db_transactions = DBSolanaTx(rotki.data.db).get_transactions(
+            cursor=cursor,
+            filter_=SolanaTransactionsFilterQuery.make(),
+        )
+
+    assert {  # All signatures present in the DB
+        x.signature for x in db_transactions
+    } == {main_account_signature, jlusdc_ata_signature, usdc_ata_signature}
+    assert {  # All ATAs and the main account queried.
+        x.kwargs['address'] for x in mock_query_tx_signatures_for_address.call_args_list
+    } == {usdc_ata, jl_usdc_ata, user_address}
+    # Check that the get tx function is only called once for each signature despite the jl_usdc
+    # signature being returned by both the main account and the jlusdc ata.
+    assert mock_rpc_get_transaction.call_count == 3
+
+    # Now query again and check that each ata is queried with the proper until signature.
+    with (
+        patch.object(
+            target=rotki.chains_aggregator.solana.node_inquirer,
+            attribute='query_tx_signatures_for_address',
+            side_effect=lambda *args, **kwargs: [],
+        ) as mock_query_tx_signatures_for_address,
+        patch.object(
+            target=rotki.chains_aggregator.solana.node_inquirer,
+            attribute='query_token_accounts_by_owner',
+            side_effect=lambda account: [],
+        ),
+    ):
+        response = requests.post(
+            api_url_for(rotkehlchen_api_server, 'blockchaintransactionsresource'),
+            json={
+                'accounts': [{'address': solana_accounts[0], 'blockchain': 'solana'}],
+                'async_query': (async_query := random.choice([False, True])),
+            },
+        )
+        assert assert_proper_response_with_result(response, rotkehlchen_api_server, async_query)
+
+    assert {
+        (x.kwargs['address'], x.kwargs['until'])
+        for x in mock_query_tx_signatures_for_address.call_args_list
+    } == {
+        (usdc_ata, usdc_ata_signature),
+        (jl_usdc_ata, jlusdc_ata_signature),
+        (user_address, main_account_signature),
+    }
 
 
 @pytest.mark.vcr

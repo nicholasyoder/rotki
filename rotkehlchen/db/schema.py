@@ -821,6 +821,16 @@ CREATE TABLE IF NOT EXISTS solana_tx_mappings (
 );
 """  # noqa: E501
 
+DB_CREATE_SOLANA_ATA_ADDRESS_MAPPINGS = """
+CREATE TABLE IF NOT EXISTS solana_ata_address_mappings (
+    blockchain TEXT GENERATED ALWAYS AS ('SOLANA') VIRTUAL,
+    account TEXT NOT NULL,
+    ata_address TEXT NOT NULL,
+    PRIMARY KEY(account, ata_address),
+    FOREIGN KEY(blockchain, account) REFERENCES blockchain_accounts(blockchain, account) ON DELETE CASCADE
+);
+"""  # noqa: E501
+
 # Lido CSM tracking tables. All columns are consumed by DBLidoCsm for enforcing the
 # FK to tracked Ethereum accounts and persisting cached metrics snapshots.
 DB_CREATE_LIDO_CSM_NODE_OPERATORS = """
@@ -960,6 +970,7 @@ BEGIN TRANSACTION;
 {DB_CREATE_SOLANA_TX_INSTRUCTION_ACCOUNTS}
 {DB_CREATE_SOLANA_ADDRESS_MAPPINGS}
 {DB_CREATE_SOLANA_TX_MAPPINGS}
+{DB_CREATE_SOLANA_ATA_ADDRESS_MAPPINGS}
 {DB_CREATE_LIDO_CSM_NODE_OPERATORS}
 {DB_CREATE_LIDO_CSM_NODE_OPERATOR_METRICS}
 {DB_CREATE_EVENT_METRICS}
