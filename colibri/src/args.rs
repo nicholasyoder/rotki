@@ -45,14 +45,24 @@ pub struct Args {
     pub api_cors: Vec<String>,
 }
 
+/// rotki version is used by the packaging script when compiling
+pub fn get_version() -> &'static str {
+    option_env!("ROTKI_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
+}
+
+fn is_production_build() -> bool {
+    if cfg!(debug_assertions) {
+        return false;
+    }
+
+    !get_version().contains(".dev")
+}
+
 pub fn parse_args() -> Args {
-    #[cfg(debug_assertions)]
-    let is_production = false;
-    #[cfg(not(debug_assertions))]
-    let is_production = true;
+    let is_production = is_production_build();
     let default_dir = default_data_dir(is_production).unwrap();
     let matches = Command::new("colibri")
-        .version(env!("CARGO_PKG_VERSION"))
+        .version(get_version())
         .arg(
             Arg::new("data-directory")
                 .long("data-directory")

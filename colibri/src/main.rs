@@ -26,12 +26,12 @@ mod types;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = args::parse_args();
-    logging::config_logging(args.clone());
+    let parsed_args = args::parse_args();
+    logging::config_logging(parsed_args.clone());
 
-    info!("Starting colibri");
+    info!("Starting colibri version {} with data folder {:?}", args::get_version(), parsed_args.data_directory);
     let globaldb =
-        match globaldb::GlobalDB::new(args.data_directory.join("global").join("global.db")).await {
+        match globaldb::GlobalDB::new(parsed_args.data_directory.join("global").join("global.db")).await {
             Err(e) => {
                 error!("Unable to open globaldb due to {}", e);
                 std::process::exit(1);
@@ -45,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let evm_manager = Arc::new(EvmInquirerManager::new(globaldb.clone()));
     evm_manager.initialize_rpc_nodes().await;
     let state = Arc::new(api::AppState {
-        data_dir: args.data_directory,
+        data_dir: parsed_args.data_directory,
         globaldb: globaldb.clone(),
         coingecko,
         userdb: Arc::new(RwLock::new(DBHandler::new())),
@@ -73,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .with_state(state);
 
-    let cors_patterns: Vec<Pattern> = args
+    let cors_patterns: Vec<Pattern> = parsed_args
         .api_cors
         .iter()
         .filter_map(|pattern| match Pattern::new(pattern) {
@@ -121,8 +121,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }),
         );
 
-    info!("Colibri api listens on 127.0.0.1:{}", args.port);
-    let addr = SocketAddr::from(([127, 0, 0, 1], args.port));
+    info!("Colibri api listens on 127.0.0.1:{}", parsed_args.port);
+    let addr = SocketAddr::from(([127, 0, 0, 1], parsed_args.port));
     let listener = TcpListener::bind(addr).await?;
     axum::serve(
         listener,
