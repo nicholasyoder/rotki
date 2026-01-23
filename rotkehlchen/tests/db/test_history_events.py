@@ -13,7 +13,11 @@ from rotkehlchen.constants.assets import A_BTC, A_DAI, A_ETH, A_USDC, A_USDT, A_
 from rotkehlchen.constants.limits import FREE_HISTORY_EVENTS_LIMIT
 from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.db.cache import DBCacheStatic
-from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED
+from rotkehlchen.db.constants import (
+    HISTORY_MAPPING_KEY_STATE,
+    HISTORY_MAPPING_STATE_CUSTOMIZED,
+    HISTORY_MAPPING_STATE_VIRTUAL,
+)
 from rotkehlchen.db.dbhandler import DBHandler
 from rotkehlchen.db.filtering import (
     EthDepositEventFilterQuery,
@@ -285,6 +289,26 @@ def test_read_write_customized_events_from_db(database: DBHandler, entries_limit
                 aggregate_by_group_ids=aggregate_by_group_ids,
                 entries_limit=entries_limit,
             )
+
+
+def test_read_write_virtual_events_from_db(database: DBHandler) -> None:
+    add_history_events_to_db(DBHistoryEvents(database), {
+        1: ('TEST1', TimestampMS(1000), ONE, None),
+        2: ('TEST2', TimestampMS(2000), FVal(2), {HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_VIRTUAL}),  # noqa: E501
+        3: ('TEST3', TimestampMS(3000), FVal(3), None),
+    })
+    with database.conn.read_ctx() as cursor:
+        events = DBHistoryEvents(database).get_history_events(
+            cursor=cursor,
+            filter_query=HistoryEventFilterQuery.make(
+                entry_types=IncludeExcludeFilterData(values=[HistoryBaseEntryType.HISTORY_EVENT]),
+                virtual_events_only=True,
+            ),
+            entries_limit=None,
+            aggregate_by_group_ids=False,
+        )
+        assert len(events) == 1
+        assert events[0].group_identifier == 'TEST2'
 
 
 def test_delete_last_event(database):

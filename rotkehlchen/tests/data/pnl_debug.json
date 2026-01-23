@@ -198,6 +198,7 @@
     "auto_create_calendar_reminders": true,
     "ask_user_upon_size_discrepancy": true,
     "auto_detect_tokens": true,
+    "auto_create_profit_events": false,
     "csv_export_delimiter": ",",
     "default_evm_indexer_order": ["etherscan", "blockscout", "routescan"],
     "evm_indexers_order": {"ethereum": ["etherscan", "blockscout", "routescan"], "optimism": ["etherscan", "blockscout", "routescan"], "polygon_pos": ["etherscan", "blockscout", "routescan"], "arbitrum_one": ["etherscan", "blockscout", "routescan"], "base": ["etherscan", "blockscout", "routescan"], "gnosis": ["etherscan", "blockscout", "routescan"], "scroll": ["etherscan", "blockscout", "routescan"], "binance_sc": ["etherscan", "blockscout", "routescan"]},
