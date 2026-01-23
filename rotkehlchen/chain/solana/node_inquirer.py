@@ -8,6 +8,7 @@ from httpx import HTTPStatusError, ReadTimeout
 from solana.exceptions import SolanaRpcException
 from solana.rpc.api import Client
 from solana.rpc.core import RPCException
+from solana.rpc.types import TokenAccountOpts
 from solders.pubkey import Pubkey
 from solders.solders import (
     LOOKUP_TABLE_META_SIZE,
@@ -15,10 +16,12 @@ from solders.solders import (
     EncodedConfirmedTransactionWithStatusMeta,
     GetSignaturesForAddressResp,
     MessageAddressTableLookup,
+    RpcKeyedAccount,
     SerdeJSONError,
     Signature,
     UiAddressTableLookup,
 )
+from spl.token.constants import TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID
 
 from rotkehlchen.chain.constants import DEFAULT_RPC_TIMEOUT
 from rotkehlchen.chain.evm.types import WeightedNode
@@ -301,6 +304,23 @@ class SolanaInquirer(SolanaRPCMixin):
             return None
 
         return metadata
+
+    def query_token_accounts_by_owner(self, account: SolanaAddress) -> list[RpcKeyedAccount]:
+        """Query the ATAs (Associated Token Accounts) of the specified account from both the
+        legacy and token-2022 token programs. Returns a list of RpcKeyedAccounts.
+        May raise RemoteError if there is a problem with querying the external service.
+        """
+        ata_accounts = []
+        for token_program_id in (TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID):
+            response = self.query(
+                method=lambda client, pid=token_program_id: client.get_token_accounts_by_owner(  # type: ignore
+                    owner=Pubkey.from_string(account),
+                    opts=TokenAccountOpts(program_id=pid),
+                ),
+            )
+            ata_accounts.extend(response.value)
+
+        return ata_accounts
 
     def query_tx_signatures_for_address(
             self,

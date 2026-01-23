@@ -3,9 +3,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-from solana.rpc.types import TokenAccountOpts
 from solders.pubkey import Pubkey
-from spl.token.constants import TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID
 
 from rotkehlchen.accounting.structures.balance import Balance, BalanceSheet
 from rotkehlchen.assets.asset import Asset
@@ -32,8 +30,6 @@ from .node_inquirer import SolanaInquirer
 from .transactions import SolanaTransactions
 
 if TYPE_CHECKING:
-    from solders.solders import GetTokenAccountsByOwnerResp
-
     from rotkehlchen.premium.premium import Premium
 
 logger = logging.getLogger(__name__)
@@ -88,43 +84,36 @@ class SolanaManager(ChainManagerWithTransactions[SolanaAddress], ChainManagerWit
         May raise RemoteError if there is a problem with querying the external service.
         """
         balances: defaultdict[Asset, FVal] = defaultdict(lambda: ZERO)
-        for token_program_id in (TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID):
-            log.debug(f'Querying solana token balances for {account} with program id {token_program_id}')  # noqa: E501
-            response: GetTokenAccountsByOwnerResp = self.node_inquirer.query(
-                method=lambda client, pid=token_program_id: client.get_token_accounts_by_owner(  # type: ignore
-                    owner=Pubkey.from_string(account),
-                    opts=TokenAccountOpts(program_id=pid),
-                ),
-            )
-            for account_info in response.value:
-                try:
-                    token_account_info = deserialize_token_account(account_info.account.data)
-                except DeserializationError as e:
-                    log.error(f'Failed to parse solana token account data for {account} due to {e}')  # noqa: E501
-                    continue
+        log.debug(f'Querying solana token balances for {account}')
+        for account_info in self.node_inquirer.query_token_accounts_by_owner(account=account):
+            try:
+                token_account_info = deserialize_token_account(account_info.account.data)
+            except DeserializationError as e:
+                log.error(f'Failed to parse solana token account data for {account} due to {e}')
+                continue
 
-                if token_account_info.amount == ZERO:
-                    log.debug(f'Found solana token {token_account_info.mint} with zero balance for {account}. Skipping.')  # noqa: E501
-                    continue
+            if token_account_info.amount == ZERO:
+                log.debug(f'Found solana token {token_account_info.mint} with zero balance for {account}. Skipping.')  # noqa: E501
+                continue
 
-                try:
-                    token = get_or_create_solana_token(
-                        userdb=self.database,
-                        address=token_account_info.mint,
-                        solana_inquirer=self.node_inquirer,
-                        encounter=TokenEncounterInfo(should_notify=False),
-                    )
-                except NotSPLConformant as e:
-                    log.error(f'Failed to create solana token with address {token_account_info.mint} due to {e}')  # noqa: E501
-                    continue
+            try:
+                token = get_or_create_solana_token(
+                    userdb=self.database,
+                    address=token_account_info.mint,
+                    solana_inquirer=self.node_inquirer,
+                    encounter=TokenEncounterInfo(should_notify=False),
+                )
+            except NotSPLConformant as e:
+                log.error(f'Failed to create solana token with address {token_account_info.mint} due to {e}')  # noqa: E501
+                continue
 
-                # Add to existing balances since there may be multiple ATAs
-                # (Associated Token Account) for the same token.
-                balances[token] += (amount := token_normalized_value(
-                    token=token,
-                    token_amount=token_account_info.amount,
-                ))
-                log.debug(f'Found {token} token balance for solana account {account} with balance {amount}')  # noqa: E501
+            # Add to existing balances since there may be multiple ATAs
+            # (Associated Token Account) for the same token.
+            balances[token] += (amount := token_normalized_value(
+                token=token,
+                token_amount=token_account_info.amount,
+            ))
+            log.debug(f'Found {token} token balance for solana account {account} with balance {amount}')  # noqa: E501
 
         return balances
 

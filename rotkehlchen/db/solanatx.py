@@ -1,4 +1,5 @@
 from collections import defaultdict
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Final
 
 from solders.pubkey import Pubkey
@@ -30,14 +31,15 @@ class DBSolanaTx(DBCommonTx[SolanaAddress, SolanaTransaction, Signature, SolanaT
     @staticmethod
     def get_existing_signatures(
             cursor: 'DBCursor',
-            signatures: list[bytes],
-    ) -> set[bytes]:
-        """Return signatures already stored to filter return_queried_hashes.
+            signatures: Sequence[Signature],
+    ) -> set[Signature]:
+        """Filter the provided signatures returning only those that already exist in the DB.
 
-        Solana inserts ignore duplicates, so we pre-check to avoid returning
-        signatures that were not newly saved.
+        This is used to find existing signatures before querying transaction data so we can avoid
+        requerying transactions that already exist in the DB. Also ensures that when returning
+        newly queried tx signatures, only those that are actually new are returned.
         """
-        existing_signatures: set[bytes] = set()
+        existing_signatures: set[Signature] = set()
         if len(signatures) == 0:
             return existing_signatures
 
@@ -45,9 +47,9 @@ class DBSolanaTx(DBCommonTx[SolanaAddress, SolanaTransaction, Signature, SolanaT
             cursor.execute(
                 f'SELECT signature FROM solana_transactions '
                 f'WHERE signature IN ({placeholders})',
-                signature_chunk,
+                [x.to_bytes() for x in signature_chunk],
             )
-            existing_signatures.update(entry[0] for entry in cursor)
+            existing_signatures.update(Signature.from_bytes(entry[0]) for entry in cursor)
 
         return existing_signatures
 
@@ -232,16 +234,21 @@ class DBSolanaTx(DBCommonTx[SolanaAddress, SolanaTransaction, Signature, SolanaT
             write_cursor: 'DBCursor',
             address: SolanaAddress,
     ) -> None:
-        """Deletes all solana transactions and their related data for a given address."""
-        # Get all transaction signatures that involve only this address
+        """Deletes all solana transactions and their related data for a given address
+        and all its ATAs.
+        """
+        where_str = """
+        WHERE (M.address = ? OR
+        M.address IN (SELECT ata_address FROM solana_ata_address_mappings WHERE account = ?))
+        AND M.tx_id NOT IN (SELECT tx_id FROM solanatx_address_mappings WHERE address != ? AND
+        address NOT IN (SELECT ata_address FROM solana_ata_address_mappings WHERE account = ?))
+        """
         if len(results := write_cursor.execute(
             'SELECT DISTINCT S.signature FROM solanatx_address_mappings AS M '
-            'INNER JOIN solana_transactions AS S ON S.identifier = M.tx_id '
-            'WHERE M.address = ? AND M.tx_id NOT IN ('
-            'SELECT tx_id FROM solanatx_address_mappings WHERE address != ?)',
-            (address, address),
+            f'INNER JOIN solana_transactions AS S ON S.identifier = M.tx_id {where_str}',
+            (address, address, address, address),
         ).fetchall()) == 0:
-            return  # No transactions for this address only
+            return  # No transactions that are only for this address or its ATAs
 
         DBHistoryEvents(self.db).delete_events_by_tx_ref(
             write_cursor=write_cursor,
@@ -250,7 +257,6 @@ class DBSolanaTx(DBCommonTx[SolanaAddress, SolanaTransaction, Signature, SolanaT
         )
         write_cursor.execute(
             'DELETE FROM solana_transactions WHERE identifier IN ('
-            'SELECT DISTINCT tx_id FROM solanatx_address_mappings WHERE address = ? '
-            'AND tx_id NOT IN (SELECT tx_id FROM solanatx_address_mappings WHERE address != ?))',
-            (address, address),
+            f'SELECT DISTINCT tx_id FROM solanatx_address_mappings AS M {where_str})',
+            (address, address, address, address),
         )

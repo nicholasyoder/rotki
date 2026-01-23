@@ -8,13 +8,14 @@ from rotkehlchen.api.websockets.typedefs import (
     TransactionStatusSubType,
     WSMessageType,
 )
-from rotkehlchen.chain.solana.types import SolanaTransaction
+from rotkehlchen.chain.solana.types import SolanaTransaction, pubkey_to_solana_address
 from rotkehlchen.db.filtering import SolanaTransactionsFilterQuery
 from rotkehlchen.db.solanatx import DBSolanaTx
 from rotkehlchen.errors.misc import MissingAPIKey, RemoteError
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.externalapis.helius import Helius
 from rotkehlchen.logging import RotkehlchenLogsAdapter
+from rotkehlchen.serialization.deserialize import deserialize_tx_signature
 from rotkehlchen.types import SolanaAddress, SupportedBlockchain, Timestamp
 from rotkehlchen.utils.misc import get_chunks, ts_now
 
@@ -99,37 +100,61 @@ class SolanaTransactions:
         Only queries new transactions if there are already transactions in the DB.
         May raise RemoteError if there is a problem with querying the external service.
         """
-        last_existing_sig, start_ts, end_ts = None, Timestamp(0), ts_now()
-        with self.database.conn.read_ctx() as cursor:
-            cursor.execute(
-                'SELECT st.signature, max(st.block_time) FROM solana_transactions st '
-                'JOIN solanatx_address_mappings sam ON st.identifier == sam.tx_id '
-                'WHERE sam.address = ?',
-                (address,),
+        ata_accounts = self.node_inquirer.query_token_accounts_by_owner(account=address)
+        with self.database.conn.write_ctx() as write_cursor:
+            write_cursor.executemany(
+                'INSERT OR IGNORE INTO solana_ata_address_mappings(account, ata_address) VALUES (?, ?)',  # noqa: E501
+                [
+                    (address, pubkey_to_solana_address(ata_account.pubkey))
+                    for ata_account in ata_accounts
+                ],
             )
-            if (max_result := cursor.fetchone()) is not None and None not in max_result:
-                last_existing_sig = Signature.from_bytes(max_result[0])
-                start_ts = Timestamp(max_result[1])
+
+        last_existing_sigs: dict[SolanaAddress, Signature | None] = {}
+        start_timestamps, end_ts = set(), ts_now()
+        with self.database.conn.read_ctx() as cursor:
+            # Query the user address and all its ATAs with the signature and block time of the
+            # latest existing tx associated with each address.
+            for result in cursor.execute(
+                'SELECT address, signature, block_time FROM ('
+                '  SELECT addresses.address, st.signature, st.block_time, ROW_NUMBER() OVER ('
+                '    PARTITION BY addresses.address ORDER BY st.block_time DESC '
+                '  ) as row_num FROM ('
+                '    SELECT ? as address UNION '
+                '    SELECT ata_address as address FROM solana_ata_address_mappings WHERE account = ? '  # noqa: E501
+                '  ) AS addresses '
+                '  LEFT JOIN solanatx_address_mappings sam ON sam.address = addresses.address '
+                '  LEFT JOIN solana_transactions st ON st.identifier = sam.tx_id '
+                ') WHERE row_num = 1',
+                (address, address),
+            ):
+                if result is None or result[0] is None:
+                    continue
+
+                last_existing_sigs[SolanaAddress(result[0])] = (
+                    None if result[1] is None else deserialize_tx_signature(result[1])
+                )
+                start_timestamps.add(Timestamp(0 if result[2] is None else result[2]))
 
         self._send_tx_status_message(
             address=address,
-            period=(start_ts, end_ts),
+            period=((min_start_ts := min(start_timestamps, default=Timestamp(0))), end_ts),
             status=TransactionStatusStep.QUERYING_TRANSACTIONS_STARTED,
         )
-
-        # Get the list of signatures from the RPCs and query the corresponding txs
-        signatures = self.node_inquirer.query_tx_signatures_for_address(
-            address=address,
-            until=last_existing_sig,
-        )
-        self.query_transactions_for_signatures(
-            signatures=signatures,
-            relevant_address=address,
-        )
+        for ata_or_account, last_existing_sig in last_existing_sigs.items():
+            # Get the list of signatures from the RPCs and query the corresponding txs
+            signatures = self.node_inquirer.query_tx_signatures_for_address(
+                address=ata_or_account,
+                until=last_existing_sig,
+            )
+            self.query_transactions_for_signatures(
+                signatures=signatures,
+                relevant_address=ata_or_account,
+            )
 
         self._send_tx_status_message(
             address=address,
-            period=(start_ts, end_ts),
+            period=(min_start_ts, end_ts),
             status=TransactionStatusStep.QUERYING_TRANSACTIONS_FINISHED,
         )
 
@@ -169,49 +194,39 @@ class SolanaTransactions:
         """Query the transactions for the given signatures from either Helius or the RPCs,
         and save them to the DB.
         """
+        solana_tx_db = DBSolanaTx(database=self.database)
+        existing_sigs: set[Signature] = set()
+        with self.database.conn.read_ctx() as cursor:
+            existing_sigs.update(solana_tx_db.get_existing_signatures(
+                cursor=cursor,
+                signatures=signatures,
+            ))
+
+        # Filter out any signatures that are already in the DB. For instance, some txs are returned
+        # both for the main user address and for one of its ATAs, and will have already been
+        # queried when it's present here for the second address.
+        filtered_signatures = [x for x in signatures if x not in existing_sigs]
         try:
-            if return_queried_hashes:
-                helius_signatures = self.helius.get_transactions(
-                    signatures=[str(x) for x in signatures],
-                    relevant_address=relevant_address,
-                    return_queried_hashes=True,
-                )
-            else:
-                self.helius.get_transactions(
-                    signatures=[str(x) for x in signatures],
-                    relevant_address=relevant_address,
-                )
-                helius_signatures = None
+            return self.helius.get_transactions(
+                signatures=[str(x) for x in filtered_signatures],
+                relevant_address=relevant_address,
+                return_queried_hashes=return_queried_hashes,
+            )
         except (RemoteError, MissingAPIKey) as e:
             log.debug(
                 f'Unable to query solana transactions from Helius due to {e!s} '
                 f'Falling back to querying from the RPCs for address {relevant_address}.',
             )
-        else:
-            return helius_signatures
 
-        solana_tx_db = DBSolanaTx(database=self.database)
         queried_signatures: list[Signature] | None = [] if return_queried_hashes else None
-        for chunk in get_chunks(signatures, RPC_TX_BATCH_SIZE):
-            existing_signatures: set[bytes] = set()
-            if queried_signatures is not None:
-                with self.database.conn.read_ctx() as cursor:
-                    existing_signatures = solana_tx_db.get_existing_signatures(
-                        cursor=cursor,
-                        signatures=[signature.to_bytes() for signature in chunk],
-                    )
-
+        for chunk in get_chunks(filtered_signatures, RPC_TX_BATCH_SIZE):
             txs, token_accounts_mappings = [], {}
             for signature in chunk:
                 try:
                     tx, token_accounts_mapping = self.node_inquirer.get_transaction_for_signature(signature)  # noqa: E501
                     txs.append(tx)
                     if queried_signatures is not None:
-                        signature_bytes_entry = tx.signature.to_bytes()
-                        if signature_bytes_entry in existing_signatures:
-                            continue
                         queried_signatures.append(tx.signature)
-                        existing_signatures.add(signature_bytes_entry)
                     token_accounts_mappings.update(token_accounts_mapping)
                 except (RemoteError, DeserializationError) as e_:
                     log.error(

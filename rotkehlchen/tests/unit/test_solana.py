@@ -50,7 +50,7 @@ def test_solana_token_balances(
         solana_accounts: list['SolanaAddress'],
 ) -> None:
     """Test that the solana token balances are returned correctly.
-    The address tested currently holds 4 tokens and 11 NFTs according to solscan.
+    The address tested currently holds 3 tokens and 11 NFTs according to solscan.
 
     1 token (JUPDROP) appears to be a scam token, with a token_standard of 2 (normal token) but
     with zero decimals and is classified as an NFT on solscan. We simply stick to the
@@ -60,12 +60,12 @@ def test_solana_token_balances(
     Token Program.
     """
     balances = solana_manager.get_token_balances(account=solana_accounts[0])
-    assert len(balances) == 15
-    assert len([x for x in balances if '/token:' in x.identifier]) == 5
+    assert len(balances) == 14
+    assert len([x for x in balances if '/token:' in x.identifier]) == 4
     assert len([x for x in balances if '/nft:' in x.identifier]) == 10
     # Check several token and nft balances
-    assert balances[Asset('solana/token:EG1Y8goUGa7y4iRYRgLgwBmSHc4Lxc91qL35cdDNBiRc')] == FVal('392143.986634')  # noqa: E501
-    assert balances[Asset('solana/token:6XLSXS1HDXsTbq53onqAUeCqU6fxuMSgu7JkfZ9kbonk')] == FVal('322811.321023')  # noqa: E501
+    assert balances[Asset('solana/token:Hv69wUkD225TYq111eAar9CtjhNpzBTRFpHkpY3pbonk')] == FVal('233884.967632')  # noqa: E501
+    assert balances[Asset('solana/token:7KUZ5CoUZfcxYbjLzXT6sgAqo3CZbHxMvzwKGcUtpump')] == FVal('55689.635733')  # noqa: E501
     assert balances[Asset('solana/token:7atgF8KQo4wJrD5ATGX7t1V2zVvykPJbFfNeVf1icFv1')] == FVal('0.11')  # noqa: E501
     assert balances[Asset('solana/nft:GQqWmmdLGSwDRbN5fRdDfx17ZM55icmHtNyBSKcnLhNm')] == ONE
     assert balances[Asset('solana/nft:ByqVeGqR8VzvJG67E92rijxvuCzkLrbqotx2kPPo6eot')] == ONE
