@@ -14,6 +14,7 @@ from rotkehlchen.serialization.deserialize import (
     deserialize_evm_transaction,
     deserialize_int_from_hex_or_int,
 )
+from rotkehlchen.serialization.schemas import ExportedAssetsSchema
 from rotkehlchen.types import (
     ChainID,
     EvmTransaction,
@@ -130,3 +131,10 @@ def test_blockchain_field_allow_only():
 
     with pytest.raises(ValidationError, match='is not allowed in this endpoint'):
         field.deserialize('BTC')
+
+
+def test_exported_assets_schema_accepts_empty_symbol():
+    """Regression test for ExportedAssetsSchema to accept assets with empty symbol."""
+    data = '{"version": "15", "assets": [{"asset_type": "own chain", "name": "Test Asset", "symbol": "", "identifier": "TEST123"}]}'  # noqa: E501
+    result = ExportedAssetsSchema().loads(data)
+    assert result['assets'][0]['asset'].symbol is None

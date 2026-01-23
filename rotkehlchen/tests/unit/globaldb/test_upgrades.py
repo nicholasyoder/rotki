@@ -1486,6 +1486,7 @@ def test_upgrade_v14_v15(
 ) -> None:
     """Test the global DB upgrade from v14 to v15"""
     assert globaldb.get_setting_value('version', 0) == 14
+
     with globaldb.conn.read_ctx() as cursor:
         for key, expected_value in [
             ('AURA_POOLS%', [
@@ -1518,6 +1519,27 @@ def test_upgrade_v14_v15(
                 (key,),
             ).fetchall() == expected_value
 
+        # Verify weights before upgrade
+        assert cursor.execute(
+            'SELECT parent_token_entry, SUM(CAST(weight AS REAL)) '
+            'FROM underlying_tokens_list '
+            'WHERE parent_token_entry IN (?, ?, ?, ?, ?) '
+            'GROUP BY parent_token_entry ORDER BY parent_token_entry',
+            (weight_test_parents := (
+                'eip155:1/erc20:0x0000000000004946c0e9F43F4Dee607b0eF1fA1c',
+                'eip155:1/erc20:0x00000000008FD4F395Ec6F12920bae9Cb6C722e4',
+                'eip155:1/erc20:0x00000000441378008EA67F4284A57932B1c000a5',
+                'eip155:1/erc20:0x000006c2A22ff4A44ff1f5d0F2ed65F781F55555',
+                'eip155:1/erc20:0x0012940cf77a3cB5BADE409B96A60E22506CF7d0',
+            )),
+        ).fetchall() == [
+            ('eip155:1/erc20:0x0000000000004946c0e9F43F4Dee607b0eF1fA1c', 1.000015259021896698),  # 2 tokens, > 1  # noqa: E501
+            ('eip155:1/erc20:0x00000000008FD4F395Ec6F12920bae9Cb6C722e4', 1.000015649795537628),  # 3 tokens, > 1  # noqa: E501
+            ('eip155:1/erc20:0x00000000441378008EA67F4284A57932B1c000a5', 0.916666666666666666),  # 3 tokens, < 1  # noqa: E501
+            ('eip155:1/erc20:0x000006c2A22ff4A44ff1f5d0F2ed65F781F55555', 1.0),  # 1 token, unchanged  # noqa: E501
+            ('eip155:1/erc20:0x0012940cf77a3cB5BADE409B96A60E22506CF7d0', 1.0),  # 2 tokens, unchanged  # noqa: E501
+        ]
+
     with ExitStack() as stack:
         patch_for_globaldb_upgrade_to(stack, 15)
         maybe_upgrade_globaldb(
@@ -1534,6 +1556,21 @@ def test_upgrade_v14_v15(
             "OR key LIKE 'MORPHO_VAULTS%' OR key LIKE 'STAKEDAO_V2_VAULTS%' "
             "OR key LIKE 'BEEFY_VAULTS%' OR key LIKE 'PENDLE_YIELD_TOKENS%'",
         ).fetchone()[0] == 0
+
+        # Verify all weights now sum to exactly 1 after upgrade
+        assert cursor.execute(
+            'SELECT parent_token_entry, SUM(CAST(weight AS REAL)) '
+            'FROM underlying_tokens_list '
+            'WHERE parent_token_entry IN (?, ?, ?, ?, ?) '
+            'GROUP BY parent_token_entry ORDER BY parent_token_entry',
+            weight_test_parents,
+        ).fetchall() == [
+            ('eip155:1/erc20:0x0000000000004946c0e9F43F4Dee607b0eF1fA1c', 1.0),  # normalized
+            ('eip155:1/erc20:0x00000000008FD4F395Ec6F12920bae9Cb6C722e4', 1.0),  # normalized
+            ('eip155:1/erc20:0x00000000441378008EA67F4284A57932B1c000a5', 1.0),  # normalized
+            ('eip155:1/erc20:0x000006c2A22ff4A44ff1f5d0F2ed65F781F55555', 1.0),  # unchanged
+            ('eip155:1/erc20:0x0012940cf77a3cB5BADE409B96A60E22506CF7d0', 1.0),  # unchanged
+        ]
 
 
 @pytest.mark.parametrize('custom_globaldb', ['v2_global.db'])
