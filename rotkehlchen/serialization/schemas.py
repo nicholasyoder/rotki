@@ -78,7 +78,7 @@ class BaseAssetSchema(Schema):
 
 class AssetWithOraclesSchema(BaseAssetSchema):
     identifier = EmptyAsNoneStringField(required=False, load_default=None)
-    symbol = NonEmptyStringField(required=True)
+    symbol = EmptyAsNoneStringField(load_default=None)
     coingecko = EmptyAsNoneStringField(load_default=None)
     cryptocompare = EmptyAsNoneStringField(load_default=None)
 
