@@ -1,4 +1,5 @@
 import logging
+from collections import defaultdict
 from typing import TYPE_CHECKING, Final, Literal, overload
 
 from solders.solders import Signature
@@ -11,6 +12,7 @@ from rotkehlchen.api.websockets.typedefs import (
 from rotkehlchen.chain.solana.types import SolanaTransaction, pubkey_to_solana_address
 from rotkehlchen.db.filtering import SolanaTransactionsFilterQuery
 from rotkehlchen.db.solanatx import DBSolanaTx
+from rotkehlchen.db.utils import get_query_chunks
 from rotkehlchen.errors.misc import MissingAPIKey, RemoteError
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.externalapis.helius import Helius
@@ -274,8 +276,8 @@ class SolanaTransactions:
             end_ts: Timestamp,
             return_queried_hashes: bool = False,
     ) -> list[Signature] | None:
-        """Query any missing transactions for the given address in the given range and
-        save them to the DB.
+        """Query any missing transactions for the given address and its ATAs in the given range
+        and save them to the DB.
 
         Since solana txs can't be queried by timestamp, this uses the existing txs on either side
         of the range as the before/until parameters for the query. If these boundary txs are not
@@ -290,17 +292,40 @@ class SolanaTransactions:
             period=(start_ts, end_ts),
             status=TransactionStatusStep.QUERYING_TRANSACTIONS_STARTED,
         )
-        until_sig, before_sig = None, None
+
+        # For each address (user address and all associated ATAs) get the signature and block
+        # time for each tx within the specified range, including the next txs on either side
+        # of the range to use for the before/until limits.
+        txs_by_address: defaultdict[SolanaAddress, list] = defaultdict(list)
         with self.database.conn.read_ctx() as cursor:
-            if len(existing_txs := cursor.execute(
-                'SELECT signature, block_time FROM solana_transactions st '
-                'JOIN solanatx_address_mappings sam ON st.identifier == sam.tx_id '
-                'WHERE sam.address = ? '
-                'AND block_time >= COALESCE((SELECT MAX(block_time) FROM solana_transactions WHERE block_time < ?), ?) '  # noqa: E501
-                'AND block_time <= COALESCE((SELECT MIN(block_time) FROM solana_transactions WHERE block_time > ?), ?) '  # noqa: E501
-                'ORDER BY block_time;',
-                (address, start_ts, start_ts, end_ts, end_ts),
-            ).fetchall()) != 0:
+            txs_by_address.update({SolanaAddress(x[0]): [] for x in cursor.execute(
+                'SELECT ? UNION ALL SELECT ata_address FROM solana_ata_address_mappings WHERE account = ?',  # noqa: E501
+                (address, address),
+            )})
+
+            for chunk, placeholders in get_query_chunks(list(txs_by_address)):
+                for addr, sig, block_time in cursor.execute(
+                    'SELECT sam.address as current_address, st.signature, st.block_time '
+                    'FROM solana_transactions st '
+                    'JOIN solanatx_address_mappings sam ON st.identifier = sam.tx_id '
+                    f'WHERE sam.address IN ({placeholders}) '
+                    f'AND block_time >= COALESCE(('
+                    '   SELECT MAX(block_time) FROM solana_transactions st '
+                    '   JOIN solanatx_address_mappings sam ON st.identifier = sam.tx_id '
+                    '   WHERE sam.address = current_address AND block_time < ?'
+                    '), ?) AND block_time <= COALESCE(('
+                    '   SELECT MIN(block_time) FROM solana_transactions st '
+                    '   JOIN solanatx_address_mappings sam ON st.identifier = sam.tx_id '
+                    '   WHERE sam.address = current_address AND block_time > ?'
+                    '), ?) ORDER BY sam.address, st.block_time;',
+                    (*chunk, start_ts, start_ts, end_ts, end_ts),
+                ):
+                    txs_by_address[addr].append((sig, block_time))
+
+        new_signatures: list[Signature] = []
+        for ata_or_account, existing_txs in txs_by_address.items():
+            until_sig, before_sig = None, None
+            if len(existing_txs) > 0:
                 first_sig, first_block_time = existing_txs[0]
                 if first_block_time <= start_ts:
                     until_sig = Signature(first_sig)
@@ -309,19 +334,19 @@ class SolanaTransactions:
                 if last_block_time >= end_ts:
                     before_sig = Signature(last_sig)
 
-        existing_signatures = [Signature(x) for x, _ in existing_txs]
-        new_signatures: list[Signature] = []
-        if len(sigs_to_query := [x for x in self.node_inquirer.query_tx_signatures_for_address(
-            address=address,
-            until=until_sig,
-            before=before_sig,
-        ) if x not in existing_signatures]) != 0:
-            queried_signatures = self.query_transactions_for_signatures(
-                signatures=sigs_to_query,
-                relevant_address=address,
-                return_queried_hashes=return_queried_hashes,
-            )
-            if queried_signatures:
+            existing_signatures = [deserialize_tx_signature(x) for x, _ in existing_txs]
+            if (
+                len(sigs_to_query := [x for x in self.node_inquirer.query_tx_signatures_for_address(  # noqa: E501
+                    address=ata_or_account,
+                    until=until_sig,
+                    before=before_sig,
+                ) if x not in existing_signatures]) != 0 and
+                (queried_signatures := self.query_transactions_for_signatures(
+                    signatures=sigs_to_query,
+                    relevant_address=ata_or_account,
+                    return_queried_hashes=return_queried_hashes,
+                )) is not None
+            ):
                 new_signatures.extend(queried_signatures)
 
         self._send_tx_status_message(
@@ -329,7 +354,4 @@ class SolanaTransactions:
             period=(start_ts, end_ts),
             status=TransactionStatusStep.QUERYING_TRANSACTIONS_FINISHED,
         )
-        if not return_queried_hashes:
-            return None
-
-        return new_signatures
+        return new_signatures if return_queried_hashes else None

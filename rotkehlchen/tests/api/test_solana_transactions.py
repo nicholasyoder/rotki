@@ -255,9 +255,16 @@ def test_refetch_txs_in_range(
         solana_accounts: list[SolanaAddress],
         websocket_connection: 'WebsocketReader',
 ) -> None:
-    """Test that refetching transactions in a given range works properly.
-    First queries 3 transactions and then queries a range between the first and the third, which
-    results in 2 more txs being pulled.
+    """Test that refetching transactions in a given range works properly both for the main user
+    address and one of its ATAs.
+
+    For the user address, 3 txs are added before refetching, 2 more are found during the refetch.
+    For the ATA address, 1 tx is added before refetching, 2 more are found during the refetch.
+
+    The time range queried is between the first and third tx originally added for the user address.
+    The ATA address does not actually have any txs in this range, but since we can't query by
+    timestamp in solana, it queries to the nearest existing tx, finding 2 more txs and ensuring
+    that if there had been missing txs in this range they would be pulled.
     """
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
     solana_tx_db = DBSolanaTx(rotki.data.db)
@@ -271,6 +278,16 @@ def test_refetch_txs_in_range(
             relevant_address=(user_address := solana_accounts[0]),
         )
 
+    rotki.chains_aggregator.solana.transactions.get_or_create_transaction(
+        signature=deserialize_tx_signature(usdc_ata_signature := '4XaCfTLNno3rAETUgRC5tfPwzvvkJzARQYcyjas4nEyzkM7iFgZtHC2rY85JxJsb7baJqcnLSdqHdrhjgffQXuyo'),  # noqa: E501
+        relevant_address=(usdc_ata := SolanaAddress('BeWvKX4GCSzfQdWgvzH1nzNFujCAktbV2wYrUMGpQz3')),  # noqa: E501
+    )
+    with rotki.data.db.conn.write_ctx() as write_cursor:
+        write_cursor.executemany(
+            'INSERT INTO solana_ata_address_mappings(account, ata_address) VALUES (?, ?)',
+            [(user_address, ata_address) for ata_address in [usdc_ata]],
+        )
+
     result = assert_proper_sync_response_with_result(requests.post(
         api_url_for(rotkehlchen_api_server, 'refetchtransactionsresource'),
         json={
@@ -281,10 +298,12 @@ def test_refetch_txs_in_range(
             'address': user_address,
         },
     ))
-    assert result['new_transactions_count'] == 2
+    assert result['new_transactions_count'] == 4
     assert set(result['new_transactions'][SupportedBlockchain.SOLANA.serialize()]) == {
         '5HzJs4E3KobYW4dfDAvxzuUPriKdK71iPG7g7w3VQBC1bgpQmHjeevkBBmp8WFf3FeosqMkcgSHV5LPqwDfmvr2X',
         '4UoyrhPVWBCkiWUMWdyHUQQ29qMxCFXM6iXt7pL9ufaGgcnA8nz1qGQZfgKJcRURgvwmpLWeBVwfp1EJDZoVXPDA',
+        '3bg38hZgFD5xwnwf3gj3oik8F22kF3GtKZmQd3bj1syK7b9GCNqbGKnir4XuhjUXhpe4qQbeYPZjCzowLUH17Rx1',
+        '3Nz9gnhcxgYSeK7B9PNvabUDKCt37eYNaEx8kZoXBuvY3SS9xuw9emEPdwBPBcSBL1QZ8sBDR1xGpFLj3XGVGxFb',
     }
     websocket_connection.wait_until_messages_num(num=3, timeout=2)
     assert [msg['data']['status'] for msg in websocket_connection.messages if msg['data'].get('service') is None] == [  # skip helius message  # noqa: E501
@@ -305,4 +324,7 @@ def test_refetch_txs_in_range(
             (1753836967, signature2),
             (1753836968, '4UoyrhPVWBCkiWUMWdyHUQQ29qMxCFXM6iXt7pL9ufaGgcnA8nz1qGQZfgKJcRURgvwmpLWeBVwfp1EJDZoVXPDA'),  # noqa: E501
             (1753911942, signature3),
+            (1762471060, '3Nz9gnhcxgYSeK7B9PNvabUDKCt37eYNaEx8kZoXBuvY3SS9xuw9emEPdwBPBcSBL1QZ8sBDR1xGpFLj3XGVGxFb'),  # noqa: E501
+            (1762471062, '3bg38hZgFD5xwnwf3gj3oik8F22kF3GtKZmQd3bj1syK7b9GCNqbGKnir4XuhjUXhpe4qQbeYPZjCzowLUH17Rx1'),  # noqa: E501
+            (1762473839, usdc_ata_signature),
         ]
