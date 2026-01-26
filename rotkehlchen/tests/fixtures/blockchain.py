@@ -143,6 +143,11 @@ def fixture_number_of_eth_accounts():
     return 4
 
 
+@pytest.fixture(name='number_of_arbitrum_one_accounts')
+def fixture_number_of_arbitrum_one_accounts():
+    return 0
+
+
 @pytest.fixture(name='ethereum_accounts')
 def fixture_ethereum_accounts(number_of_eth_accounts) -> list[ChecksumEvmAddress]:
     return [make_evm_address() for x in range(number_of_eth_accounts)]
@@ -159,8 +164,10 @@ def fixture_polygon_pos_accounts() -> list[ChecksumEvmAddress]:
 
 
 @pytest.fixture(name='arbitrum_one_accounts')
-def fixture_arbitrum_one_accounts() -> list[ChecksumEvmAddress]:
-    return []
+def fixture_arbitrum_one_accounts(
+        number_of_arbitrum_one_accounts: int,
+) -> list[ChecksumEvmAddress]:
+    return [make_evm_address() for _ in range(number_of_arbitrum_one_accounts)]
 
 
 @pytest.fixture(name='base_accounts')

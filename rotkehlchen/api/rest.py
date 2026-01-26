@@ -3687,6 +3687,7 @@ class RestAPI:
                     ),
                 ),
             )
+            blockchain_accounts = self.rotkehlchen.data.db.get_blockchain_accounts(cursor=cursor)
 
         # Return the close_matches and filtered other_events.
         return api_response(_wrap_in_ok_result(result={
@@ -3696,6 +3697,7 @@ class RestAPI:
                 if not should_exclude_possible_match(
                     asset_movement=asset_movement,  # type: ignore[arg-type]  # will be an asset movement - the query is filtered by entry type
                     event=event,
+                    blockchain_accounts=blockchain_accounts,
                 )
             ],
         }))

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Final
 
 from rotkehlchen.api.v1.types import IncludeExcludeFilterData
 from rotkehlchen.api.websockets.typedefs import WSMessageType
+from rotkehlchen.chain.accounts import BlockchainAccounts
 from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
 from rotkehlchen.constants.resolver import SOLANA_CHAIN_DIRECTIVE, identifier_to_evm_chain
 from rotkehlchen.db.cache import ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE, DBCacheDynamic, DBCacheStatic
@@ -35,6 +36,7 @@ from rotkehlchen.history.events.structures.types import (
 )
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import (
+    BLOCKCHAIN_LOCATIONS,
     CHAINS_WITH_TRANSACTIONS,
     EVM_CHAIN_IDS_WITH_TRANSACTIONS,
     Location,
@@ -573,12 +575,14 @@ def update_asset_movement_matched_event(
 def should_exclude_possible_match(
         asset_movement: AssetMovement,
         event: HistoryBaseEntry,
+        blockchain_accounts: BlockchainAccounts,
         exclude_unexpected_direction: bool = False,
 ) -> bool:
     """Check if the given event should be excluded from being a possible match.
     Returns True in the following cases:
     - Event is from the same exchange as the asset movement
     - Event is an INFORMATIONAL/APPROVE event
+    - Event is a TRANSFER/NONE between tracked accounts.
     - exclude_unexpected_direction is True and the event has the opposite direction of what would
        be expected based on the asset movement's type. This is used during automatic matching but
        is not used when getting possible matches for manual matching since there may be edge cases
@@ -590,6 +594,18 @@ def should_exclude_possible_match(
     ) or (
         event.event_type == HistoryEventType.INFORMATIONAL and
         event.event_subtype == HistoryEventSubType.APPROVE
+    ) or (
+        event.event_type == HistoryEventType.TRANSFER and
+        event.event_subtype == HistoryEventSubType.NONE and
+        event.location in BLOCKCHAIN_LOCATIONS and
+        (chain_accounts := blockchain_accounts.get(SupportedBlockchain.from_location(
+            location=event.location,  # type: ignore[arg-type]  # checked `in BLOCKCHAIN_LOCATIONS` above
+        ))) is not None and
+        event.location_label in chain_accounts and
+        ((  # btc/bch don't have the address attribute so can only go by a tracked location label.
+            (addr := getattr(event, 'address', None)) is None and
+            event.location in (Location.BITCOIN, Location.BITCOIN_CASH)
+        ) or addr in chain_accounts)
     ) or (
         exclude_unexpected_direction and
         (direction := event.maybe_get_direction()) != EventDirection.NEUTRAL and
@@ -652,6 +668,7 @@ def find_asset_movement_matches(
                 ),
             ),
         )
+        blockchain_accounts = events_db.db.get_blockchain_accounts(cursor=cursor)
 
     close_matches: list[HistoryBaseEntry] = []
     tolerance = CachedSettings().get_settings().asset_movement_amount_tolerance
@@ -659,6 +676,7 @@ def find_asset_movement_matches(
         if should_exclude_possible_match(
             asset_movement=asset_movement,
             event=event,
+            blockchain_accounts=blockchain_accounts,
             exclude_unexpected_direction=True,
         ):
             continue
