@@ -30,7 +30,7 @@ from rotkehlchen.tests.utils.factories import (
     make_solana_address,
     make_solana_signature,
 )
-from rotkehlchen.types import Location, Timestamp, TimestampMS
+from rotkehlchen.types import ChecksumEvmAddress, Location, Timestamp, TimestampMS
 from rotkehlchen.utils.misc import ts_sec_to_ms
 
 if TYPE_CHECKING:
@@ -444,3 +444,58 @@ def test_auto_ignore_by_asset(database: 'DBHandler') -> None:
             ('matched_asset_movement_4', str(ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE)),
             ('matched_asset_movement_5', str(ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE)),
         ]
+
+
+@pytest.mark.parametrize('number_of_arbitrum_one_accounts', [2])
+def test_ignore_transfers_between_tracked_accounts(
+        database: 'DBHandler',
+        arbitrum_one_accounts: list[ChecksumEvmAddress],
+) -> None:
+    """Test that transfers between tracked accounts are not included as possible matches."""
+    events_db = DBHistoryEvents(database)
+    with database.conn.write_ctx() as write_cursor:
+        events_db.add_history_events(
+            write_cursor=write_cursor,
+            history=[(movement_event := AssetMovement(
+                identifier=(movement_id := 1),
+                location=Location.KRAKEN,
+                event_type=HistoryEventType.WITHDRAWAL,
+                timestamp=TimestampMS(1520000000000),
+                asset=A_USDC,
+                amount=FVal('25'),
+                unique_id='xyz',
+                location_label='Kraken 1',
+            )), EvmEvent(  # Matched event
+                identifier=(match_id := 2),
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(movement_event.timestamp + 1),
+                location=Location.ARBITRUM_ONE,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=movement_event.asset,
+                amount=movement_event.amount,
+                location_label=arbitrum_one_accounts[0],
+            ), EvmEvent(  # Ignored transfer between tracked addresses
+                identifier=3,
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(movement_event.timestamp + 2),
+                location=Location.ARBITRUM_ONE,
+                event_type=HistoryEventType.TRANSFER,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=movement_event.asset,
+                amount=movement_event.amount,
+                location_label=arbitrum_one_accounts[0],
+                address=arbitrum_one_accounts[1],
+            )],
+        )
+
+    # Run matching and check that it matched properly with the receive event instead of seeing
+    # the transfer event as a second close match.
+    match_asset_movements(database=database)
+    with database.conn.read_ctx() as cursor:
+        assert cursor.execute(
+            'SELECT * FROM key_value_cache WHERE name LIKE ?',
+            ('matched_asset_movement_%',),
+        ).fetchall() == [(f'matched_asset_movement_{movement_id}', str(match_id))]
