@@ -2,20 +2,24 @@ from collections.abc import Callable
 from contextlib import suppress
 from functools import partial
 from typing import TYPE_CHECKING, Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
+from httpx import HTTPStatusError, Response
+from solana.exceptions import SolanaRpcException
 from solana.rpc.api import Client
 
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.assets.utils import get_or_create_solana_token, get_solana_token
 from rotkehlchen.chain.evm.types import NodeName, WeightedNode
+from rotkehlchen.chain.mixins.rpc_nodes import RPCNode
 from rotkehlchen.chain.solana.utils import MetadataInfo, MintInfo, is_solana_token_nft
 from rotkehlchen.constants.misc import ONE, ZERO
-from rotkehlchen.errors.misc import InputError
+from rotkehlchen.errors.misc import InputError, RemoteError
 from rotkehlchen.serialization.deserialize import deserialize_tx_signature
 from rotkehlchen.tests.utils.makerdao import FVal
 from rotkehlchen.types import SolanaAddress, SupportedBlockchain, Timestamp, TokenKind
+from rotkehlchen.utils.misc import ts_now
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.solana.manager import SolanaManager
@@ -252,3 +256,75 @@ def test_only_archive_nodes(
         ):
             assert len(query_func()) == expected_result_len
             assert query_mock.call_count == 1
+
+
+def test_rate_limit_handling(
+        solana_inquirer: 'SolanaInquirer',
+) -> None:
+    """Test that rate limits are properly handled so that other non-rate limited nodes are used
+    instead of blocking until the rate limit backoff time is over.
+
+    1. First query: node1 returns 429, falls back to node2 which succeeds
+    2. Second query (within backoff): skips node1, uses node2 directly
+    3. Third query (after backoff expires): tries node1 again
+
+    Mocks the nodes and rpc clients to avoid actual network calls and for easier tracking of
+    which node is queried.
+    """
+    call_order = [WeightedNode(
+        node_info=(node1_info := NodeName(name='node1', endpoint='https://node1.example.com', blockchain=SupportedBlockchain.SOLANA, owned=False)),  # noqa: E501
+        weight=ONE,
+        active=True,
+    ), WeightedNode(
+        node_info=(node2_info := NodeName(name='node2', endpoint='https://node2.example.com', blockchain=SupportedBlockchain.SOLANA, owned=False)),  # noqa: E501
+        weight=ONE,
+        active=True,
+    )]
+    mock_client1 = MagicMock(spec=Client)
+    mock_client1.name = 'node1'  # For tracking which client is called
+    mock_client2 = MagicMock(spec=Client)
+    mock_client2.name = 'node2'
+    solana_inquirer.rpc_mapping = {
+        node1_info: RPCNode(rpc_client=mock_client1, is_pruned=False, is_archive=False),
+        node2_info: RPCNode(rpc_client=mock_client2, is_pruned=False, is_archive=False),
+    }
+    call_log, do_rate_limit = [], True
+
+    def mock_method(client: Client) -> None:
+        """Mock RPC method that rate limits node1 when flag is set."""
+        client_name = client.name  # type: ignore[attr-defined]  # name was added via MagicMock
+        call_log.append(client_name)
+
+        if client_name == 'node1' and do_rate_limit:
+            raise SolanaRpcException(MagicMock(), MagicMock(), '', client) from HTTPStatusError(
+                message='Rate Limit',
+                request=MagicMock(),
+                response=Response(status_code=429, headers={'retry-after': '5'}),
+            )
+
+    # Query 1: node1 rate limits, falls back to node2
+    solana_inquirer.query(method=mock_method, call_order=call_order)
+    assert call_log == ['node1', 'node2']  # node1 rate limited, fell back to node2
+    assert 'node1' in solana_inquirer.node_backoff_info
+    assert 'node2' not in solana_inquirer.node_backoff_info
+    backoff_end_ts, attempts, _ = solana_inquirer.node_backoff_info['node1']
+    assert attempts == 1
+    assert backoff_end_ts is not None
+    assert backoff_end_ts > ts_now()
+
+    # Query 2: skips node1 even though do_rate_limit is false since the backoff time is not up yet
+    do_rate_limit = False
+    call_log.clear()
+    solana_inquirer.query(method=mock_method, call_order=call_order)
+    assert call_log == ['node2']
+
+    # Query 3: simulate backoff expiry by setting the end ts to now
+    solana_inquirer.node_backoff_info['node1'] = (ts_now(), 1, 0)
+    call_log.clear()
+    solana_inquirer.query(method=mock_method, call_order=call_order)
+    assert call_log == ['node1']
+
+    # Query 4: require archive nodes (neither of the current nodes are marked as archive) to make
+    # sure we don't loop forever if the query fails for non-rate-limit reasons.
+    with pytest.raises(RemoteError):
+        solana_inquirer.query(method=mock_method, call_order=call_order, only_archive_nodes=True)

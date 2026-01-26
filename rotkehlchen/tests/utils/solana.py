@@ -34,9 +34,8 @@ def patch_solana_inquirer_nodes(
     """Patch the solana inquirer node connection behavior for tests."""
     if solana_nodes_connect_at_start == 'DEFAULT':
         # Use only the mainnet-beta.solana.com node by default in the tests.
-        stack.enter_context(patch.object(
-            target=solana_inquirer,
-            attribute='default_call_order',
+        stack.enter_context(patch(
+            target='rotkehlchen.chain.mixins.rpc_nodes.SolanaRPCMixin.default_call_order',
             side_effect=lambda: [MAINNET_BETA_SOLANA_NODE],
         ))
         stack.enter_context(patch(
@@ -44,10 +43,9 @@ def patch_solana_inquirer_nodes(
             return_value=True,  # we know this node is an archive node.
         ))
     else:
-        stack.enter_context(patch.object(
-            target=solana_inquirer,
-            attribute='default_call_order',
-            side_effect=lambda: solana_nodes_connect_at_start,
+        stack.enter_context(patch(
+            target='rotkehlchen.chain.mixins.rpc_nodes.SolanaRPCMixin.default_call_order',
+            side_effect=lambda: list(solana_nodes_connect_at_start),
         ))
 
 
