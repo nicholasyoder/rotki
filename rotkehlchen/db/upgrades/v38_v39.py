@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 from rotkehlchen.db.constants import (
     HISTORY_MAPPING_KEY_STATE,
-    HISTORY_MAPPING_STATE_CUSTOMIZED,
+    HistoryMappingState,
 )
 from rotkehlchen.db.utils import update_table_schema
 from rotkehlchen.logging import RotkehlchenLogsAdapter, enter_exit_debug_log
@@ -293,7 +293,7 @@ def upgrade_v38_to_v39(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
 
         customized_events = write_cursor.execute(
             'SELECT COUNT(*) FROM history_events_mappings WHERE name=? AND value=?',
-            (HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED),
+            (HISTORY_MAPPING_KEY_STATE, HistoryMappingState.CUSTOMIZED),
         ).fetchone()[0]
         querystr = (
             'DELETE FROM history_events WHERE identifier IN ('
@@ -304,7 +304,7 @@ def upgrade_v38_to_v39(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
         bindings: tuple = ()
         if customized_events != 0:
             querystr += ' AND identifier NOT IN (SELECT parent_identifier FROM history_events_mappings WHERE name=? AND value=?)'  # noqa: E501
-            bindings = (HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED)
+            bindings = (HISTORY_MAPPING_KEY_STATE, HistoryMappingState.CUSTOMIZED)
 
         write_cursor.execute(querystr, bindings)
         write_cursor.execute(

@@ -12,6 +12,7 @@ from rotkehlchen.chain.bitcoin.bch.constants import BCH_GROUP_IDENTIFIER_PREFIX
 from rotkehlchen.chain.bitcoin.btc.constants import BTC_GROUP_IDENTIFIER_PREFIX
 from rotkehlchen.chain.ethereum.constants import SHAPPELA_TIMESTAMP
 from rotkehlchen.constants.assets import A_ETH2
+from rotkehlchen.db.constants import HistoryMappingState
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.exchanges.constants import ALL_SUPPORTED_EXCHANGES
 from rotkehlchen.fval import FVal
@@ -379,7 +380,7 @@ class HistoryBaseEntry(AccountingEventMixin, ABC, Generic[ExtraDataType]):
 
     def serialize_for_api(
             self,
-            customized_event_ids: list[int],
+            mapping_states: dict[int, list[HistoryMappingState]],
             ignored_ids: set[str],
             hidden_event_ids: list[int],
             event_accounting_rule_status: EventAccountingRuleStatus,
@@ -390,8 +391,11 @@ class HistoryBaseEntry(AccountingEventMixin, ABC, Generic[ExtraDataType]):
         result: dict[str, Any] = {'entry': self.serialize()}
         if self.should_ignore(ignored_ids=ignored_ids):
             result['ignored_in_accounting'] = True
-        if self.identifier in customized_event_ids:
-            result['customized'] = True
+        if (
+            self.identifier is not None and
+            (event_states := mapping_states.get(self.identifier)) is not None
+        ):
+            result['states'] = [x.serialize_for_api() for x in event_states]
         if self.identifier in hidden_event_ids:
             result['hidden'] = True
         if grouped_events_num is not None:

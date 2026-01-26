@@ -22,6 +22,7 @@ from rotkehlchen.constants import ONE
 from rotkehlchen.constants.assets import A_BTC, A_DAI, A_ETH, A_EUR, A_MKR, A_USDT, A_WETH
 from rotkehlchen.constants.limits import FREE_HISTORY_EVENTS_LIMIT
 from rotkehlchen.db.cache import DBCacheDynamic
+from rotkehlchen.db.constants import HistoryMappingState
 from rotkehlchen.db.evmtx import DBEvmTx
 from rotkehlchen.db.filtering import (
     EvmEventFilterQuery,
@@ -873,7 +874,7 @@ def test_query_transactions_check_decoded_events(
     event['event_type'] = 'spend'
     event['event_subtype'] = 'payback debt'
     event['user_notes'] = 'Edited event'
-    tx2_events[1]['customized'] = True
+    tx2_events[1]['states'] = [HistoryMappingState.CUSTOMIZED.serialize_for_api()]
     response = requests.patch(
         api_url_for(rotkehlchen_api_server, 'historyeventresource'),
         json={key: value for key, value in event.items() if key != 'group_identifier'},
@@ -898,7 +899,7 @@ def test_query_transactions_check_decoded_events(
             'tx_ref': '0xccb6a445e136492b242d1c2c0221dc4afd4447c96601e88c156ec4d52e993b8f',
             'extra_data': None,
         },
-        'customized': True,
+        'states': [HistoryMappingState.CUSTOMIZED.serialize_for_api()],
         'event_accounting_rule_status': 'not processed',
     })
     response = requests.put(

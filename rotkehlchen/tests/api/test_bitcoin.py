@@ -9,7 +9,7 @@ import requests
 from rotkehlchen.constants import DEFAULT_BALANCE_LABEL, ONE
 from rotkehlchen.constants.assets import A_BTC
 from rotkehlchen.db.cache import DBCacheDynamic
-from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED
+from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HistoryMappingState
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.history.events.structures.base import HistoryEvent
@@ -631,7 +631,7 @@ def test_delete_btc_account(
     with rotki.data.db.conn.write_ctx() as write_cursor:
         for address in btc_accounts:
             for mapping_values in (
-                {HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_CUSTOMIZED},
+                {HISTORY_MAPPING_KEY_STATE: HistoryMappingState.CUSTOMIZED},
                 None,
             ):  # Add both a normal event and a customized event for each address
                 dbevents.add_history_event(
@@ -674,9 +674,10 @@ def test_delete_btc_account(
         )
         assert len(events) == 3  # Events remaining are the customized event from address1 and both events from address2  # noqa: E501
         assert events[0].location_label == btc_accounts[0]
-        assert events[0].identifier in dbevents.get_customized_group_identifiers(
+        assert events[0].identifier in dbevents.get_event_mapping_states(
             cursor=cursor,
             location=Location.BITCOIN,
+            mapping_state=HistoryMappingState.CUSTOMIZED,
         )
         assert events[1].location_label == btc_accounts[1]
         assert events[2].location_label == btc_accounts[1]

@@ -13,7 +13,7 @@ from rotkehlchen.constants import (
     CONTRACT_TAG_NAME,
 )
 from rotkehlchen.db.cache import DBCacheStatic
-from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED
+from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HistoryMappingState
 from rotkehlchen.db.utils import update_table_schema
 from rotkehlchen.history.events.structures.base import HistoryBaseEntryType
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
@@ -290,7 +290,7 @@ def upgrade_v50_to_v51(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
                 # WHERE: exclude asset movements, only customized, only with counterparty
                 HistoryBaseEntryType.ASSET_MOVEMENT_EVENT.value,
                 HISTORY_MAPPING_KEY_STATE,
-                HISTORY_MAPPING_STATE_CUSTOMIZED,
+                HistoryMappingState.CUSTOMIZED,
                 HistoryEventType.DEPOSIT.serialize(),
                 HistoryEventSubType.DEPOSIT_ASSET.serialize(),
                 HistoryEventType.WITHDRAWAL.serialize(),

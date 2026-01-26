@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Generic, Self, TypeVar, cast
 from rotkehlchen.accounting.mixins.event import AccountingEventMixin, AccountingEventType
 from rotkehlchen.accounting.types import EventAccountingRuleStatus
 from rotkehlchen.assets.asset import Asset
+from rotkehlchen.db.constants import HistoryMappingState
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.history.events.structures.base import (
     HISTORY_EVENT_DB_TUPLE_WRITE,
@@ -190,7 +191,7 @@ class OnchainEvent(HistoryBaseEntry, Generic[T_TxRef, T_Address]):
 
     def serialize_for_api(
             self,
-            customized_event_ids: list[int],
+            mapping_states: dict[int, list[HistoryMappingState]],
             ignored_ids: set[str],
             hidden_event_ids: list[int],
             event_accounting_rule_status: EventAccountingRuleStatus,
@@ -198,7 +199,7 @@ class OnchainEvent(HistoryBaseEntry, Generic[T_TxRef, T_Address]):
             has_ignored_assets: bool = False,
     ) -> dict[str, Any]:
         result = super().serialize_for_api(
-            customized_event_ids=customized_event_ids,
+            mapping_states=mapping_states,
             ignored_ids=ignored_ids,
             hidden_event_ids=hidden_event_ids,
             event_accounting_rule_status=event_accounting_rule_status,

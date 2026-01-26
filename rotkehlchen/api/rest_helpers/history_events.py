@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED
+from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HistoryMappingState
 from rotkehlchen.errors.misc import InputError
 from rotkehlchen.history.events.structures.base import HistoryBaseEntry, HistoryBaseEntryType
 
@@ -66,7 +66,7 @@ def edit_grouped_events_with_optional_fee(
         events_db.add_history_event(  # Add the new fee event. Mark as customized since its being manually added by the user.  # noqa: E501
             write_cursor=write_cursor,
             event=events[-1],
-            mapping_values={HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_CUSTOMIZED},
+            mapping_values={HISTORY_MAPPING_KEY_STATE: HistoryMappingState.CUSTOMIZED},
         )
     else:
         assert new_event_count == existing_event_count and existing_event_count in (no_fee_num, with_fee_num)  # noqa: E501
@@ -126,5 +126,5 @@ def edit_grouped_swap_events(
         events_db.add_history_event(
             write_cursor=write_cursor,
             event=event,
-            mapping_values={HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_CUSTOMIZED},
+            mapping_values={HISTORY_MAPPING_KEY_STATE: HistoryMappingState.CUSTOMIZED},
         )

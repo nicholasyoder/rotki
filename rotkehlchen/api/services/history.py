@@ -58,6 +58,7 @@ if TYPE_CHECKING:
         MissingPrice,
     )
     from rotkehlchen.assets.asset import Asset
+    from rotkehlchen.db.constants import HistoryMappingState
     from rotkehlchen.db.filtering import HistoryBaseEntryFilterQuery
     from rotkehlchen.fval import FVal
     from rotkehlchen.history.events.structures.base import HistoryBaseEntry
@@ -325,7 +326,7 @@ class HistoryService:
                 entries_table='history_events',
                 group_by='group_identifier' if aggregate_by_group_ids else None,
             )
-            customized_event_ids = dbevents.get_customized_group_identifiers(
+            event_mapping_states = dbevents.get_event_mapping_states(
                 cursor=cursor,
                 location=filter_query.location,
             )
@@ -373,7 +374,7 @@ class HistoryService:
                     accountant=self.rotkehlchen.accountant,
                 ),
                 grouped_events_nums=grouped_events_nums,
-                customized_event_ids=customized_event_ids,
+                mapping_states=event_mapping_states,
                 ignored_ids=ignored_ids,
                 hidden_event_ids=hidden_event_ids,
                 joined_group_ids=joined_group_ids,
@@ -631,7 +632,7 @@ class HistoryService:
             aggregate_by_group_ids: bool,
             event_accounting_rule_statuses: list[EventAccountingRuleStatus],
             grouped_events_nums: list[int | None],
-            customized_event_ids: list[int],
+            mapping_states: dict[int, list[HistoryMappingState]],
             ignored_ids: set[str],
             hidden_event_ids: list[int],
             joined_group_ids: dict[str, str],
@@ -671,7 +672,7 @@ class HistoryService:
         ):
             replacement_group_id = joined_group_ids.get(event.group_identifier)
             serialized = event.serialize_for_api(
-                customized_event_ids=customized_event_ids,
+                mapping_states=mapping_states,
                 ignored_ids=ignored_ids,
                 hidden_event_ids=hidden_event_ids,
                 event_accounting_rule_status=event_accounting_rule_status,

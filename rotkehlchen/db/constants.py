@@ -1,4 +1,4 @@
-from enum import Enum
+from enum import Enum, IntEnum
 from typing import Final, Literal
 
 from rotkehlchen.errors.serialization import DeserializationError
@@ -19,10 +19,17 @@ TX_SPAM: Final = 1
 
 # -- history_events_mappings values --
 HISTORY_MAPPING_KEY_STATE: Final = 'state'
-HISTORY_MAPPING_STATE_CUSTOMIZED: Final = 1
-# Marks profit events auto-created during historical balances processing
-# when withdrawals exceed deposits
-HISTORY_MAPPING_STATE_VIRTUAL: Final = 2
+
+
+class HistoryMappingState(IntEnum):
+    CUSTOMIZED = 1
+    PROFIT_ADJUSTMENT = 2  # events auto-created during historical balances processing when withdrawals exceed deposits  # noqa: E501
+    AUTO_MATCHED = 3  # events matched with asset movements, and fees created during matching.
+    IMPORTED_FROM_CSV = 4
+
+    def serialize_for_api(self) -> str:
+        """Serializes the mapping state for the API"""
+        return self.name.lower()
 
 
 EVM_ACCOUNTS_DETAILS_LAST_QUERIED_TS: Final = 'last_queried_timestamp'

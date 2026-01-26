@@ -24,8 +24,8 @@ from rotkehlchen.db.constants import (
     HISTORY_BASE_ENTRY_FIELDS,
     HISTORY_BASE_ENTRY_LENGTH,
     HISTORY_MAPPING_KEY_STATE,
-    HISTORY_MAPPING_STATE_CUSTOMIZED,
     TX_DECODED,
+    HistoryMappingState,
 )
 from rotkehlchen.db.filtering import (
     ALL_EVENTS_DATA_JOIN,
@@ -197,7 +197,7 @@ class DBHistoryEvents:
             self,
             write_cursor: 'DBCursor',
             event: HistoryBaseEntry,
-            mapping_values: dict[str, int] | None = None,
+            mapping_values: dict[str, HistoryMappingState] | None = None,
             skip_tracking: bool = False,
     ) -> int | None:
         """Insert a single history entry to the DB. Returns its identifier or
@@ -276,11 +276,16 @@ class DBHistoryEvents:
         if min_timestamp is not None:
             self._mark_events_modified(write_cursor=write_cursor, timestamp=min_timestamp)
 
-    def edit_history_event(self, write_cursor: 'DBCursor', event: HistoryBaseEntry) -> None:
+    def edit_history_event(
+            self,
+            write_cursor: 'DBCursor',
+            event: HistoryBaseEntry,
+            mapping_state: HistoryMappingState = HistoryMappingState.CUSTOMIZED,
+    ) -> None:
         """
         Edit a history entry to the DB with information provided by the user.
         NOTE: It edits all the fields except the extra_data one.
-
+        Marks the event with the specified mapping state.
         Only tracks modification for balance cache invalidation if balance-affecting
         fields change (timestamp, asset, amount, type, subtype, location_label).
 
@@ -314,9 +319,10 @@ class DBHistoryEvents:
 
         # Mark as customized and store original position for duplicate prevention during redecode.
         # Only store original position on first customization (when INSERT succeeds).
-        if self.mark_event_customized(
+        if self.set_event_mapping_state(
             write_cursor=write_cursor,
             event=event,
+            mapping_state=mapping_state,
         ) and isinstance(event, OnchainEvent):
             write_cursor.execute(
                 'INSERT INTO key_value_cache (name, value) VALUES (?, ?)',
@@ -343,15 +349,19 @@ class DBHistoryEvents:
         )
 
     @staticmethod
-    def mark_event_customized(write_cursor: 'DBCursor', event: HistoryBaseEntry) -> bool:
-        """Mark an event as customized.
+    def set_event_mapping_state(
+            write_cursor: 'DBCursor',
+            event: HistoryBaseEntry,
+            mapping_state: HistoryMappingState,
+    ) -> bool:
+        """Mark an event with the specified mapping state
 
-        Returns True if newly marked as customized, False if it was already customized.
+        Returns True if newly marked with this state, False if it was already marked.
         """
         write_cursor.execute(
             'INSERT OR IGNORE INTO history_events_mappings(parent_identifier, name, value) '
             'VALUES(?, ?, ?)',
-            (event.identifier, HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED),
+            (event.identifier, HISTORY_MAPPING_KEY_STATE, mapping_state),
         )
         return write_cursor.rowcount == 1
 
@@ -433,10 +443,15 @@ class DBHistoryEvents:
     ) -> None:
         """Delete all uncustomized history events for the given location and optionally address.
         For EVM and Solana, only deletes events that also have a corresponding tx in the DB.
+        Also avoids deleting any events that are matched with asset movements.
         """
-        customized_events_num = write_cursor.execute(
-            'SELECT COUNT(*) FROM history_events_mappings WHERE name=? AND value=?',
-            (HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED),
+        events_to_keep_num = write_cursor.execute(
+            'SELECT COUNT(*) FROM history_events_mappings WHERE name=? AND value IN (?, ?)',
+            (customized_bindings := (
+                HISTORY_MAPPING_KEY_STATE,
+                HistoryMappingState.CUSTOMIZED,
+                HistoryMappingState.AUTO_MATCHED,
+            )),
         ).fetchone()[0]
         if location.is_bitcoin():
             join_or_where = 'WHERE'
@@ -454,9 +469,9 @@ class DBHistoryEvents:
         base_query = f'SELECT H.identifier from history_events H {join_or_where} H.location = ?'
         bindings: tuple = (location.serialize_for_db(),)
         filter_conditions = ''
-        if customized_events_num != 0:
-            filter_conditions += ' AND identifier NOT IN (SELECT parent_identifier FROM history_events_mappings WHERE name=? AND value=?)'  # noqa: E501
-            bindings += (HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED)
+        if events_to_keep_num != 0:
+            filter_conditions += ' AND identifier NOT IN (SELECT parent_identifier FROM history_events_mappings WHERE name=? AND value IN (?, ?))'  # noqa: E501
+            bindings += customized_bindings
         if address is not None:
             filter_conditions += ' AND location_label = ?'
             bindings += (address,)
@@ -531,9 +546,10 @@ class DBHistoryEvents:
 
         if (
             delete_customized is False and
-            (length := len(customized_event_ids := self.get_customized_group_identifiers(
+            (length := len(customized_event_ids := self.get_event_mapping_states(
                 cursor=write_cursor,
                 location=location,
+                mapping_state=HistoryMappingState.CUSTOMIZED,
             ))) != 0
         ):
             where_str += f' AND identifier NOT IN ({", ".join(["?"] * length)})'
@@ -545,33 +561,60 @@ class DBHistoryEvents:
             where_bindings=tuple(bindings),
         )
 
-    def get_customized_group_identifiers(
-            self,
+    @staticmethod
+    @overload
+    def get_event_mapping_states(
             cursor: 'DBCursor',
             location: Location | None,
+            mapping_state: HistoryMappingState,
     ) -> list[int]:
-        """Returns the identifiers of all the events in the database that have been customized
+        ...
 
-        Optionally filter by Location
+    @staticmethod
+    @overload
+    def get_event_mapping_states(
+            cursor: 'DBCursor',
+            location: Location | None,
+            mapping_state: None = None,
+    ) -> dict[int, list[HistoryMappingState]]:
+        ...
+
+    @staticmethod
+    def get_event_mapping_states(
+            cursor: 'DBCursor',
+            location: Location | None,
+            mapping_state: HistoryMappingState | None = None,
+    ) -> dict[int, list[HistoryMappingState]] | list[int]:
+        """Get the mapping states of each event in the database that has a mapping state,
+        optionally filtered by Location or
         """
+        where_str = 'A.name = ? '
+        bindings: list[Any] = [HISTORY_MAPPING_KEY_STATE]
+        if mapping_state is not None:
+            where_str += 'AND A.value = ? '
+            bindings.append(mapping_state)
+
         if location is None:
             cursor.execute(
-                'SELECT parent_identifier FROM history_events_mappings WHERE name=? AND value=?',
-                (HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED),
+                f'SELECT parent_identifier, value FROM history_events_mappings A WHERE {where_str}',  # noqa: E501
+                bindings,
             )
         else:
             cursor.execute(
-                'SELECT A.parent_identifier FROM history_events_mappings A JOIN '
-                'history_events_mappings B ON A.parent_identifier=B.parent_identifier AND '
-                'A.name=? AND A.value=? '
+                'SELECT A.parent_identifier, A.value FROM history_events_mappings A JOIN '
+                f'history_events_mappings B ON A.parent_identifier=B.parent_identifier AND {where_str}'  # noqa: E501
                 'JOIN history_events C ON C.identifier=A.parent_identifier AND C.location=?',
-                (
-                    HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED,
-                    location.serialize_for_db(),
-                ),
+                (*bindings, location.serialize_for_db()),
             )
 
-        return [x[0] for x in cursor]
+        if mapping_state is not None:
+            return [x[0] for x in cursor]
+
+        mapping_states = defaultdict(list)
+        for (identifier, state_value) in cursor:
+            mapping_states[identifier].append(HistoryMappingState(state_value))
+
+        return mapping_states
 
     def get_evm_event_by_identifier(self, identifier: int) -> Optional['EvmEvent']:
         """Returns the EVM event with the given identifier"""

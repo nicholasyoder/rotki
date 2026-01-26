@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias
 from rotkehlchen.api.websockets.typedefs import ProgressUpdateSubType, WSMessageType
 from rotkehlchen.constants import ZERO
 from rotkehlchen.db.cache import DBCacheStatic
-from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_VIRTUAL
+from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HistoryMappingState
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.db.settings import CachedSettings
@@ -518,7 +518,7 @@ def _maybe_add_profit_event(
             write_cursor.execute(
                 'INSERT OR IGNORE INTO history_events_mappings(parent_identifier, name, value) '
                 'VALUES(?, ?, ?)',
-                (event.identifier, HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_VIRTUAL),
+                (event.identifier, HISTORY_MAPPING_KEY_STATE, HistoryMappingState.PROFIT_ADJUSTMENT),  # noqa: E501
             )
             return (event,)
 
@@ -562,7 +562,7 @@ def _maybe_add_profit_event(
                 counterparty=bucket.protocol,
                 address=event.address,
             )),
-            mapping_values={HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_VIRTUAL},
+            mapping_values={HISTORY_MAPPING_KEY_STATE: HistoryMappingState.PROFIT_ADJUSTMENT},
         )
         profit_event.identifier = identifier
         return profit_event, event

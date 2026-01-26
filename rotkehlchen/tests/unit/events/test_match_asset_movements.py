@@ -340,6 +340,17 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
     withdrawal2.identifier = 9
     assert find_match_mock.call_args_list[1].kwargs['asset_movement'] == withdrawal2
 
+    # Check that the modified matched events are not removed when resetting for redecode
+    assert deposit2_matched_event.identifier is not None
+    with database.conn.write_ctx() as write_cursor:
+        events_db.reset_events_for_redecode(write_cursor, Location.ETHEREUM)
+        assert len(events_db.get_history_events_internal(
+            cursor=write_cursor,
+            filter_query=HistoryEventFilterQuery.make(
+                identifiers=[deposit2_matched_event.identifier],
+            ),
+        )) == 1
+
 
 def test_match_asset_movements_settings(database: 'DBHandler') -> None:
     """Test that the amount tolerance and time range settings works correctly, with the match

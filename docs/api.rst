@@ -5216,7 +5216,7 @@ Dealing with History Events
               "events": [{
                   "entry": {
                       "identifier": 1,
-		      "entry_type": "evm event",
+		              "entry_type": "evm event",
                       "asset": "ETH",
                       "amount": "0.00863351371344",
                       "counterparty": "gas",
@@ -5229,19 +5229,19 @@ Dealing with History Events
                       "sequence_index": 0,
                       "timestamp": 1642802807,
                       "event_accounting_rule_status": "not processed",
-		      "tx_ref": "0x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
-		      "address": null,
-		      "product": null
+                      "tx_ref": "0x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
+                      "address": null,
+                      "product": null
                   },
-                  "customized": false,
-		  "hidden": true,
+                  "states": ["customized"],
+		          "hidden": true,
                   "ignored_in_accounting": false,
                   "has_details": false,
                   "grouped_events_num": 1
-                }, {
+              }, {
                   "entry": {
                       "identifier": 2,
-		      "entry_type": "evm event",
+                      "entry_type": "evm event",
                       "asset": "ETH",
                       "amount": "0.00163351371344",
                       "counterparty": "gas",
@@ -5254,18 +5254,17 @@ Dealing with History Events
                       "sequence_index": 0,
                       "timestamp": 1642802807,
                       "event_accounting_rule_status": "not processed",
-		      "tx_ref": "0x1c822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
-		      "address": null,
-		      "product": null
+                      "tx_ref": "0x1c822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
+                      "address": null,
+                      "product": null
                   },
-                  "customized": false,
                   "ignored_in_accounting": false,
                   "has_details": false,
                   "grouped_events_num": 3
               }, {
                   "entry": {
                       "identifier": 3,
-		      "entry_type": "eth_withdrawal_event",
+		              "entry_type": "eth_withdrawal_event",
                       "asset": "ETH",
                       "amount": "0.00163351371344",
                       "group_identifier": "EW_1454_20453",
@@ -5277,18 +5276,17 @@ Dealing with History Events
                       "sequence_index": 0,
                       "timestamp": 1652802807,
                       "event_accounting_rule_status": "not processed",
-		      "validator_index": 1454,
-		      "is_exit": false
+                      "validator_index": 1454,
+                      "is_exit": false
                   },
-                  "customized": false,
-		  "hidden": true,
+		          "hidden": true,
                   "ignored_in_accounting": false,
                   "has_details": false,
                   "grouped_events_num": 1
               }, {
-	          "entry": {
+	              "entry": {
                       "identifier": 4,
-		      "entry_type": "eth_block_event",
+		              "entry_type": "eth_block_event",
                       "asset": "ETH",
                       "amount": "0.00163351371344",
                       "group_identifier": "evm_1_block_15534342",
@@ -5300,17 +5298,16 @@ Dealing with History Events
                       "sequence_index": 0,
                       "timestamp": 1652802807,
                       "event_accounting_rule_status": "not processed",
-		      "validator_index": 1454,
-		      "block_number": 15534342
+                      "validator_index": 1454,
+		              "block_number": 15534342
                   },
-                  "customized": false,
                   "ignored_in_accounting": false,
                   "has_details": false,
                   "grouped_events_num": 2
               },  {
                   "entry": {
                       "identifier": 5,
-		      "entry_type": "eth deposit event",
+		              "entry_type": "eth deposit event",
                       "asset": "ETH",
                       "amount": "32",
                       "counterparty": "eth2",
@@ -5323,12 +5320,11 @@ Dealing with History Events
                       "sequence_index": 15,
                       "timestamp": 1642802807,
                       "event_accounting_rule_status": "not processed",
-		      "tx_ref": "0x2c822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
-		      "address": "0x00000000219ab540356cBB839Cbe05303d7705Fa",
-		      "product": "staking",
-		      "validator_index": 4242
+                      "tx_ref": "0x2c822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
+                      "address": "0x00000000219ab540356cBB839Cbe05303d7705Fa",
+                      "product": "staking",
+                      "validator_index": 4242
                   },
-                  "customized": false,
                   "ignored_in_accounting": false,
                   "has_details": false,
                   "grouped_events_num": 3
@@ -5495,30 +5491,36 @@ Dealing with History Events
           "message": ""
       }
 
-   :resjson list decoded_events: A list of history events, with some events grouped into sub-lists (for instance the spend/receive/fee events making up a swap). Each event is an object comprised of the event entry and a boolean denoting if the event has been customized by the user or not. Each entry may also have a `has_details` flag if true. If `has_details` is true, then it is possible to call /history/events/details endpoint to retrieve some extra information about the event. Also each entry may have a `customized` flag set to true. If it does, it means the event has been customized/added by the user. Each entry may also have a `hidden` flag if set to true. If it does then that means it should be hidden in the UI due to consolidation of events. Also if `aggregate_by_group_ids` exist and is true, each entry contains `grouped_events_num` which is an integer with the amount of events under the group identifier. The consumer has to query this endpoint again with `aggregate_by_group_ids` set to false and with the `group_identifiers` filter set to the identifier of the events having more than 1 event. `ignored_in_accounting` is set to `true` when the user has marked this event as ignored. `has_ignored_assets` is set to `true` when the event group contains ignored assets, indicating that some events may have been excluded by ignored assets filtering. Following are all possible entries depending on entry type.
-   :resjson string identifier: Common key. This is the identifier of a single event.
-   :resjson string entry_type: Common key. This identifies the category of the event and determines the schema. Possible values are: ``"history event"``, ``"evm event"``, ``"eth withdrawal event"``, ``"eth block event"``, ``"eth deposit event"``.
-   :resjson string group_identifier: Common key. An identifier grouping multiple events under a common group. This is how we group transaction events under a transaction, staking related events under block production etc.
-   :resjson string[optional] actual_group_identifier: The actual group identifier of the event as stored in the DB. Used when events from different underlying groups are all joined into a single group for display in the frontend.
-   :resjson int sequence_index: Common key. This is an index that tries to provide the order of history entries for a single group_identifier.
-   :resjson int timestamp: Common key. The timestamp of the entry
-   :resjson string event_accounting_rule_status: Common key. It explains the status of accounting rules for the event. Possible values are: ``has rule``: Meaning the event has a rule. ``processed``: meaning the event will be processed because it is affected by another event. ``not processed`` meaning it doesn't have any rule and won't be processed by accounting.
-   :resjson string location: Common key. The location of the entry. Such as "ethereum", "optimism", etc.
-   :resjson string asset: Common key. The asset involved in the event.
-   :resjson object balance: Common key. The balance of the asset involved in the event.
-   :resjson string event_type: Common key. The type of the event. Valid values are retrieved from the backend.
-   :resjson string event_subtype: Common key. The subtype of the event. Valid values are retrieved from the backend.
-   :resjson string location_label: Common key. The location_label of the event. This means different things depending on event category. For evm events it's the initiating address. For withdrawal events the recipient address. For block production events the fee recipient.
-   :resjson string user_notes: Common key. Custom notes for the event set by the user. Can be missing.
-   :resjson string auto_notes: Common key. Autogenerated string description of the event. Can be missing.
-   :resjson string tx_ref: Evm event, Solana event & eth deposit key. The transaction hash of the event.
-   :resjson string counterparty: Evm event & eth deposit key. The counterparty of the event. This is most of the times a protocol such as uniswap, but can also be an exchange name such as kraken. Possible values are requested by the backend.
-   :resjson string product: Evm event & eth deposit key. This is the product type with which the event interacts. Such as pool, staking contract etc. Possible values are requested by the backend.
-   :resjson string address: Evm event & eth deposit key. This is the address of the contract the event interacts with if there is one.
-   :resjson int validator_index: Eth staking (withdrawal + block production + eth deposit) key. The index of the validator related to the event.
-   :resjson bool is_exit: Eth withdrawal event key. A boolean denoting if the withdrawal is a full exit or not.
-   :resjson int block_number: Eth block event key. An integer representing the number of the block for which the event is made.
-
+   :resjson list events: A list of history events, with some events grouped into sub-lists (for instance the spend/receive/fee events making up a swap). Each event is an object comprised of the event entry object and various metadata fields and flags. See below for the complete structure.
+   :resjson string events[].entry.identifier: Common key. This is the identifier of a single event.
+   :resjson string events[].entry.entry_type: Common key. This identifies the category of the event and determines the schema. Possible values are: ``"history event"``, ``"evm event"``, ``"eth withdrawal event"``, ``"eth block event"``, ``"eth deposit event"``.
+   :resjson string events[].entry.group_identifier: Common key. An identifier grouping multiple events under a common group. This is how we group transaction events under a transaction, staking related events under block production etc.
+   :resjson string[optional] events[].entry.actual_group_identifier: The actual group identifier of the event as stored in the DB. Used when events from different underlying groups are all joined into a single group for display in the frontend.
+   :resjson int events[].entry.sequence_index: Common key. This is an index that tries to provide the order of history entries for a single group_identifier.
+   :resjson int events[].entry.timestamp: Common key. The timestamp of the entry
+   :resjson string events[].entry.event_accounting_rule_status: Common key. It explains the status of accounting rules for the event. Possible values are: ``has rule``: Meaning the event has a rule. ``processed``: meaning the event will be processed because it is affected by another event. ``not processed`` meaning it doesn't have any rule and won't be processed by accounting.
+   :resjson string events[].entry.location: Common key. The location of the entry. Such as "ethereum", "optimism", etc.
+   :resjson string events[].entry.asset: Common key. The asset involved in the event.
+   :resjson object events[].entry.amount: Common key. The amount of the asset involved in the event.
+   :resjson string events[].entry.event_type: Common key. The type of the event. Valid values are retrieved from the backend.
+   :resjson string events[].entry.event_subtype: Common key. The subtype of the event. Valid values are retrieved from the backend.
+   :resjson string events[].entry.location_label: Common key. The location_label of the event. This means different things depending on event category. For evm events it's the initiating address. For withdrawal events the recipient address. For block production events the fee recipient.
+   :resjson string events[].entry.user_notes: Common key. Custom notes for the event set by the user. Can be missing.
+   :resjson string events[].entry.auto_notes: Common key. Autogenerated string description of the event. Can be missing.
+   :resjson string events[].entry.tx_ref: Evm event, Solana event & eth deposit key. The transaction hash of the event.
+   :resjson string events[].entry.counterparty: Evm event & eth deposit key. The counterparty of the event. This is most of the times a protocol such as uniswap, but can also be an exchange name such as kraken. Possible values are requested by the backend.
+   :resjson string events[].entry.product: Evm event & eth deposit key. This is the product type with which the event interacts. Such as pool, staking contract etc. Possible values are requested by the backend.
+   :resjson string events[].entry.address: Evm event & eth deposit key. This is the address of the contract the event interacts with if there is one.
+   :resjson int events[].entry.validator_index: Eth staking (withdrawal + block production + eth deposit) key. The index of the validator related to the event.
+   :resjson bool events[].entry.is_exit: Eth withdrawal event key. A boolean denoting if the withdrawal is a full exit or not.
+   :resjson int events[].entry.block_number: Eth block event key. An integer representing the number of the block for which the event is made.
+   :resjson object events[].entry.extra_data: Optional. Additional data specific to the event type.
+   :resjson list events[].states: Optional. List of state tags for the event. Valid states are ``customized``, ``profit_adjustment``, ``auto_matched``, ``imported_from_csv``.
+   :resjson bool events[].hidden: Optional. If true, this event should be hidden in the UI due to consolidation of events.
+   :resjson bool events[].ignored_in_accounting: Set to true when the user has marked this event as ignored.
+   :resjson bool events[].has_ignored_assets: Optional. Set to true when the event group contains ignored assets, indicating that some events may have been excluded by ignored assets filtering.
+   :resjson bool events[].has_details: If true, it is possible to call /history/events/details endpoint to retrieve extra information about the event.
+   :resjson int events[].grouped_events_num: Optional. Present when ``aggregate_by_group_ids`` is true. The number of events under this group identifier. The consumer has to query this endpoint again with ``aggregate_by_group_ids`` set to false and with the ``group_identifiers`` filter set to the identifier of the events having more than 1 event.
    :resjson int entries_found: The number of entries found for the current filter. Ignores pagination.
    :resjson int entries_limit: The limit of entries if free version. -1 for premium.
    :resjson int entries_total: The number of total entries ignoring all filters.

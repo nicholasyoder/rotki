@@ -179,7 +179,7 @@ def generate_events_response(
 
     return [
         x.serialize_for_api(
-            customized_event_ids=[],
+            mapping_states={},
             ignored_ids=set(),
             hidden_event_ids=[],
             event_accounting_rule_status=accounting_status,

@@ -15,7 +15,7 @@ from rotkehlchen.chain.zksync_lite.structures import (
 from rotkehlchen.constants import ONE
 from rotkehlchen.constants.assets import A_BCH, A_BTC, A_DAI, A_ETH, A_SOL
 from rotkehlchen.db.cache import DBCacheDynamic, DBCacheStatic
-from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED
+from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HistoryMappingState
 from rotkehlchen.db.evmtx import DBEvmTx
 from rotkehlchen.db.filtering import (
     EvmTransactionsFilterQuery,
@@ -268,7 +268,7 @@ def test_purge_blockchain_transaction_data(rotkehlchen_api_server: 'APIServer') 
                 write_cursor=write_cursor,
                 event=event,
                 mapping_values=(  # Mark the first event as customized
-                    {HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_CUSTOMIZED}
+                    {HISTORY_MAPPING_KEY_STATE: HistoryMappingState.CUSTOMIZED}
                     if btc_tx_hash1 in event.group_identifier or bch_tx_hash1 in event.group_identifier else {}  # noqa: E501
                 ),
             )
@@ -347,7 +347,7 @@ def test_purge_solana_transaction_data(rotkehlchen_api_server: 'APIServer') -> N
         events_db.add_history_event(
             write_cursor=write_cursor,
             event=(customized_event := events[0]),
-            mapping_values={HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_CUSTOMIZED},
+            mapping_values={HISTORY_MAPPING_KEY_STATE: HistoryMappingState.CUSTOMIZED},
         )
 
     # check deleting by hash
