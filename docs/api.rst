@@ -803,7 +803,8 @@ Getting or modifying settings
               "events_processing_frequency": 86400,
               "asset_movement_amount_tolerance": "0.000001",
               "asset_movement_time_range": 3600,
-              "suppress_missing_key_msg_services": ["etherscan"]
+              "suppress_missing_key_msg_services": ["etherscan"],
+              "auto_create_profit_events": false
           },
           "message": ""
       }
@@ -848,6 +849,7 @@ Getting or modifying settings
    :resjson string asset_movement_amount_tolerance: The tolerance value used when matching asset movement amounts with onchain events. Must be a positive decimal number. Default is ``"0.000001"``.
    :resjson int asset_movement_time_range: The time range on each side of the asset movement in which to check for possible matching events. Default is 3600 (1 hour).
    :resjson list suppress_missing_key_msg_services: A list of services for which the missing api key WS message should be suppressed. Empty list by default.
+   :resjson bool auto_create_profit_events: A boolean denoting whether profit history events are automatically created when protocol withdrawal events exceed deposits during historical balances processing. Default is ``false``.
 
    :statuscode 200: Querying of settings was successful
    :statuscode 409: There is no logged in user
@@ -906,6 +908,7 @@ Getting or modifying settings
    :resjson string[optional] asset_movement_amount_tolerance: The tolerance value used when matching asset movement amounts with onchain events. Must be a positive decimal number.
    :resjson int[optional] asset_movement_time_range: The time range on each side of the asset movement in which to check for possible matching events. Default is 3600 (1 hour).
    :resjson list[optional] suppress_missing_key_msg_services: A list of services for which the missing api key WS message should be suppressed. Empty list by default.
+   :resjson bool[optional] auto_create_profit_events: A boolean denoting whether profit history events are automatically created when protocol withdrawal events exceed deposits during historical balances processing.
 
    **Example Response**:
 
@@ -944,7 +947,8 @@ Getting or modifying settings
               "events_processing_frequency": 86400,
               "asset_movement_amount_tolerance": "0.000001",
               "asset_movement_time_range": 3600,
-              "suppress_missing_key_msg_services": ["etherscan"]
+              "suppress_missing_key_msg_services": ["etherscan"],
+              "auto_create_profit_events": false
           },
           "message": ""
       }
@@ -5201,7 +5205,8 @@ Dealing with History Events
    :reqjson int limit: This signifies the limit of records to return as per the `sql spec <https://www.sqlite.org/lang_select.html#limitoffset>`__.
    :reqjson int offset: This signifies the offset from which to start the return of records per the `sql spec <https://www.sqlite.org/lang_select.html#limitoffset>`__.
    :reqjson object otherargs: Check the documentation of the remaining arguments `here <filter-request-args-label_>`_.
-   :reqjson bool customized_events_only: Optional. If enabled the search is performed only for manually customized events. Default false.
+   :reqjson bool customized_events_only: Optional. If enabled the search is performed only for manually customized events. Default false. Mutually exclusive with ``virtual_events_only``.
+   :reqjson bool virtual_events_only: Optional. If enabled the search is performed only for virtual events (auto-created profit events during historical balances processing). Default false. Mutually exclusive with ``customized_events_only``.
 
    **Example Response**:
 

@@ -20,6 +20,9 @@ TX_SPAM: Final = 1
 # -- history_events_mappings values --
 HISTORY_MAPPING_KEY_STATE: Final = 'state'
 HISTORY_MAPPING_STATE_CUSTOMIZED: Final = 1
+# Marks profit events auto-created during historical balances processing
+# when withdrawals exceed deposits
+HISTORY_MAPPING_STATE_VIRTUAL: Final = 2
 
 
 EVM_ACCOUNTS_DETAILS_LAST_QUERIED_TS: Final = 'last_queried_timestamp'

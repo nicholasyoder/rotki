@@ -4,8 +4,10 @@ from typing import TYPE_CHECKING, Final, Literal, NamedTuple, TypeAlias
 from rotkehlchen.api.websockets.typedefs import ProgressUpdateSubType, WSMessageType
 from rotkehlchen.constants import ZERO
 from rotkehlchen.db.cache import DBCacheStatic
+from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_VIRTUAL
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
+from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.errors.asset import UnknownAsset, WrongAssetType
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.onchain_event import OnchainEvent
@@ -453,6 +455,9 @@ def _maybe_add_profit_event(
     Returns a tuple containing the new profit event and the updated withdrawal event or None
     if there is no profit event needed or if it is already present.
     """
+    if CachedSettings().get_entry('auto_create_profit_events') is False:
+        return None
+
     if len(bucket_directions := Bucket.from_event(event)) == 0:
         return None
 
@@ -509,6 +514,11 @@ def _maybe_add_profit_event(
                     event.identifier,
                 ),
             )
+            write_cursor.execute(
+                'INSERT OR IGNORE INTO history_events_mappings(parent_identifier, name, value) '
+                'VALUES(?, ?, ?)',
+                (event.identifier, HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_VIRTUAL),
+            )
             return (event,)
 
         # First increment the sequence indexes to ensure an unused index for the
@@ -551,6 +561,7 @@ def _maybe_add_profit_event(
                 counterparty=bucket.protocol,
                 address=event.address,
             )),
+            mapping_values={HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_VIRTUAL},
         )
         profit_event.identifier = identifier
         return profit_event, event

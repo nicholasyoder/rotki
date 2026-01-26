@@ -84,6 +84,7 @@ DEFAULT_CSV_EXPORT_DELIMITER: Final = ','
 DEFAULT_EVENTS_PROCESSING_FREQUENCY: Final = DAY_IN_SECONDS
 DEFAULT_ASSET_MOVEMENT_AMOUNT_TOLERANCE: Final = FVal('0.000001')
 DEFAULT_ASSET_MOVEMENT_TIME_RANGE: Final = HOUR_IN_SECONDS
+DEFAULT_AUTO_CREATE_PROFIT_EVENTS: Final = False
 
 LIST_KEYS: Final = (
     'current_price_oracles',
@@ -112,6 +113,7 @@ BOOLEAN_KEYS: Final = (
     'auto_create_calendar_reminders',
     'ask_user_upon_size_discrepancy',
     'auto_detect_tokens',
+    'auto_create_profit_events',
 )
 INTEGER_KEYS: Final = (
     'version',
@@ -192,6 +194,7 @@ CachedDBSettingsFieldNames = Literal[
     'asset_movement_amount_tolerance',
     'asset_movement_time_range',
     'suppress_missing_key_msg_services',
+    'auto_create_profit_events',
 ]
 
 DBSettingsFieldTypes = (
@@ -264,6 +267,7 @@ class DBSettings:
     asset_movement_amount_tolerance: FVal = DEFAULT_ASSET_MOVEMENT_AMOUNT_TOLERANCE
     asset_movement_time_range: int = DEFAULT_ASSET_MOVEMENT_TIME_RANGE
     suppress_missing_key_msg_services: list[ExternalService] = field(default_factory=list)
+    auto_create_profit_events: bool = DEFAULT_AUTO_CREATE_PROFIT_EVENTS
 
     def serialize(self) -> dict[str, Any]:
         settings_dict = {}
@@ -331,6 +335,7 @@ class ModifiableDBSettings(NamedTuple):
     asset_movement_amount_tolerance: FVal | None = None
     asset_movement_time_range: int | None = None
     suppress_missing_key_msg_services: list[ExternalService] | None = None
+    auto_create_profit_events: bool | None = None
 
     def serialize(self) -> dict[str, Any]:
         settings_dict = {}

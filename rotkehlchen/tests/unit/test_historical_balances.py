@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import gevent
+import pytest
 
 from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.assets.asset import Asset
@@ -577,21 +578,26 @@ def test_wrapped_deposit_and_redeem_moves_between_protocol_buckets(
         ]
 
 
+@pytest.mark.parametrize('db_settings', [
+    {'auto_create_profit_events': True},
+    {'auto_create_profit_events': False},
+])
 def test_synthetic_profit_event_when_protocol_withdrawal_exceeds_deposit(
         database: 'DBHandler',
         messages_aggregator: 'MessagesAggregator',
+        db_settings: dict,
 ) -> None:
     """Test synthetic profit event creation when withdrawing more than deposited.
 
     When WITHDRAWAL/WITHDRAW_FROM_PROTOCOL or STAKING/REMOVE_ASSET events withdraw more
     than the protocol bucket balance (due to yield earned), a synthetic RECEIVE/REWARD
-    event is created for the difference.
+    event is created for the difference (only if auto_create_profit_events is enabled).
 
     1. Receive 10 ETH -> wallet = 10
     2. Deposit 5 ETH to Liquity -> wallet = 5, Liquity = 5
     3. Withdraw 5.1 ETH from Liquity (earned 0.1 ETH yield):
-       - Profit event created: Liquity = 5 + 0.1 = 5.1
-       - Withdrawal processed: wallet = 5 + 5.1 = 10.1, Liquity = 5.1 - 5.1 = 0
+       - If enabled: Profit event created, withdrawal amount adjusted
+       - If disabled: No profit event, withdrawal unchanged
     """
     with database.user_write() as write_cursor:
         DBHistoryEvents(database).add_history_events(
@@ -643,43 +649,49 @@ def test_synthetic_profit_event_when_protocol_withdrawal_exceeds_deposit(
             )],
         )
 
-    for _ in range(2):  # Ensure a second run after the profit event is present gets the same result.  # noqa: E501
+    for _ in range(2):  # Ensure a second run gets the same result.
         process_historical_balances(database, messages_aggregator)
 
         with database.conn.read_ctx() as cursor:
-            assert cursor.execute('SELECT amount, sequence_index, notes FROM history_events ORDER BY timestamp, sequence_index').fetchall() == [  # noqa: E501
-                ('10', 0, None),  # receive 10 ETH
-                ('5', 0, None),  # deposit 5 ETH
-                ('0.1', 0, 'Profit earned from ETH in liquity'),  # synthetic profit event
-                ('5', 1, 'Withdraw 5 ETH from Liquity'),  # withdrawal (sequence_index bumped from 0 to 1, and amount bumped from 5.1 to 5)  # noqa: E501
-                ('0', 2, None),  # informational event (sequence_index bumped from 1 to 2)
-            ]
+            if db_settings['auto_create_profit_events'] is True:
+                assert cursor.execute(
+                    'SELECT he.amount, he.sequence_index, he.notes, hem.value '
+                    'FROM history_events he '
+                    'LEFT JOIN history_events_mappings hem ON he.identifier = hem.parent_identifier '  # noqa: E501
+                    'ORDER BY he.timestamp, he.sequence_index',
+                ).fetchall() == [
+                    ('10', 0, None, None),  # receive 10 ETH
+                    ('5', 0, None, None),  # deposit 5 ETH
+                    ('0.1', 0, 'Profit earned from ETH in liquity', 2),  # synthetic profit event (state=2 virtual)  # noqa: E501
+                    ('5', 1, 'Withdraw 5 ETH from Liquity', None),  # withdrawal adjusted
+                    ('0', 2, None, None),  # informational event
+                ]
+            else:
+                assert cursor.execute(
+                    'SELECT amount, sequence_index, notes FROM history_events '
+                    'ORDER BY timestamp, sequence_index',
+                ).fetchall() == [
+                    ('10', 0, None),  # receive 10 ETH
+                    ('5', 0, None),  # deposit 5 ETH
+                    ('5.1', 0, 'Withdraw 5.1 ETH from Liquity'),  # withdrawal unchanged
+                    ('0', 1, None),  # informational event unchanged
+                ]
 
-            # Verify event metrics
-            assert cursor.execute(
-                'SELECT he.timestamp, em.location_label, em.protocol, em.metric_value '
-                'FROM event_metrics em '
-                'JOIN history_events he ON em.event_identifier = he.identifier '
-                'ORDER BY he.timestamp, em.protocol NULLS FIRST, he.sequence_index',
-            ).fetchall() == [
-                (1000, TEST_ADDR1, None, '10'),  # wallet: 0 + 10 = 10
-                (2000, TEST_ADDR1, None, '5'),  # wallet: 10 - 5 = 5
-                (2000, TEST_ADDR1, CPT_LIQUITY, '5'),  # protocol: 0 + 5 = 5
-                (3000, TEST_ADDR1, None, '5.1'),  # wallet: 5 + 0.1 = 5.1
-                (3000, TEST_ADDR1, None, '10.1'),  # wallet: 5.1 + 5 = 10.1
-                (3000, TEST_ADDR1, CPT_LIQUITY, '0'),  # protocol: 5 - 5 = 0 (withdrawal)
-            ]
 
-
+@pytest.mark.parametrize('db_settings', [
+    {'auto_create_profit_events': True},
+    {'auto_create_profit_events': False},
+])
 def test_profit_event_when_protocol_withdrawal_amount_is_all_profit(
         database: 'DBHandler',
+        db_settings: dict,
 ) -> None:
     """Test the profit event when withdrawing from a protocol when the full withdrawal amount
     is all profit. This can happen when the deposit event is missing, or if all the deposited
     funds have been withdrawn earlier but now the profit earned is being withdrawn.
 
     In these cases, the entire withdrawal amount is treated as profit/yield by converting the
-    withdrawal event into a profit event.
+    withdrawal event into a profit event (only if auto_create_profit_events is enabled).
 
     1. Withdraw 5 ETH from Liquity (no prior deposit tracked):
        - Interest event created: Liquity = 0 + 5 = 5
@@ -705,22 +717,28 @@ def test_profit_event_when_protocol_withdrawal_amount_is_all_profit(
     with patch.object(database.msg_aggregator, 'add_message') as msg_mock:
         process_historical_balances(database, database.msg_aggregator)
 
-    assert WSMessageType.NEGATIVE_BALANCE_DETECTED not in [
-        x.kwargs['message_type'] for x in msg_mock.call_args_list
-    ]  # Ensure no negative balances were detected.
     with database.conn.read_ctx() as cursor:
-        assert cursor.execute('SELECT amount, sequence_index, notes FROM history_events ORDER BY timestamp, sequence_index').fetchall() == [  # noqa: E501
-            ('5', 0, 'Profit earned from ETH in liquity'),  # profit event (was the withdrawal)
-        ]
-
-        assert cursor.execute(  # Verify event metrics
-            'SELECT he.timestamp, em.location_label, em.protocol, em.metric_value '
-            'FROM event_metrics em '
-            'JOIN history_events he ON em.event_identifier = he.identifier '
-            'ORDER BY he.timestamp, em.protocol NULLS FIRST, he.sequence_index',
-        ).fetchall() == [
-            (1000, TEST_ADDR1, None, '5'),  # wallet: 0 + 5 = 5 (withdrawal/profit event)
-        ]
+        if db_settings['auto_create_profit_events'] is True:
+            assert WSMessageType.NEGATIVE_BALANCE_DETECTED not in [
+                x.kwargs['message_type'] for x in msg_mock.call_args_list
+            ]
+            assert cursor.execute(
+                'SELECT he.amount, he.sequence_index, he.notes, hem.value '
+                'FROM history_events he '
+                'LEFT JOIN history_events_mappings hem ON he.identifier = hem.parent_identifier '
+                'ORDER BY he.timestamp, he.sequence_index',
+            ).fetchall() == [
+                ('5', 0, 'Profit earned from ETH in liquity', 2),  # converted to profit event
+            ]
+        else:
+            assert WSMessageType.NEGATIVE_BALANCE_DETECTED in [
+                x.kwargs['message_type'] for x in msg_mock.call_args_list
+            ]  # negative balance detected since no profit event created
+            assert cursor.execute(
+                'SELECT amount, sequence_index, type, subtype FROM history_events',
+            ).fetchall() == [
+                ('5', 0, 'withdrawal', 'withdraw from protocol'),  # unchanged withdrawal
+            ]
 
 
 def test_staking_protocol_lp_token_received_from_untracked_address(
