@@ -1612,7 +1612,10 @@ class DBHistoryEvents:
                 movement_group_identifier,
                 movement_group_count,
             )
-            entries_total -= 1
+            if match_group_identifier not in movement_group_to_match_info:
+                # Skip decrementing the total only in the case where a movement is matched with
+                # another movement, and this logic will run twice for one joined group.
+                entries_total -= 1
 
         processed_events_result = []
         if aggregate_by_group_ids:
@@ -1621,30 +1624,33 @@ class DBHistoryEvents:
             # movement/match group do one of the following:
             # - adjust grouped_events_num to include the events from the other side of the movement
             # - skip the event if we have already processed an event from that movement/match group
-            already_processed_matches = set()
+            already_processed_matches: set[str] = set()
             for grouped_events_num, event in events_result:  # type: ignore[misc]  # events_result is a different type depending on aggregate_by_group_ids
-                if (match_info := movement_group_to_match_info.get(event.group_identifier)) is not None:  # noqa: E501
-                    _, match_group_identifier, match_group_count = match_info
-                    if match_group_identifier in already_processed_matches:
-                        # We already processed the matched_event for this movement, so skip.
-                        entries_found -= 1
-                        entries_with_limit -= 1
-                        continue
-
-                    processed_events_result.append((grouped_events_num + match_group_count, event))
-                    already_processed_matches.add(match_group_identifier)
+                if (
+                    (match_info := movement_group_to_match_info.get(event.group_identifier)) is not None and  # noqa: E501
+                    event.group_identifier in match_group_to_movement_info
+                ):  # This is a movement matched with a movement.
+                    _, match_group_identifier, joined_group_count = match_info
+                    should_skip = len({match_group_identifier, event.group_identifier} & already_processed_matches) != 0  # noqa: E501
+                elif match_info is not None:
+                    _, match_group_identifier, joined_group_count = match_info
+                    should_skip = match_group_identifier in already_processed_matches
                 elif (movement_info := match_group_to_movement_info.get(event.group_identifier)) is not None:  # noqa: E501
-                    _, movement_group_count = movement_info
-                    if event.group_identifier in already_processed_matches:
-                        # We already processed the movement for this matched event, so skip.
-                        entries_found -= 1
-                        entries_with_limit -= 1
-                        continue
-
-                    processed_events_result.append((grouped_events_num + movement_group_count, event))  # noqa: E501
-                    already_processed_matches.add(event.group_identifier)
+                    _, joined_group_count = movement_info
+                    should_skip = event.group_identifier in already_processed_matches
+                    match_group_identifier = event.group_identifier
                 else:
-                    processed_events_result.append((grouped_events_num, event))
+                    should_skip, joined_group_count, match_group_identifier = False, 0, None
+
+                if should_skip:  # already processed the other side of this pair, so skip.
+                    entries_found -= 1
+                    entries_with_limit -= 1
+                    continue
+
+                processed_events_result.append((grouped_events_num + joined_group_count, event))
+                if match_group_identifier is not None:
+                    already_processed_matches.add(match_group_identifier)
+
         else:  # Not aggregating. Need to include the asset movements in their matched groups
             events_by_group: dict[str, list[HistoryBaseEntry]] = defaultdict(list)
             for event in events_result:
