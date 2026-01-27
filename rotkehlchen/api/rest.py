@@ -149,6 +149,7 @@ from rotkehlchen.premium.premium import (
 from rotkehlchen.rotkehlchen import Rotkehlchen
 from rotkehlchen.serialization.serialize import process_result, process_result_list
 from rotkehlchen.tasks.events import (
+    ENTRY_TYPES_TO_EXCLUDE_FROM_MATCHING,
     find_asset_movement_matches,
     find_customized_event_duplicate_groups,
     get_unmatched_asset_movements,
@@ -3678,11 +3679,7 @@ class RestAPI:
                         identifier=asset_movement.asset.identifier,
                     ) if only_expected_assets else None,
                     entry_types=IncludeExcludeFilterData(
-                        values=[  # Don't include eth staking events
-                            HistoryBaseEntryType.ETH_BLOCK_EVENT,
-                            HistoryBaseEntryType.ETH_DEPOSIT_EVENT,
-                            HistoryBaseEntryType.ETH_WITHDRAWAL_EVENT,
-                        ],
+                        values=ENTRY_TYPES_TO_EXCLUDE_FROM_MATCHING,
                         operator='NOT IN',
                     ),
                 ),

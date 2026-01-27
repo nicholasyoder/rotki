@@ -343,12 +343,12 @@ def test_get_possible_matches(rotkehlchen_api_server: 'APIServer') -> None:
                 asset=A_ETH,
                 amount=FVal(amount),
             ) for idx, (timestamp, asset, amount) in enumerate([
-                (matched_movement.timestamp - 1, A_ETH, '0.1'),  # ID 2 - Before the movement. Not a close match.  # noqa: E501
+                (matched_movement.timestamp - HOUR_IN_MILLISECONDS * 2, A_ETH, '0.1'),  # ID 2 - More than the tolerance before the movement, but within full range. Not a close match, but included in possible matches.  # noqa: E501
                 (matched_movement.timestamp + 1, A_ETH, '0.1'),  # ID 3 - After the movement, within the time range. Close match.  # noqa: E501
                 (matched_movement.timestamp + 2, A_ETH, '0.1'),  # ID 4 - After the movement, within the time range. Second close match.  # noqa: E501
                 (matched_movement.timestamp + 3, A_ETH, '0.5'),  # ID 5 - Wrong amount, not a match.  # noqa: E501
                 (matched_movement.timestamp + 4, A_WETH, '0.1'),  # ID 6 - Asset is different, but in the same collection. Third close match.  # noqa: E501
-                (matched_movement.timestamp + HOUR_IN_MILLISECONDS * 2, A_ETH, '0.1'),  # ID 7 - Outside the time range, not matched or included in the other events list.  # noqa: E501
+                (matched_movement.timestamp + HOUR_IN_MILLISECONDS * 3, A_ETH, '0.1'),  # ID 7 - Outside the time range, not matched or included in the other events list.  # noqa: E501
             ], start=2)], SwapEvent(  # Also add an unrelated swap event from the same exchange which should not be included in the possible matches  # noqa: E501
                 identifier=8,
                 timestamp=matched_movement.timestamp,
@@ -389,15 +389,15 @@ def test_get_possible_matches(rotkehlchen_api_server: 'APIServer') -> None:
         )
 
     for only_expected_assets, expected_other_events in [
-        (True, [2, 5]),  # skips the BTC event (9)
-        (False, [2, 5, 9]),  # BTC event included but is last since its timestamp is farthest from the asset movement  # noqa: E501
+        (True, [5, 2]),  # skips the BTC event (9)
+        (False, [5, 9, 2]),  # BTC event included. ids are ordered by ts distance from the movement
     ]:
         assert assert_proper_response_with_result(
             response=requests.post(
                 api_url_for(rotkehlchen_api_server, 'matchassetmovementsresource'),
                 json={
                     'asset_movement': matched_movement.group_identifier,
-                    'time_range': HOUR_IN_SECONDS,
+                    'time_range': HOUR_IN_SECONDS * 2,
                     'only_expected_assets': only_expected_assets,
                 },
             ),

@@ -53,7 +53,7 @@ Exchange asset movement events may now be manually matched with specific onchain
 * **New Settings** (new fields in both ``PUT`` and ``POST`` on ``/api/(version)/settings``)
   - ``events_processing_frequency`` The frequency in seconds at which to process events and match asset movements. Must be >= 60 seconds. Default is 86400 (24 hours).
   - ``asset_movement_amount_tolerance`` The tolerance value used when matching asset movement amounts with onchain events. Must be a positive decimal number. Default is ``"0.000001"``.
-  - ``asset_movement_time_range`` The time range on each side of the asset movement in which to check for possible matching events. Default is 3600 (1 hour).
+  - ``asset_movement_time_range`` The time range before/after the asset movement (depending on if its a deposit/withdrawal) in which to check for possible matching events. Default is 54000 (15 hours). Note: there is also a 1 hour tolerance on the other side of the asset movement, since some exchanges do not provide accurate timestamps.
   - ``suppress_missing_key_msg_services`` A list of services for which the missing api key WS message should be suppressed. Empty list by default.
 
 Event/Group Identifier Renaming

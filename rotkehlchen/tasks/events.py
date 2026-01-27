@@ -7,6 +7,7 @@ from rotkehlchen.api.v1.types import IncludeExcludeFilterData
 from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.chain.accounts import BlockchainAccounts
 from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
+from rotkehlchen.constants import HOUR_IN_SECONDS
 from rotkehlchen.constants.resolver import SOLANA_CHAIN_DIRECTIVE, identifier_to_evm_chain
 from rotkehlchen.db.cache import ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE, DBCacheDynamic, DBCacheStatic
 from rotkehlchen.db.constants import (
@@ -57,6 +58,16 @@ log = RotkehlchenLogsAdapter(logger)
 NATIVE_TOKEN_IDS_OF_CHAINS_WITH_TXS: Final = {
     x.get_native_token_id() for x in CHAINS_WITH_TRANSACTIONS
 }
+# Various entry types that should never be the matched event for an asset movement and can
+# safely be excluded from the possible matches.
+ENTRY_TYPES_TO_EXCLUDE_FROM_MATCHING: Final = [
+    HistoryBaseEntryType.ETH_BLOCK_EVENT,
+    HistoryBaseEntryType.ETH_DEPOSIT_EVENT,
+    HistoryBaseEntryType.ETH_WITHDRAWAL_EVENT,
+    HistoryBaseEntryType.SWAP_EVENT,
+]
+# Tolerance for the matched event to be on the wrong side of an asset movement during auto matching
+TIMESTAMP_TOLERANCE: Final = HOUR_IN_SECONDS
 
 
 @dataclass(frozen=True)
@@ -643,11 +654,11 @@ def find_asset_movement_matches(
     """
     asset_movement_timestamp = ts_ms_to_sec(asset_movement.timestamp)
     if is_deposit:
-        from_ts = Timestamp(asset_movement_timestamp - match_window)
-        to_ts = Timestamp(asset_movement_timestamp)
+        from_ts = asset_movement_timestamp - match_window
+        to_ts = asset_movement_timestamp + TIMESTAMP_TOLERANCE
     else:
-        from_ts = Timestamp(asset_movement_timestamp)
-        to_ts = Timestamp(asset_movement_timestamp + match_window)
+        from_ts = asset_movement_timestamp - TIMESTAMP_TOLERANCE
+        to_ts = asset_movement_timestamp + match_window
 
     with events_db.db.conn.read_ctx() as cursor:
         possible_matches = events_db.get_history_events_internal(
@@ -656,14 +667,10 @@ def find_asset_movement_matches(
                 assets=GlobalDBHandler.get_assets_in_same_collection(
                     identifier=asset_movement.asset.identifier,
                 ),
-                from_ts=from_ts,
-                to_ts=to_ts,
+                from_ts=Timestamp(from_ts),
+                to_ts=Timestamp(to_ts),
                 entry_types=IncludeExcludeFilterData(
-                    values=[  # Don't include eth staking events
-                        HistoryBaseEntryType.ETH_BLOCK_EVENT,
-                        HistoryBaseEntryType.ETH_DEPOSIT_EVENT,
-                        HistoryBaseEntryType.ETH_WITHDRAWAL_EVENT,
-                    ],
+                    values=ENTRY_TYPES_TO_EXCLUDE_FROM_MATCHING,
                     operator='NOT IN',
                 ),
             ),

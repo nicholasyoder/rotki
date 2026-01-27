@@ -11,7 +11,7 @@ from rotkehlchen.constants.assets import A_BTC, A_ETH, A_USD, A_USDC, A_WETH_OPT
 from rotkehlchen.db.cache import ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE, DBCacheDynamic
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
-from rotkehlchen.db.settings import ModifiableDBSettings
+from rotkehlchen.db.settings import DEFAULT_ASSET_MOVEMENT_TIME_RANGE, ModifiableDBSettings
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.asset_movement import (
     AssetMovement,
@@ -117,10 +117,10 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
                 event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
                 asset=A_USDC,
                 amount=FVal('0.21'),
-            )), (withdrawal1_wrong_ts_event := EvmEvent(  # similar to withdrawal1's matched event, but timestamp > 1 hour away  # noqa: E501
+            )), (withdrawal1_wrong_ts_event := EvmEvent(  # similar to withdrawal1's matched event, but timestamp is farther away than the time range  # noqa: E501
                 tx_ref=make_evm_tx_hash(),
                 sequence_index=0,
-                timestamp=TimestampMS(withdrawal1.timestamp + ts_sec_to_ms(Timestamp(HOUR_IN_SECONDS)) * 2),  # noqa: E501
+                timestamp=TimestampMS(withdrawal1.timestamp + ts_sec_to_ms(Timestamp(DEFAULT_ASSET_MOVEMENT_TIME_RANGE + 1))),  # noqa: E501
                 location=Location.ARBITRUM_ONE,
                 event_type=HistoryEventType.DEPOSIT,
                 event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
@@ -493,6 +493,55 @@ def test_ignore_transfers_between_tracked_accounts(
 
     # Run matching and check that it matched properly with the receive event instead of seeing
     # the transfer event as a second close match.
+    match_asset_movements(database=database)
+    with database.conn.read_ctx() as cursor:
+        assert cursor.execute(
+            'SELECT * FROM key_value_cache WHERE name LIKE ?',
+            ('matched_asset_movement_%',),
+        ).fetchall() == [(f'matched_asset_movement_{movement_id}', str(match_id))]
+
+
+def test_timestamp_tolerance(database: 'DBHandler') -> None:
+    """Test that events that are not on the expected side of the asset movement can still be
+    auto matched as long as they are within the 1 hour tolerance.
+    """
+    events_db = DBHistoryEvents(database)
+    with database.conn.write_ctx() as write_cursor:
+        events_db.add_history_events(
+            write_cursor=write_cursor,
+            history=[(movement_event := AssetMovement(
+                identifier=(movement_id := 1),
+                location=Location.KRAKEN,
+                event_type=HistoryEventType.WITHDRAWAL,
+                timestamp=TimestampMS(1520000000000),
+                asset=A_USDC,
+                amount=FVal('25'),
+                unique_id='xyz',
+                location_label='Kraken 1',
+            )), EvmEvent(  # Matched event. Timestamp is before movement but within tolerance
+                identifier=(match_id := 2),
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(movement_event.timestamp - 10),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=movement_event.asset,
+                amount=movement_event.amount,
+            ), EvmEvent(  # Ignored event. Timestamp is before movement outside tolerance
+                identifier=3,
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(movement_event.timestamp - HOUR_IN_MILLISECONDS * 2),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=movement_event.asset,
+                amount=movement_event.amount,
+            )],
+        )
+
+    # Run matching and check that it matched properly with the event inside the tolerance.
     match_asset_movements(database=database)
     with database.conn.read_ctx() as cursor:
         assert cursor.execute(
