@@ -44,8 +44,8 @@ from rotkehlchen.serialization.deserialize import (
     deserialize_solana_pubkey,
     deserialize_timestamp,
 )
-from rotkehlchen.types import SolanaAddress, SupportedBlockchain
-from rotkehlchen.utils.misc import bytes_to_solana_address, get_chunks
+from rotkehlchen.types import SolanaAddress, SupportedBlockchain, Timestamp
+from rotkehlchen.utils.misc import bytes_to_solana_address, get_chunks, ts_now
 
 from .constants import METADATA_LAYOUT_2022, METADATA_LAYOUT_LEGACY, METADATA_PROGRAM_IDS
 from .types import SolanaTransaction, pubkey_to_solana_address
@@ -80,6 +80,7 @@ class SolanaInquirer(SolanaRPCMixin):
         self.blockchain = SupportedBlockchain.SOLANA
         self.rpc_timeout = DEFAULT_RPC_TIMEOUT
         self.helius = helius
+        self.node_backoff_info: dict[str, tuple[Timestamp | None, int, int]] = {}
 
     def default_call_order(self) -> list['WeightedNode']:
         """Default call order for solana nodes.
@@ -105,32 +106,59 @@ class SolanaInquirer(SolanaRPCMixin):
         if call_order is None:
             call_order = self.default_call_order()
 
-        for weighted_node in call_order:
-            node_info = weighted_node.node_info
-            if (rpc_node := self.rpc_mapping.get(node_info, None)) is None:
-                if node_info.name in self.failed_to_connect_nodes:
-                    continue
+        is_retry = False
+        while is_retry is False or len(call_order := [
+            x for x in call_order
+            if x.node_info.name in self.node_backoff_info
+        ]) != 0:  # Retry any rate-limited nodes if other nodes are not available
+            if is_retry:
+                # Retrying with one or more rate-limited nodes. Filter and sort call order to
+                # contain the rate-limited nodes with the node with closest backoff end ts first.
+                # Then wait until that backoff time is up before continuing.
+                call_order.sort(  # type: ignore[attr-defined]  # call_order is a list here
+                    key=lambda node: self.node_backoff_info[node.node_info.name][0] or 0,
+                )
+                backoff_end_ts, _, _ = self.node_backoff_info[call_order[0].node_info.name]
+                if (wait_time := (backoff_end_ts or 0) - ts_now()) > 0:
+                    gevent.sleep(wait_time)
 
-                success, _ = self.attempt_connect(node=node_info)
-                if success is False:
-                    self.failed_to_connect_nodes.add(node_info.name)
+            is_retry = True  # Any iteration of the main loop is a retry after the first run.
+            for weighted_node in call_order:
+                node_info = weighted_node.node_info
+                # Pop the node from the backoff info dict to ensure its only included again in
+                # future iterations if it actually fails with a rate limit again, or still has a
+                # backoff end time in the future.
+                backoff_end_ts, attempts, backoff = self.node_backoff_info.pop(node_info.name, (None, 0, INITIAL_BACKOFF))  # noqa: E501
+                if backoff_end_ts is not None and ts_now() < backoff_end_ts:
+                    log.debug(f'Skipping {node_info.name} since backoff end time is in the future')
+                    self.node_backoff_info[node_info.name] = (backoff_end_ts, attempts, backoff)
                     continue
 
                 if (rpc_node := self.rpc_mapping.get(node_info, None)) is None:
-                    log.error(f'Unexpected missing node {node_info} at Solana')
+                    if node_info.name in self.failed_to_connect_nodes:
+                        continue
+
+                    success, _ = self.attempt_connect(node=node_info)
+                    if success is False:
+                        self.failed_to_connect_nodes.add(node_info.name)
+                        continue
+
+                    if (rpc_node := self.rpc_mapping.get(node_info, None)) is None:
+                        log.error(f'Unexpected missing node {node_info} at Solana')
+                        continue
+
+                if only_archive_nodes and not rpc_node.is_archive:
+                    log.debug(f'Skipping non-archive node {node_info.name} for solana query requiring only archive nodes')  # noqa: E501
                     continue
 
-            if only_archive_nodes and not rpc_node.is_archive:
-                log.debug(f'Skipping non-archive node {node_info.name} for solana query requiring only archive nodes')  # noqa: E501
-                continue
-
-            backoff, attempts = INITIAL_BACKOFF, 0
-            while True:
                 try:
                     return method(rpc_node.rpc_client)
                 except (SolanaRpcException, RPCException, SerdeJSONError) as e:
                     if attempts > MAX_RETRIES:
-                        log.error(f'Maximum retries reached for solana node {node_info.name}. Giving up.')  # noqa: E501
+                        log.error(
+                            f'Maximum retries reached for solana node {node_info.name}. '
+                            'Giving up on this node for this request.',
+                        )
                         break
 
                     attempts += 1
@@ -145,13 +173,15 @@ class SolanaInquirer(SolanaRPCMixin):
                         if ratelimit_response is not None and (retry_after := ratelimit_response.headers.get('retry-after')) is not None:  # noqa: E501
                             backoff = int(retry_after) + 1
 
-                        log.warning(f'Got rate limited from solana node {node_info.name}. Backing off {backoff} seconds...')  # noqa: E501
-                        gevent.sleep(backoff)
-                        backoff *= BACKOFF_MULTIPLIER
+                        log.warning(f'Got rate limited from solana node {node_info.name}. Backing off {backoff} seconds on this node...')  # noqa: E501
+                        self.node_backoff_info[node_info.name] = (
+                            Timestamp(ts_now() + backoff),  # Time when we can retry this node
+                            attempts,  # Number of retry attempts
+                            backoff * BACKOFF_MULTIPLIER,  # Next backoff length
+                        )
                         continue
 
                     log.error(f'Failed to call solana node {node_info.name} due to {e}')
-                    break
 
         log.error(f'Tried all solana nodes in {call_order} for {method} but did not get any response')  # noqa: E501
         raise RemoteError(f'Failed to get {method}')
