@@ -26,7 +26,7 @@ Backend Tasks
      - Yes
      - ``PROGRESS_UPDATES``, ``NEGATIVE_BALANCE_DETECTED``
    * - Asset Movements
-     - Yes (configurable)
+     - No
      - Yes
      - ``UNMATCHED_ASSET_MOVEMENTS``
    * - Custom Events
@@ -59,24 +59,21 @@ Sends ``PROGRESS_UPDATES`` during processing. Sends ``NEGATIVE_BALANCE_DETECTED`
 Unmatched Asset Movements
 --------------------------
 
-Runs periodically (configurable) or via API. Correlates exchange deposit/withdrawal records with blockchain transactions.
+Runs via API only. Correlates exchange deposit/withdrawal records with blockchain transactions.
 
 Sends ``UNMATCHED_ASSET_MOVEMENTS`` with count if any remain unmatched, prompting users to manually resolve them.
 
 ::
 
-    Periodic Scheduler           API: POST /api/v1/tasks     API: PUT .../match_asset_movements
-             |                            |                            |
-             +------------+---------------+                            |
-                          v                                            |
-             process_asset_movements()                                 |
-                          |                                            |
-                          v                                            |
-               match_asset_movements()  <------------------------------+
-                          |
-                          v
-             WS: UNMATCHED_ASSET_MOVEMENTS
-                  (if unmatched > 0)
+    API: POST /api/v1/tasks/trigger     API: PUT .../match_asset_movements
+                    |                            |
+                    +------------+---------------+
+                                 v
+                   match_asset_movements()
+                                 |
+                                 v
+                  WS: UNMATCHED_ASSET_MOVEMENTS
+                       (if unmatched > 0)
 
 
 Custom Event Handling

@@ -1673,13 +1673,6 @@ class ModifiableSettingsSchema(Schema):
     ask_user_upon_size_discrepancy = fields.Boolean(load_default=None)
     auto_detect_tokens = fields.Boolean(load_default=None)
     csv_export_delimiter = EmptyAsNoneStringField(load_default=None)
-    events_processing_frequency = fields.Integer(
-        load_default=None,
-        validate=webargs.validate.Range(
-            min=60,
-            error='The frequency should be >= 60 seconds',
-        ),
-    )
     asset_movement_amount_tolerance = fields.Decimal(
         load_default=None,
         as_string=True,
@@ -1760,7 +1753,6 @@ class ModifiableSettingsSchema(Schema):
             ask_user_upon_size_discrepancy=data['ask_user_upon_size_discrepancy'],
             auto_detect_tokens=data['auto_detect_tokens'],
             csv_export_delimiter=data['csv_export_delimiter'],
-            events_processing_frequency=data['events_processing_frequency'],
             asset_movement_amount_tolerance=FVal(data['asset_movement_amount_tolerance']) if data['asset_movement_amount_tolerance'] is not None else None,  # noqa: E501
             asset_movement_time_range=data['asset_movement_time_range'],
             suppress_missing_key_msg_services=data['suppress_missing_key_msg_services'],

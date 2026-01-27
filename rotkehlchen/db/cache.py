@@ -20,7 +20,6 @@ class DBCacheStatic(Enum):
     LAST_SPAM_ASSETS_DETECT_KEY: Final = 'last_spam_assets_detect_key'
     LAST_AUGMENTED_SPAM_ASSETS_DETECT_KEY: Final = 'last_augmented_spam_assets_detect_key'
     LAST_ETH2_EVENTS_PROCESSING_TS: Final = 'last_eth2_events_processing_ts'
-    LAST_ASSET_MOVEMENT_PROCESSING_TS: Final = 'last_asset_movement_processing_ts'
     LAST_WITHDRAWALS_EXIT_QUERY_TS: Final = 'last_withdrawals_exit_query_ts'
     LAST_MONERIUM_QUERY_TS: Final = 'last_monerium_query_ts'
     LAST_AAVE_V3_ASSETS_UPDATE: Final = 'last_aave_v3_assets_update'

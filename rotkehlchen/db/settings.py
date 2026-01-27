@@ -14,7 +14,7 @@ from rotkehlchen.chain.evm.types import (
 )
 from rotkehlchen.constants import HOUR_IN_SECONDS
 from rotkehlchen.constants.assets import A_USD
-from rotkehlchen.constants.timing import DAY_IN_SECONDS, YEAR_IN_SECONDS
+from rotkehlchen.constants.timing import YEAR_IN_SECONDS
 from rotkehlchen.data_migrations.constants import LAST_USERDB_DATA_MIGRATION
 from rotkehlchen.db.constants import UpdateType
 from rotkehlchen.db.utils import str_to_bool
@@ -81,7 +81,6 @@ DEFAULT_AUTO_CREATE_CALENDAR_REMINDERS: Final = True
 DEFAULT_ASK_USER_UPON_SIZE_DISCREPANCY: Final = True
 DEFAULT_AUTO_DETECT_TOKENS: Final = True
 DEFAULT_CSV_EXPORT_DELIMITER: Final = ','
-DEFAULT_EVENTS_PROCESSING_FREQUENCY: Final = DAY_IN_SECONDS
 DEFAULT_ASSET_MOVEMENT_AMOUNT_TOLERANCE: Final = FVal('0.000001')
 DEFAULT_ASSET_MOVEMENT_TIME_RANGE: Final = HOUR_IN_SECONDS
 DEFAULT_AUTO_CREATE_PROFIT_EVENTS: Final = False
@@ -127,7 +126,6 @@ INTEGER_KEYS: Final = (
     'read_timeout',
     'oracle_penalty_threshold_count',
     'oracle_penalty_duration',
-    'events_processing_frequency',
     'asset_movement_time_range',
 )
 STRING_KEYS: Final = (
@@ -190,7 +188,6 @@ CachedDBSettingsFieldNames = Literal[
     'auto_delete_calendar_entries',
     'auto_create_calendar_reminders',
     'ask_user_upon_size_discrepancy',
-    'events_processing_frequency',
     'asset_movement_amount_tolerance',
     'asset_movement_time_range',
     'suppress_missing_key_msg_services',
@@ -263,7 +260,6 @@ class DBSettings:
     ask_user_upon_size_discrepancy: bool = DEFAULT_ASK_USER_UPON_SIZE_DISCREPANCY
     auto_detect_tokens: bool = DEFAULT_AUTO_DETECT_TOKENS
     csv_export_delimiter: str = DEFAULT_CSV_EXPORT_DELIMITER
-    events_processing_frequency: int = DEFAULT_EVENTS_PROCESSING_FREQUENCY
     asset_movement_amount_tolerance: FVal = DEFAULT_ASSET_MOVEMENT_AMOUNT_TOLERANCE
     asset_movement_time_range: int = DEFAULT_ASSET_MOVEMENT_TIME_RANGE
     suppress_missing_key_msg_services: list[ExternalService] = field(default_factory=list)
@@ -331,7 +327,6 @@ class ModifiableDBSettings(NamedTuple):
     auto_detect_tokens: bool | None = None
     csv_export_delimiter: str | None = None
     btc_mempool_api: str | None = None
-    events_processing_frequency: int | None = None
     asset_movement_amount_tolerance: FVal | None = None
     asset_movement_time_range: int | None = None
     suppress_missing_key_msg_services: list[ExternalService] | None = None

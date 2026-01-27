@@ -70,7 +70,7 @@ from rotkehlchen.types import (
 )
 from rotkehlchen.utils.misc import ts_now
 
-from .events import process_asset_movements, process_eth2_events
+from .events import process_eth2_events
 from .historical_balances import process_historical_balances
 
 if TYPE_CHECKING:
@@ -169,7 +169,6 @@ class TaskManager:
             self._maybe_query_produced_blocks,
             self._maybe_query_withdrawals,
             self._maybe_process_eth2_events,
-            self._maybe_process_asset_movements,
             self._maybe_detect_withdrawal_exits,
             self._maybe_detect_new_spam_tokens,
             self._maybe_update_owned_assets,
@@ -651,22 +650,6 @@ class TaskManager:
             exception_is_error=True,
             method=process_eth2_events,
             chains_aggregator=self.chains_aggregator,
-            database=self.database,
-        )]
-
-    def _maybe_process_asset_movements(self) -> Optional[list[gevent.Greenlet]]:
-        if not should_run_periodic_task(
-            database=self.database,
-            key_name=DBCacheStatic.LAST_ASSET_MOVEMENT_PROCESSING_TS,
-            refresh_period=CachedSettings().get_settings().events_processing_frequency,
-        ):
-            return None
-
-        return [self.greenlet_manager.spawn_and_track(
-            after_seconds=None,
-            task_name='Process asset movements',
-            exception_is_error=True,
-            method=process_asset_movements,
             database=self.database,
         )]
 

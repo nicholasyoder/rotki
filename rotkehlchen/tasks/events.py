@@ -127,13 +127,6 @@ def process_asset_movements(database: 'DBHandler') -> None:
     with database.match_asset_movements_lock:
         match_asset_movements(database)
 
-    with database.user_write() as write_cursor:
-        database.set_static_cache(  # update last asset movement processing timestamp
-            write_cursor=write_cursor,
-            name=DBCacheStatic.LAST_ASSET_MOVEMENT_PROCESSING_TS,
-            value=ts_now(),
-        )
-
 
 def _load_customized_event_candidates(
         database: 'DBHandler',
