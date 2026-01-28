@@ -3181,12 +3181,14 @@ class RestAPI:
             balance = evm_manager.node_inquirer.get_historical_native_balance(
                 address=address,
                 block_number=block_number,
+                queried_timestamp=timestamp,
             )
         else:
             balance = evm_manager.node_inquirer.get_historical_token_balance(
                 token=asset.resolve_to_evm_token(),
                 address=address,
                 block_number=block_number,
+                queried_timestamp=timestamp,
             )
 
         if balance is None:

@@ -860,6 +860,22 @@ CREATE TABLE IF NOT EXISTS lido_csm_node_operator_metrics (
 );
 """
 
+# Cache for historical on-chain balance queries (by block).
+# timestamp is the queried timestamp in seconds.
+DB_CREATE_HISTORICAL_BALANCE_CACHE = """
+CREATE TABLE IF NOT EXISTS historical_balance_cache (
+    id INTEGER NOT NULL PRIMARY KEY,
+    blockchain TEXT NOT NULL,
+    address TEXT NOT NULL,
+    asset TEXT NOT NULL,
+    amount TEXT NOT NULL,
+    timestamp INTEGER NOT NULL,
+    block_number INTEGER NOT NULL,
+    FOREIGN KEY(asset) REFERENCES assets(identifier) ON UPDATE CASCADE,
+    UNIQUE(blockchain, address, asset, block_number)
+);
+"""
+
 # Stores metrics for history events including balance, pnl, and cost_basis data.
 # Each row represents a metric for a specific bucket after the event is applied.
 # Bucket = (location, location_label, protocol, asset) where:
@@ -979,6 +995,7 @@ BEGIN TRANSACTION;
 {DB_CREATE_SOLANA_ATA_ADDRESS_MAPPINGS}
 {DB_CREATE_LIDO_CSM_NODE_OPERATORS}
 {DB_CREATE_LIDO_CSM_NODE_OPERATOR_METRICS}
+{DB_CREATE_HISTORICAL_BALANCE_CACHE}
 {DB_CREATE_EVENT_METRICS}
 {DB_CREATE_INDEXES}
 COMMIT;

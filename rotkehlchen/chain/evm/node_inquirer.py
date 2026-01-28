@@ -293,35 +293,51 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
             balances[account] = from_wei(result[idx])
         return balances
 
+    @staticmethod
+    def _get_balance(
+            node_web3: Web3,
+            address: ChecksumEvmAddress,
+            block_identifier: int,
+    ) -> int:
+        return node_web3.eth.get_balance(
+            account=address,
+            block_identifier=block_identifier,
+        )
+
     def get_historical_native_balance(
             self,
             address: ChecksumEvmAddress,
             block_number: int,
+            queried_timestamp: Timestamp,
             web3: Web3 | None = None,
+            save_query: bool = True,
     ) -> FVal | None:
         """Attempts to get the historical native token balance using the node provided.
 
         If `web3` is None, it uses the local own node.
         Returns None if there is no local node or node cannot query historical balance.
+
+        save_query is set to False when testing the capabilities of a node, in that case we don't
+        want to save any value in the db.
         """
+        with self.database.conn.read_ctx() as cursor:  # first try to hit cache
+            if (cached_balance := self.database.get_historical_balance_cache(
+                cursor=cursor,
+                blockchain=self.blockchain,
+                address=address,
+                asset=self.native_token,
+                block_number=block_number,
+            )) is not None:
+                return cached_balance
+
         archive_call_order = self.get_archive_call_order()
         if web3 is None and len(archive_call_order) == 0:
             return None
 
-        def _get_balance(
-                node_web3: Web3,
-                address: ChecksumEvmAddress,
-                block_identifier: int,
-        ) -> int:
-            return node_web3.eth.get_balance(
-                account=address,
-                block_identifier=block_identifier,
-            )
-
         if web3 is None:
             try:
                 result = self._query(
-                    method=_get_balance,
+                    method=self._get_balance,
                     call_order=archive_call_order,
                     address=address,
                     block_identifier=block_number,
@@ -330,7 +346,7 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
                 return None
         else:
             try:
-                result = _get_balance(
+                result = self._get_balance(
                     node_web3=web3,
                     address=address,
                     block_identifier=block_number,
@@ -349,6 +365,18 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
         except ValueError:
             return None
 
+        if save_query:
+            with self.database.user_write() as write_cursor:
+                self.database.set_historical_balance_cache(
+                    write_cursor=write_cursor,
+                    blockchain=self.blockchain,
+                    address=address,
+                    asset=self.native_token,
+                    amount=balance,
+                    timestamp=queried_timestamp,
+                    block_number=block_number,
+                )
+
         return balance
 
     def get_historical_token_balance(
@@ -356,14 +384,24 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
             address: ChecksumEvmAddress,
             token: 'EvmToken',
             block_number: int,
+            queried_timestamp: Timestamp | None = None,
     ) -> FVal | None:
         """Query historical ERC20 token balance at a specific block using archive node.
 
         Returns None if query fails (e.g., no archive node available, contract doesn't exist
         at that block, etc.).
         """
-        archive_call_order = self.get_archive_call_order()
-        if len(archive_call_order) == 0:
+        with self.database.conn.read_ctx() as cursor:
+            if (cached_balance := self.database.get_historical_balance_cache(
+                cursor=cursor,
+                blockchain=self.blockchain,
+                address=address,
+                asset=token,
+                block_number=block_number,
+            )) is not None:
+                return cached_balance
+
+        if len(archive_call_order := self.get_archive_call_order()) == 0:
             return None
 
         try:
@@ -382,10 +420,23 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
             )
             return None
 
-        return token_normalized_value_decimals(
+        balance = token_normalized_value_decimals(
             token_amount=raw_balance,
             token_decimals=token.decimals,
         )
+        if queried_timestamp is not None:
+            with self.database.user_write() as write_cursor:
+                self.database.set_historical_balance_cache(
+                    write_cursor=write_cursor,
+                    blockchain=self.blockchain,
+                    address=address,
+                    asset=token,
+                    amount=balance,
+                    timestamp=queried_timestamp,
+                    block_number=block_number,
+                )
+
+        return balance
 
     def has_archive_node(self) -> bool:
         """Check if any connected RPC node is an archive node."""
@@ -405,7 +456,9 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
         return self.get_historical_native_balance(
             address=address_to_check,
             block_number=block_to_check,
+            queried_timestamp=Timestamp(0),  # not used
             web3=web3,
+            save_query=False,
         ) == expected_balance
 
     def _query(self, method: Callable, call_order: Sequence[WeightedNode], **kwargs: Any) -> Any:

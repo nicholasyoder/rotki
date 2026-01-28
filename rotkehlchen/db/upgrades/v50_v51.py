@@ -155,6 +155,22 @@ def upgrade_v50_to_v51(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
         );
         """)  # noqa: E501
 
+    @progress_step(description='Create historical balance cache table.')
+    def _add_historical_balance_cache(write_cursor: 'DBCursor') -> None:
+        write_cursor.execute("""
+        CREATE TABLE IF NOT EXISTS historical_balance_cache (
+            id INTEGER NOT NULL PRIMARY KEY,
+            blockchain TEXT NOT NULL,
+            address TEXT NOT NULL,
+            asset TEXT NOT NULL,
+            amount TEXT NOT NULL,
+            timestamp INTEGER NOT NULL,
+            block_number INTEGER NOT NULL,
+            FOREIGN KEY(asset) REFERENCES assets(identifier) ON UPDATE CASCADE,
+            UNIQUE(blockchain, address, asset, block_number)
+        );
+        """)
+
     @progress_step(description='Adding reserved Contract tag.')
     def _add_contract_tag(write_cursor: 'DBCursor') -> None:
         """Adds the reserved 'Contract' system tag for tagging smart contract addresses.

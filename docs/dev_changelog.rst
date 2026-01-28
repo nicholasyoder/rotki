@@ -12,6 +12,16 @@ CSV Import Marker for History Events
 
 All history events imported via CSV now have the ``imported_from_csv`` state marker automatically applied. This allows the frontend and API consumers to identify which events originated from CSV imports.
 
+Changes on historical balances queries
+---------------------------------------
+
+Historical balances queries (ERC20 balanecOf and native token balances) are now cached in the db for future retrieval. `get_historical_balance` is now deleted from chain/evm/manager.py
+
+Use now:
+
+- `evm_manager.node_inquirer.get_historical_native_balance`
+- `evm_manager.node_inquirer.get_historical_token_balance`
+
 Mass Delete History Events by Filter
 -------------------------------------
 

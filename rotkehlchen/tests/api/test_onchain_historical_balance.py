@@ -34,6 +34,21 @@ def test_get_onchain_historical_balance(
 ) -> None:
     address = ethereum_accounts[0]
     node_inquirer = rotkehlchen_api_server.rest_api.rotkehlchen.chains_aggregator.ethereum.node_inquirer  # noqa: E501
+    db = rotkehlchen_api_server.rest_api.rotkehlchen.data.db
+
+    def _assert_historical_balance_cache_entry(
+            asset_id: str,
+            expected_amount: str,
+    ) -> None:
+        with db.conn.read_ctx() as cursor:
+            row = cursor.execute(
+                'SELECT amount, timestamp FROM historical_balance_cache '
+                'WHERE blockchain=? AND address=? AND asset=? AND timestamp=?',
+                (node_inquirer.blockchain.value, address, asset_id, HISTORICAL_TS),
+            ).fetchone()
+        assert row is not None
+        assert row[0] == expected_amount
+        assert row[1] == HISTORICAL_TS
 
     dai_token = A_DAI.resolve_to_evm_token()
     for payload, error_msg in (
@@ -66,9 +81,17 @@ def test_get_onchain_historical_balance(
         json={'timestamp': HISTORICAL_TS, 'evm_chain': 'ethereum', 'address': address, 'asset': A_ETH.identifier},  # noqa: E501
     ))
     assert result[A_ETH] == '8.275127966894157145'
+    _assert_historical_balance_cache_entry(
+        asset_id=A_ETH.identifier,
+        expected_amount=result[A_ETH],
+    )
 
     result = assert_proper_sync_response_with_result(requests.post(
         api_url_for(rotkehlchen_api_server, 'onchainhistoricalbalanceresource'),
         json={'timestamp': HISTORICAL_TS, 'evm_chain': 'ethereum', 'address': address, 'asset': A_DAI.identifier},  # noqa: E501
     ))
     assert result[A_DAI] == '6.169011805555555325'
+    _assert_historical_balance_cache_entry(
+        asset_id=A_DAI.identifier,
+        expected_amount=result[A_DAI],
+    )
