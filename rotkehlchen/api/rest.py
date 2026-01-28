@@ -99,7 +99,7 @@ from rotkehlchen.db.filtering import (
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.db.lido_csm import DBLidoCsm
 from rotkehlchen.db.reports import DBAccountingReports
-from rotkehlchen.db.settings import ModifiableDBSettings
+from rotkehlchen.db.settings import CachedSettings, ModifiableDBSettings
 from rotkehlchen.db.utils import DBAssetBalance, LocationData
 from rotkehlchen.errors.api import (
     AuthenticationError,
@@ -3658,16 +3658,25 @@ class RestAPI:
                 message=f'No asset movement event found in the DB for group identifier {asset_movement_group_identifier}',  # noqa: E501
             ), HTTPStatus.BAD_REQUEST)
 
-        close_match_identifiers = [x.identifier for x in find_asset_movement_matches(
-            events_db=events_db,
-            asset_movement=asset_movement,  # type: ignore  # filtered by entry_types
-            is_deposit=asset_movement.event_type == HistoryEventType.DEPOSIT,
-            fee_event=fee_event,  # type: ignore  # filtered by entry_types
-            match_window=time_range,
-        )]
-
         asset_movement_timestamp = ts_ms_to_sec(asset_movement.timestamp)
+        assets_in_collection = GlobalDBHandler.get_assets_in_same_collection(
+            identifier=asset_movement.asset.identifier,
+        )
+
         with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
+            blockchain_accounts = self.rotkehlchen.data.db.get_blockchain_accounts(cursor=cursor)
+            close_match_identifiers = [x.identifier for x in find_asset_movement_matches(
+                events_db=events_db,
+                asset_movement=asset_movement,  # type: ignore  # filtered by entry_types
+                is_deposit=asset_movement.event_type == HistoryEventType.DEPOSIT,
+                fee_event=fee_event,  # type: ignore  # filtered by entry_types
+                match_window=time_range,
+                cursor=cursor,
+                assets_in_collection=assets_in_collection,
+                blockchain_accounts=blockchain_accounts,
+                tolerance=CachedSettings().get_settings().asset_movement_amount_tolerance,
+            )]
+
             other_events = events_db.get_history_events_internal(
                 cursor=cursor,
                 filter_query=HistoryEventFilterQuery.make(
@@ -3675,16 +3684,13 @@ class RestAPI:
                     from_ts=Timestamp(asset_movement_timestamp - time_range),
                     to_ts=Timestamp(asset_movement_timestamp + time_range),
                     ignored_ids=[str(x) for x in close_match_identifiers] + [str(asset_movement.identifier)],  # noqa: E501
-                    assets=GlobalDBHandler.get_assets_in_same_collection(
-                        identifier=asset_movement.asset.identifier,
-                    ) if only_expected_assets else None,
+                    assets=assets_in_collection if only_expected_assets else None,
                     entry_types=IncludeExcludeFilterData(
                         values=ENTRY_TYPES_TO_EXCLUDE_FROM_MATCHING,
                         operator='NOT IN',
                     ),
                 ),
             )
-            blockchain_accounts = self.rotkehlchen.data.db.get_blockchain_accounts(cursor=cursor)
 
         # Return the close_matches and filtered other_events.
         return api_response(_wrap_in_ok_result(result={
