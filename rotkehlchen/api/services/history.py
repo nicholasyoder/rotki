@@ -637,6 +637,27 @@ class HistoryService:
             joined_group_ids: dict[str, str],
             group_has_ignored_assets: set[str],
     ) -> list[dict[str, Any] | list[dict[str, Any]]]:
+        """Serialize and group history events for the api.
+        Groups onchain swaps, multi trades, and matched asset movement events into sub-lists.
+        Uses the order defined in EVENT_GROUPING_ORDER as well as some custom logic for matched
+        asset movements to decide which events belong in which group.
+
+        Args:
+        - events: list of events to serialize and group
+        - aggregate_by_group_ids: flag indicating whether the current request is aggregating
+           by group ids. When this is true, no sublist grouping is needed since there is
+           only a single event per group id.
+        - event_accounting_rule_statuses and grouped_events_nums: lists with each element
+           corresponding to an event.
+        - customized_event_ids, ignored_ids, and hidden_event_ids: arguments applying to all events
+           that are passed directly to serialize_for_api for all events.
+        - joined_group_ids: dict mapping group_identifiers to replacement group_identifiers. Used
+           to join groups that are separate in the DB for accounting purposes but need to be shown
+           in the frontend as a single unit, such as asset movements with their matched events.
+        - group_has_ignored_assets: set of group identifiers that contain ignored assets.
+
+        Returns a list of serialized events with grouped events in sub-lists.
+        """
         entries: list[dict[str, Any] | list[dict[str, Any]]] = []
         current_group: list[dict[str, Any]] = []
         current_asset_movement_group_id: str | None = None
@@ -646,7 +667,7 @@ class HistoryService:
             events,
             event_accounting_rule_statuses,
             grouped_events_nums,
-            strict=False,
+            strict=False,  # guaranteed to have same length. event_accounting_rule_statuses and grouped_events_nums are created directly from the events list.  # noqa: E501
         ):
             replacement_group_id = joined_group_ids.get(event.group_identifier)
             serialized = event.serialize_for_api(
@@ -664,24 +685,31 @@ class HistoryService:
                 serialized['entry']['actual_group_identifier'] = event.group_identifier
 
             if aggregate_by_group_ids:
+                # no need to group into lists when aggregating by group_identifier since only
+                # a single event is returned for each group_identifier
                 entries.append(serialized)
                 continue
 
             if (
                 replacement_group_id is not None and
                 event.group_identifier != current_asset_movement_group_id and
-                ((  # matched event
+                ((  # this is the matched event
                     event.extra_data is not None and
                     (current_asset_movement_group_id := event.extra_data.get('matched_asset_movement', {}).get('group_identifier')) is not None  # noqa: E501
-                ) or (
+                ) or (  # or the matched event was an asset movement and this is its fee event
                     event.entry_type == HistoryBaseEntryType.ASSET_MOVEMENT_EVENT and
                     event.event_subtype == HistoryEventSubType.FEE
                 ))
-            ):
+            ):  # This event is part of the matched event for an asset movement.
                 if len(current_group) != already_grouped_event_count:
+                    # This is the beginning of an asset movement group coming immediately after
+                    # another asset movement group. Add the current group to entries and reset
+                    # to begin a new group.
                     entries.append(current_group)
                     current_group, already_grouped_event_count, last_subtype_index = [], 0, None
 
+                # Append to current_group and increment already_grouped_event_count so the logic
+                # below using the EVENT_GROUPING_ORDER works correctly for the asset movement.
                 current_group.append(serialized)
                 already_grouped_event_count += 1
             elif (event.entry_type in (
@@ -703,7 +731,7 @@ class HistoryService:
                     (last_subtype_index is not None and event_subtype_index >= last_subtype_index)
                 ):
                     current_group.append(serialized)
-                else:
+                else:  # Start a new group because the order is broken
                     if len(current_group) > 0:
                         entries.append(current_group)
                     current_group = [serialized]
@@ -711,14 +739,14 @@ class HistoryService:
                     current_asset_movement_group_id = None
 
                 last_subtype_index = event_subtype_index
-            else:
+            else:  # Non-groupable event
                 if len(current_group) > 0:
                     entries.append(current_group)
                     current_group, already_grouped_event_count = [], 0
                     last_subtype_index = current_asset_movement_group_id = None
                 entries.append(serialized)
 
-        if len(current_group) > 0:
+        if len(current_group) > 0:  # Append any remaining group
             entries.append(current_group)
 
         return entries

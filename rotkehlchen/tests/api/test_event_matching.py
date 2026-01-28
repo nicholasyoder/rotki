@@ -17,11 +17,7 @@ from rotkehlchen.history.events.structures.eth2 import EthWithdrawalEvent
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.swap import SwapEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
-from rotkehlchen.tasks.events import (
-    get_unmatched_asset_movements,
-    match_asset_movements,
-    update_asset_movement_matched_event,
-)
+from rotkehlchen.tasks.events import get_unmatched_asset_movements, match_asset_movements
 from rotkehlchen.tests.unit.test_eth2 import HOUR_IN_MILLISECONDS
 from rotkehlchen.tests.utils.api import (
     api_url_for,
@@ -489,13 +485,7 @@ def test_get_history_events_with_matched_asset_movements(
             ))],
         )
 
-    for asset_movement, matched_event in ((movement1, movement2), (movement3, evm_event_1)):
-        update_asset_movement_matched_event(
-            events_db=dbevents,
-            asset_movement=asset_movement,
-            matched_event=matched_event,
-            is_deposit=False,
-        )
+    match_asset_movements(database=rotki.data.db)
 
     # Check aggregating by group with several filters that should all get the same groups.
     for filters in (
@@ -516,7 +506,7 @@ def test_get_history_events_with_matched_asset_movements(
         assert result['entries'][0]['grouped_events_num'] == 3  # includes both evm events and the matched asset movement  # noqa: E501
         assert result['entries'][0]['entry']['group_identifier'] == evm_event_1.group_identifier
         assert result['entries'][1]['grouped_events_num'] == 4  # the two matched movements and their fees  # noqa: E501
-        assert result['entries'][1]['entry']['group_identifier'] == movement2.group_identifier
+        assert result['entries'][1]['entry']['group_identifier'] == movement1.group_identifier
 
     # Then query the evm event group and the matched asset movement should be included
     result = assert_proper_response_with_result(
@@ -557,7 +547,7 @@ def test_get_history_events_with_matched_asset_movements(
     )['entries']
     assert len(result) == 1
     assert len(match2_sublist := result[0]) == 4
-    assert all(x['entry']['group_identifier'] == movement2.group_identifier for x in match2_sublist)  # noqa: E501
+    assert all(x['entry']['group_identifier'] == movement1.group_identifier for x in match2_sublist)  # noqa: E501
     assert match2_sublist[0]['entry']['event_type'] == 'deposit'
     assert match2_sublist[0]['entry']['actual_group_identifier'] == movement2.group_identifier
     assert match2_sublist[1]['entry']['event_subtype'] == 'fee'
