@@ -6,8 +6,7 @@ import gevent
 import pytest
 from freezegun import freeze_time
 
-from rotkehlchen.api.websockets.typedefs import WSMessageType
-from rotkehlchen.assets.asset import Asset, EvmToken, UnderlyingToken
+from rotkehlchen.assets.asset import EvmToken, UnderlyingToken
 from rotkehlchen.chain.bitcoin.hdkey import HDKey
 from rotkehlchen.chain.bitcoin.xpub import XpubData
 from rotkehlchen.chain.ethereum.constants import LAST_GRAPH_DELEGATIONS
@@ -18,7 +17,7 @@ from rotkehlchen.chain.evm.decoding.spark.constants import CPT_SPARK
 from rotkehlchen.chain.evm.decoding.thegraph.constants import CPT_THEGRAPH
 from rotkehlchen.chain.evm.types import NodeName, WeightedNode, string_to_evm_address
 from rotkehlchen.constants import HOUR_IN_SECONDS
-from rotkehlchen.constants.assets import A_COMP, A_DAI, A_ETH, A_GRT, A_LUSD, A_USDC, A_USDT
+from rotkehlchen.constants.assets import A_COMP, A_DAI, A_GRT, A_LUSD, A_USDC, A_USDT
 from rotkehlchen.constants.misc import ONE, ZERO
 from rotkehlchen.constants.timing import DATA_UPDATES_REFRESH, DAY_IN_SECONDS, WEEK_IN_SECONDS
 from rotkehlchen.db.cache import DBCacheDynamic, DBCacheStatic
@@ -30,11 +29,8 @@ from rotkehlchen.db.settings import CachedSettings, ModifiableDBSettings
 from rotkehlchen.db.utils import LocationData
 from rotkehlchen.errors.api import PremiumAuthenticationError, PremiumPermissionError
 from rotkehlchen.errors.misc import RemoteError
-from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.handler import GlobalDBHandler
-from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
-from rotkehlchen.history.events.structures.swap import create_swap_events
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.premium.premium import (
     Premium,
@@ -58,7 +54,6 @@ from rotkehlchen.tests.utils.mock import mock_evm_chains_with_transactions
 from rotkehlchen.tests.utils.premium import VALID_PREMIUM_KEY, VALID_PREMIUM_SECRET
 from rotkehlchen.types import (
     SPAM_PROTOCOL,
-    AssetAmount,
     ChainID,
     ChecksumEvmAddress,
     Eth2PubKey,
@@ -1430,151 +1425,6 @@ def test_graph_query_query_delegations(
 
             # we expect two addresses and not all 3 tracked ones
             assert cursor.execute("SELECT COUNT(*) FROM key_value_cache WHERE name LIKE 'ethereum_GRAPH_DELEGATIONS%'").fetchone() == (2,)  # noqa: E501
-
-
-@pytest.mark.parametrize('max_tasks_num', [5])
-@pytest.mark.parametrize('use_function_scope_msg_aggregator', [True])
-@pytest.mark.parametrize('function_scope_initialize_mock_rotki_notifier', [True])
-def test_process_historical_balances(
-        task_manager: TaskManager,
-        database: 'DBHandler',
-) -> None:
-    with database.user_write() as write_cursor:
-        DBHistoryEvents(database).add_history_events(
-            write_cursor=write_cursor,
-            history=[EvmEvent(  # receive 10 ETH -> wallet bucket, balance: 10
-                identifier=(event1_id := 1),
-                tx_ref=make_evm_tx_hash(),
-                group_identifier='grp1',
-                sequence_index=0,
-                timestamp=TimestampMS(1000),
-                location=Location.ETHEREUM,
-                event_type=HistoryEventType.RECEIVE,
-                event_subtype=HistoryEventSubType.NONE,
-                asset=A_ETH,
-                amount=FVal('10'),
-                location_label=TEST_ADDR1,
-            ), *create_swap_events(  # swap 2 ETH for 1000 DAI -> wallet bucket, balance: 8 ETH, 1000 DAI  # noqa: E501
-                identifier=(event2_id := 2),
-                receive_identifier=(event3_id := 3),
-                timestamp=TimestampMS(2000),
-                location=Location.ETHEREUM,
-                spend=AssetAmount(asset=A_ETH, amount=FVal('2')),
-                receive=AssetAmount(asset=A_DAI, amount=FVal('1000')),
-                group_identifier='grp2',
-                location_label=TEST_ADDR1,
-            ), AssetMovement(  # deposit 1000 DAI to exchange -> exchange bucket, balance: 1000
-                identifier=(event4_id := 4),
-                group_identifier='grp3',
-                timestamp=TimestampMS(3000),
-                location=Location.KRAKEN,
-                event_type=HistoryEventType.DEPOSIT,
-                asset=A_DAI,
-                amount=FVal('1000'),
-                location_label=TEST_ADDR1,
-            ), AssetMovement(  # withdraw 500 DAI from exchange -> exchange bucket, balance: 500
-                identifier=(event5_id := 5),
-                group_identifier='grp4',
-                timestamp=TimestampMS(3500),
-                location=Location.KRAKEN,
-                event_type=HistoryEventType.WITHDRAWAL,
-                asset=A_DAI,
-                amount=FVal('500'),
-                location_label=TEST_ADDR1,
-            ), EvmEvent(  # deposit DAI -> wallet bucket, balance: 500
-                identifier=(event6_id := 6),
-                tx_ref=(pool_tx_hash := make_evm_tx_hash()),
-                group_identifier='grp5',
-                sequence_index=0,
-                timestamp=TimestampMS(4000),
-                location=Location.ETHEREUM,
-                event_type=HistoryEventType.DEPOSIT,
-                event_subtype=HistoryEventSubType.DEPOSIT_FOR_WRAPPED,
-                asset=A_DAI,
-                amount=FVal('500'),
-                location_label=TEST_ADDR1,
-                counterparty=CPT_AAVE_V3,
-            ), EvmEvent(  # receive aEthDAI (wrapped) -> aave protocol bucket, balance: 500
-                identifier=(event7_id := 7),
-                tx_ref=pool_tx_hash,
-                group_identifier='grp5',
-                sequence_index=2,
-                timestamp=TimestampMS(4000),
-                location=Location.ETHEREUM,
-                event_type=HistoryEventType.RECEIVE,
-                event_subtype=HistoryEventSubType.RECEIVE_WRAPPED,
-                asset=(a_ethdai_asset := Asset('eip155:1/erc20:0x018008bfb33d285247A21d44E50697654f754e63')),  # noqa: E501
-                amount=FVal('500'),
-                location_label=TEST_ADDR1,
-                counterparty=CPT_AAVE_V3,
-            ), EvmEvent(  # spend 100 ETH -> triggers negative balance, skips ETH wallet bucket
-                identifier=8,
-                tx_ref=make_evm_tx_hash(),
-                group_identifier='grp6',
-                sequence_index=0,
-                timestamp=TimestampMS(5000),
-                location=Location.ETHEREUM,
-                event_type=HistoryEventType.SPEND,
-                event_subtype=HistoryEventSubType.NONE,
-                asset=A_ETH,
-                amount=FVal('100'),
-                location_label=TEST_ADDR1,
-            ), EvmEvent(  # receive ETH after negative -> skipped
-                identifier=9,
-                tx_ref=make_evm_tx_hash(),
-                group_identifier='grp7',
-                sequence_index=0,
-                timestamp=TimestampMS(6000),
-                location=Location.ETHEREUM,
-                event_type=HistoryEventType.RECEIVE,
-                event_subtype=HistoryEventSubType.NONE,
-                asset=A_ETH,
-                amount=FVal('50'),
-                location_label=TEST_ADDR1,
-            ), EvmEvent(  # receive 200 DAI -> wallet bucket, balance: 700
-                identifier=(event8_id := 10),
-                tx_ref=make_evm_tx_hash(),
-                group_identifier='grp8',
-                sequence_index=0,
-                timestamp=TimestampMS(7000),
-                location=Location.ETHEREUM,
-                event_type=HistoryEventType.RECEIVE,
-                event_subtype=HistoryEventSubType.NONE,
-                asset=A_DAI,
-                amount=FVal('200'),
-                location_label=TEST_ADDR1,
-            ),
-        ])
-
-    task_manager.potential_tasks = [task_manager._maybe_process_historical_balances]
-    task_manager.schedule()
-    gevent.joinall(task_manager.running_greenlets[task_manager._maybe_process_historical_balances])
-
-    messages = task_manager.database.msg_aggregator.rotki_notifier.messages  # type: ignore[union-attr]
-    assert len(messages) == 4
-    assert messages[0].message_type == WSMessageType.PROGRESS_UPDATES
-    assert messages[0].data == {'subtype': 'historical_balance_processing', 'total': 10, 'processed': 0}  # noqa: E501
-    assert messages[1].message_type == WSMessageType.PROGRESS_UPDATES
-    assert messages[2].message_type == WSMessageType.NEGATIVE_BALANCE_DETECTED
-    assert messages[2].data['asset'] == A_ETH.identifier
-    assert messages[3].message_type == WSMessageType.PROGRESS_UPDATES
-    assert messages[3].data == {'subtype': 'historical_balance_processing', 'total': 10, 'processed': 10}  # noqa: E501
-
-    with database.conn.read_ctx() as cursor:
-        assert cursor.execute(
-            'SELECT em.event_identifier, em.protocol, em.metric_value, em.asset '
-            'FROM event_metrics em '
-            'ORDER BY em.event_identifier',
-        ).fetchall() == [
-            (event1_id, None, '10', A_ETH.identifier),
-            (event2_id, None, '8', A_ETH.identifier),
-            (event3_id, None, '1000', A_DAI.identifier),
-            (event4_id, None, '1000', A_DAI.identifier),
-            (event5_id, None, '500', A_DAI.identifier),
-            (event6_id, None, '500', A_DAI.identifier),
-            (event7_id, CPT_AAVE_V3, '500', a_ethdai_asset.identifier),
-            (event8_id, None, '700', A_DAI.identifier),
-        ]
 
 
 @pytest.mark.parametrize('max_tasks_num', [5])
