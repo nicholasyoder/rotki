@@ -1432,42 +1432,6 @@ def test_graph_query_query_delegations(
             assert cursor.execute("SELECT COUNT(*) FROM key_value_cache WHERE name LIKE 'ethereum_GRAPH_DELEGATIONS%'").fetchone() == (2,)  # noqa: E501
 
 
-@pytest.mark.vcr(filter_query_parameters=['apikey'])
-@pytest.mark.parametrize('max_tasks_num', [1])
-def test_process_events_frequency(
-        task_manager: TaskManager,
-        db_settings: dict[str, Any],
-        freezer,
-) -> None:
-    """Check that the process events task frequency is controlled via the DB setting."""
-    database = task_manager.database
-    # check both the default (1 day) and a custom value of 1 hour
-    for time_delta, processing_frequency, should_run in (
-        (datetime.timedelta(), None, True),
-        (datetime.timedelta(hours=23), None, False),
-        (datetime.timedelta(hours=25), None, True),
-        (datetime.timedelta(minutes=59), HOUR_IN_SECONDS, False),
-        (datetime.timedelta(minutes=61), HOUR_IN_SECONDS, True),
-    ):
-        if processing_frequency is not None:
-            with database.conn.write_ctx() as write_cursor:
-                database.set_settings(
-                    write_cursor=write_cursor,
-                    settings=ModifiableDBSettings(
-                        events_processing_frequency=processing_frequency,
-                    ),
-                )
-
-        freezer.move_to(datetime.datetime.now(tz=datetime.UTC) + time_delta)
-        with patch('rotkehlchen.tasks.events.match_asset_movements') as match_events_mock:
-            task_manager.potential_tasks = [task_manager._maybe_process_asset_movements]
-            task_manager.schedule()
-            if len(task_manager.running_greenlets):
-                gevent.joinall(task_manager.running_greenlets[task_manager._maybe_process_asset_movements])
-
-        assert match_events_mock.call_count == (1 if should_run else 0)
-
-
 @pytest.mark.parametrize('max_tasks_num', [5])
 @pytest.mark.parametrize('use_function_scope_msg_aggregator', [True])
 @pytest.mark.parametrize('function_scope_initialize_mock_rotki_notifier', [True])

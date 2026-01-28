@@ -800,7 +800,6 @@ Getting or modifying settings
               "ask_user_upon_size_discrepancy": true,
               "auto_detect_tokens": true,
               "csv_export_delimiter": ",",
-              "events_processing_frequency": 86400,
               "asset_movement_amount_tolerance": "0.000001",
               "asset_movement_time_range": 54000,
               "suppress_missing_key_msg_services": ["etherscan"],
@@ -845,7 +844,6 @@ Getting or modifying settings
    :resjson bool ask_user_upon_size_discrepancy: A boolean denoting whether to prompt the user for confirmation each time the remote database is bigger than the local one or directly force push. Default is ``true``.
    :resjson bool auto_detect_tokens: A boolean denoting whether to automatically detect and add tokens for EVM addresses. Default is ``true``.
    :resjson string csv_export_delimiter: The delimiter character to use when exporting data to CSV files. Default is ``","``.
-   :resjson int events_processing_frequency: The frequency in seconds at which to process events and match asset movements. Must be >= 60 seconds. Default is 86400 (24 hours).
    :resjson string asset_movement_amount_tolerance: The tolerance value used when matching asset movement amounts with onchain events. Must be a positive decimal number. Default is ``"0.000001"``.
    :resjson int asset_movement_time_range: The time range before/after the asset movement (depending on if its a deposit/withdrawal) in which to check for possible matching events. Default is 54000 (15 hours). Note: there is also a 1 hour tolerance on the other side of the asset movement, since some exchanges do not provide accurate timestamps.
    :resjson list suppress_missing_key_msg_services: A list of services for which the missing api key WS message should be suppressed. Empty list by default.
@@ -904,7 +902,6 @@ Getting or modifying settings
    :resjson bool[optional] ask_user_upon_size_discrepancy: A boolean denoting whether to prompt the user for confirmation each time the remote database is bigger than the local one or directly force push.
    :resjson bool[optional] auto_detect_tokens: A boolean denoting whether to automatically detect and add tokens for EVM addresses.
    :resjson string[optional] csv_export_delimiter: The delimiter character to use when exporting data to CSV files.
-   :resjson int[optional] events_processing_frequency: The frequency in seconds at which to process events and match asset movements. Must be >= 60 seconds.
    :resjson string[optional] asset_movement_amount_tolerance: The tolerance value used when matching asset movement amounts with onchain events. Must be a positive decimal number.
    :resjson int[optional] asset_movement_time_range: The time range before/after the asset movement (depending on if its a deposit/withdrawal) in which to check for possible matching events. Default is 54000 (15 hours). Note: there is also a 1 hour tolerance on the other side of the asset movement, since some exchanges do not provide accurate timestamps.
    :resjson list[optional] suppress_missing_key_msg_services: A list of services for which the missing api key WS message should be suppressed. Empty list by default.
@@ -944,7 +941,6 @@ Getting or modifying settings
               "ask_user_upon_size_discrepancy": true,
               "auto_detect_tokens": true,
               "csv_export_delimiter": ",",
-              "events_processing_frequency": 86400,
               "asset_movement_amount_tolerance": "0.000001",
               "asset_movement_time_range": 54000,
               "suppress_missing_key_msg_services": ["etherscan"],
