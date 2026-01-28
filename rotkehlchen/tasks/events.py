@@ -49,8 +49,10 @@ from rotkehlchen.utils.misc import ts_ms_to_sec, ts_now
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from rotkehlchen.assets.asset import Asset
     from rotkehlchen.chain.aggregator import ChainsAggregator
     from rotkehlchen.db.dbhandler import DBHandler
+    from rotkehlchen.db.drivers.gevent import DBCursor
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -357,35 +359,50 @@ def match_asset_movements(database: 'DBHandler') -> None:
     log.debug('Analyzing asset movements for corresponding onchain events...')
     events_db = DBHistoryEvents(database=database)
     asset_movements, fee_events = get_unmatched_asset_movements(database)
-    match_window = CachedSettings().get_settings().asset_movement_time_range
+    settings = CachedSettings().get_settings()
     unmatched_asset_movements, movement_ids_to_ignore = [], []
-    for asset_movement in asset_movements:
-        if _should_auto_ignore_movement(asset_movement=asset_movement):
-            movement_ids_to_ignore.append(asset_movement.identifier)
-            continue
+    assets_in_collection_cache: dict[str, tuple[Asset, ...]] = {}
+    with events_db.db.conn.read_ctx() as cursor:
+        blockchain_accounts = events_db.db.get_blockchain_accounts(cursor=cursor)
+        for asset_movement in asset_movements:
+            if _should_auto_ignore_movement(asset_movement=asset_movement):
+                movement_ids_to_ignore.append(asset_movement.identifier)
+                continue
 
-        if len(matched_events := find_asset_movement_matches(
-            events_db=events_db,
-            asset_movement=asset_movement,
-            is_deposit=(is_deposit := asset_movement.event_type == HistoryEventType.DEPOSIT),
-            fee_event=fee_events.get(asset_movement.group_identifier),
-            match_window=match_window,
-        )) == 1:
-            success, error_msg = update_asset_movement_matched_event(
+            asset_identifier = asset_movement.asset.identifier
+            assets_in_collection = assets_in_collection_cache.get(asset_identifier)
+            if assets_in_collection is None:
+                assets_in_collection = GlobalDBHandler.get_assets_in_same_collection(
+                    identifier=asset_identifier,
+                )
+                assets_in_collection_cache[asset_identifier] = assets_in_collection
+
+            if len(matched_events := find_asset_movement_matches(
                 events_db=events_db,
                 asset_movement=asset_movement,
-                matched_event=matched_events[0],
-                is_deposit=is_deposit,
-            )
-            if success:
-                continue
-            else:
+                is_deposit=(is_deposit := asset_movement.event_type == HistoryEventType.DEPOSIT),
+                fee_event=fee_events.get(asset_movement.group_identifier),
+                match_window=settings.asset_movement_time_range,
+                cursor=cursor,
+                assets_in_collection=assets_in_collection,
+                blockchain_accounts=blockchain_accounts,
+                tolerance=settings.asset_movement_amount_tolerance,
+            )) == 1:
+                success, error_msg = update_asset_movement_matched_event(
+                    events_db=events_db,
+                    asset_movement=asset_movement,
+                    matched_event=matched_events[0],
+                    is_deposit=is_deposit,
+                )
+                if success:
+                    continue
+
                 log.error(
                     f'Failed to match asset movement {asset_movement.group_identifier} '
                     f'due to: {error_msg}',
                 )
 
-        unmatched_asset_movements.append(asset_movement)
+            unmatched_asset_movements.append(asset_movement)
 
     if len(movement_ids_to_ignore) > 0:
         with events_db.db.conn.write_ctx() as write_cursor:
@@ -641,6 +658,10 @@ def find_asset_movement_matches(
         is_deposit: bool,
         fee_event: AssetMovement | None,
         match_window: int,
+        cursor: 'DBCursor',
+        assets_in_collection: tuple['Asset', ...] | None = None,
+        blockchain_accounts: BlockchainAccounts | None = None,
+        tolerance: FVal | None = None,
 ) -> list[HistoryBaseEntry]:
     """Find events that closely match what the corresponding event for the given asset movement
     should look like. Returns a list of events that match.
@@ -653,25 +674,34 @@ def find_asset_movement_matches(
         from_ts = asset_movement_timestamp - TIMESTAMP_TOLERANCE
         to_ts = asset_movement_timestamp + match_window
 
-    with events_db.db.conn.read_ctx() as cursor:
-        possible_matches = events_db.get_history_events_internal(
-            cursor=cursor,
-            filter_query=HistoryEventFilterQuery.make(
-                assets=GlobalDBHandler.get_assets_in_same_collection(
-                    identifier=asset_movement.asset.identifier,
-                ),
-                from_ts=Timestamp(from_ts),
-                to_ts=Timestamp(to_ts),
-                entry_types=IncludeExcludeFilterData(
-                    values=ENTRY_TYPES_TO_EXCLUDE_FROM_MATCHING,
-                    operator='NOT IN',
-                ),
-            ),
+    if assets_in_collection is None:
+        assets_in_collection = GlobalDBHandler.get_assets_in_same_collection(
+            identifier=asset_movement.asset.identifier,
         )
+
+    if tolerance is None:
+        tolerance = CachedSettings().get_settings().asset_movement_amount_tolerance
+
+    possible_matches = events_db.get_history_events_internal(
+        cursor=cursor,
+        filter_query=HistoryEventFilterQuery.make(
+            assets=assets_in_collection,
+            from_ts=Timestamp(from_ts),
+            to_ts=Timestamp(to_ts),
+            entry_types=IncludeExcludeFilterData(
+                values=ENTRY_TYPES_TO_EXCLUDE_FROM_MATCHING,
+                operator='NOT IN',
+            ),
+        ),
+    )
+    if blockchain_accounts is None:
         blockchain_accounts = events_db.db.get_blockchain_accounts(cursor=cursor)
 
     close_matches: list[HistoryBaseEntry] = []
-    tolerance = CachedSettings().get_settings().asset_movement_amount_tolerance
+    amount_with_fee: FVal | None = None
+    if is_deposit and fee_event is not None and fee_event.asset == asset_movement.asset:
+        amount_with_fee = asset_movement.amount + fee_event.amount
+
     for event in possible_matches:
         if should_exclude_possible_match(
             asset_movement=asset_movement,
@@ -692,11 +722,9 @@ def find_asset_movement_matches(
             tolerance=tolerance,
             is_deposit=is_deposit,
         ) or (
-            is_deposit and
-            fee_event is not None and
-            fee_event.asset == asset_movement.asset and
+            amount_with_fee is not None and
             _match_amount(
-                movement_amount=asset_movement.amount + fee_event.amount,
+                movement_amount=amount_with_fee,
                 event_amount=event.amount,
                 tolerance=tolerance,
                 is_deposit=True,
@@ -718,17 +746,14 @@ def find_asset_movement_matches(
         asset_matches: list[HistoryBaseEntry] = []
         tx_ref_matches: list[HistoryBaseEntry] = []
         counterparty_matches: list[HistoryBaseEntry] = []
+        tx_ref = asset_movement.extra_data.get('transaction_id') if asset_movement.extra_data is not None else None  # noqa: E501
         for match in close_matches:
             # Maybe match by exact asset match (matched events can have any asset in the collection)  # noqa: E501
             if match.asset == asset_movement.asset:
                 asset_matches.append(match)
 
             if isinstance(match, OnchainEvent):
-                if (  # Maybe match by tx ref
-                    asset_movement.extra_data is not None and
-                    (tx_ref := asset_movement.extra_data.get('transaction_id')) is not None and
-                    str(match.tx_ref) == tx_ref
-                ):
+                if tx_ref is not None and str(match.tx_ref) == tx_ref:  # Maybe match by tx ref
                     tx_ref_matches.append(match)
 
                 if match.counterparty is None or match.counterparty == CPT_MONERIUM:
