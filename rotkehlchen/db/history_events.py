@@ -198,6 +198,7 @@ class DBHistoryEvents:
             write_cursor: 'DBCursor',
             event: HistoryBaseEntry,
             mapping_values: dict[str, int] | None = None,
+            skip_tracking: bool = False,
     ) -> int | None:
         """Insert a single history entry to the DB. Returns its identifier or
         None if it already exists. This function serializes the event depending
@@ -235,7 +236,8 @@ class DBHistoryEvents:
                 [(identifier, k, v) for k, v in mapping_values.items()],
             )
 
-        self._mark_events_modified(write_cursor=write_cursor, timestamp=event.timestamp)
+        if not skip_tracking:
+            self._mark_events_modified(write_cursor=write_cursor, timestamp=event.timestamp)
         return identifier
 
     def add_history_events(
@@ -243,15 +245,36 @@ class DBHistoryEvents:
             write_cursor: 'DBCursor',
             history: Sequence[HistoryBaseEntry],
     ) -> None:
-        """Insert a list of history events in the database.
+        """Insert a list of history events in the database with batched modification tracking.
+
+        This method batches modification tracking for efficiency:
+        - Instead of calling _mark_events_modified() for each event,
+          it collects the minimum timestamp and calls it once at the end.
+        - Example: For 100 events, this reduces cache updates from 200 to 2.
 
         Check add_history_event() to see possible Exceptions
         """
+        if not history:
+            return
+
+        min_timestamp: TimestampMS | None = None
+
+        # Add all events WITHOUT calling _mark_events_modified for each
         for event in history:
-            self.add_history_event(
-                write_cursor=write_cursor,
-                event=event,
-            )
+            if (
+                self.add_history_event(
+                    write_cursor=write_cursor,
+                    event=event,
+                    skip_tracking=True,  # Skip tracking per-event
+                ) is not None  # Only track if event was actually added (not a duplicate)
+                and (min_timestamp is None or event.timestamp < min_timestamp)
+            ):
+                # Track the minimum timestamp
+                min_timestamp = event.timestamp
+
+        # Call tracking ONCE for the entire batch with minimum timestamp
+        if min_timestamp is not None:
+            self._mark_events_modified(write_cursor=write_cursor, timestamp=min_timestamp)
 
     def edit_history_event(self, write_cursor: 'DBCursor', event: HistoryBaseEntry) -> None:
         """
