@@ -201,7 +201,7 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
                 event_type=HistoryEventType.WITHDRAWAL,
                 timestamp=TimestampMS(1560000000000),
                 asset=A_USDC,
-                amount=FVal('0.7654321'),
+                amount=FVal('5.5'),
                 unique_id='7',
                 location_label='Bitstamp 1',
             )), (withdrawal4_matched_event := AssetMovement(  # withdrawal4's matched event
@@ -209,7 +209,7 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
                 event_type=HistoryEventType.DEPOSIT,
                 timestamp=TimestampMS(1560000000001),
                 asset=A_USDC,
-                amount=FVal('0.765432'),  # Slightly different amount but within the tolerance so will still auto match and add a fee event to cover the difference. # noqa: E501
+                amount=FVal('5.49'),  # Slightly different amount but within the tolerance so will still auto match and add a fee event to cover the difference. # noqa: E501
                 unique_id='8',
                 location_label='Kraken 1',
             ))],
