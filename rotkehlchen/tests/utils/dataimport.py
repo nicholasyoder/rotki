@@ -26,6 +26,7 @@ from rotkehlchen.constants.assets import (
 )
 from rotkehlchen.data_import.importers.constants import COINTRACKING_EVENT_PREFIX
 from rotkehlchen.data_import.importers.cryptocom import CRYPTOCOM_LOCATION_LABEL
+from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HistoryMappingState
 from rotkehlchen.db.filtering import (
     HistoryEventFilterQuery,
 )
@@ -61,6 +62,21 @@ from rotkehlchen.utils.misc import ts_sec_to_ms
 
 def get_cryptocom_note(desc: str):
     return f'{desc}\nSource: crypto.com (CSV import)'
+
+
+def assert_all_events_have_csv_marker(rotki: Rotkehlchen) -> None:
+    """Verify all history events have the IMPORTED_FROM_CSV marker."""
+    with rotki.data.db.conn.read_ctx() as cursor:
+        cursor.execute("""
+            SELECT 1 FROM history_events e
+            WHERE NOT EXISTS (
+                SELECT 1 FROM history_events_mappings m
+                WHERE m.parent_identifier = e.identifier
+                AND m.name = ? AND m.value = ?
+            )
+            LIMIT 1
+        """, (HISTORY_MAPPING_KEY_STATE, HistoryMappingState.IMPORTED_FROM_CSV))
+        assert cursor.fetchone() is None
 
 
 def assert_cointracking_import_results(rotki: Rotkehlchen, websocket_connection: WebsocketReader):

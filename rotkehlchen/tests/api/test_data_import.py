@@ -18,6 +18,7 @@ from rotkehlchen.tests.utils.api import (
     wait_for_async_task,
 )
 from rotkehlchen.tests.utils.dataimport import (
+    assert_all_events_have_csv_marker,
     assert_binance_import_results,
     assert_bisq_trades_import_results,
     assert_bitcoin_tax_trades_import_results,
@@ -101,6 +102,7 @@ def test_data_import_cointracking(
     assert result is True
     # And also assert data was imported successfully
     assert_cointracking_import_results(rotki, websocket_connection)
+    assert_all_events_have_csv_marker(rotki)
 
 
 @pytest.mark.parametrize('number_of_eth_accounts', [0])
@@ -121,6 +123,7 @@ def test_data_import_cryptocom(rotkehlchen_api_server: 'APIServer') -> None:
     assert result is True
     # And also assert data was imported successfully
     assert_cryptocom_import_results(rotki)
+    assert_all_events_have_csv_marker(rotki)
 
 
 @pytest.mark.parametrize('number_of_eth_accounts', [0])
@@ -141,6 +144,7 @@ def test_data_import_cryptocom_special_types(rotkehlchen_api_server: 'APIServer'
     assert result is True
     # And also assert data was imported successfully
     assert_cryptocom_special_events_import_results(rotki)
+    assert_all_events_have_csv_marker(rotki)
 
 
 @pytest.mark.parametrize('number_of_eth_accounts', [0])
@@ -162,6 +166,7 @@ def test_data_import_bitmex_wallet_history(rotkehlchen_api_server: 'APIServer') 
     assert result is True
     # And also assert data was imported successfully
     assert_bitmex_import_wallet_history(rotki)
+    assert_all_events_have_csv_marker(rotki)
 
 
 @pytest.mark.parametrize('number_of_eth_accounts', [0])
@@ -182,6 +187,7 @@ def test_data_import_blockfi_transactions(rotkehlchen_api_server: 'APIServer') -
     assert result is True
     # And also assert data was imported successfully
     assert_blockfi_transactions_import_results(rotki)
+    assert_all_events_have_csv_marker(rotki)
 
 
 @pytest.mark.parametrize('number_of_eth_accounts', [0])
@@ -202,6 +208,7 @@ def test_data_import_blockfi_trades(rotkehlchen_api_server: 'APIServer') -> None
     assert result is True
     # And also assert data was imported successfully
     assert_blockfi_trades_import_results(rotki)
+    assert_all_events_have_csv_marker(rotki)
 
 
 @pytest.mark.parametrize('legacy_messages_via_websockets', [True])
@@ -226,6 +233,7 @@ def test_data_import_nexo(
     assert result is True
     # And also assert data was imported successfully
     assert_nexo_results(rotki, websocket_connection)
+    assert_all_events_have_csv_marker(rotki)
 
 
 @pytest.mark.parametrize('number_of_eth_accounts', [0])
@@ -246,6 +254,7 @@ def test_data_import_shapeshift_trades(rotkehlchen_api_server: 'APIServer') -> N
     assert result is True
     # And also assert data was imported successfully
     assert_shapeshift_trades_import_results(rotki)
+    assert_all_events_have_csv_marker(rotki)
 
 
 @pytest.mark.parametrize('number_of_eth_accounts', [0])
@@ -266,6 +275,7 @@ def test_data_import_uphold_transactions(rotkehlchen_api_server: 'APIServer') ->
     assert result is True
     # And also assert data was imported successfully
     assert_uphold_transactions_import_results(rotki)
+    assert_all_events_have_csv_marker(rotki)
 
 
 @pytest.mark.parametrize('number_of_eth_accounts', [0])
@@ -286,6 +296,7 @@ def test_data_import_bisq_transactions(rotkehlchen_api_server: 'APIServer') -> N
     assert result is True
     # And also assert data was imported successfully
     assert_bisq_trades_import_results(rotki)
+    assert_all_events_have_csv_marker(rotki)
 
 
 @pytest.mark.parametrize('number_of_eth_accounts', [0])
@@ -490,6 +501,7 @@ def test_data_import_custom_format(rotkehlchen_api_server: 'APIServer', file_upl
     assert result is True
     # And also assert data was imported successfully
     assert_custom_cointracking(rotki)
+    assert_all_events_have_csv_marker(rotki)
 
 
 @pytest.mark.parametrize('legacy_messages_via_websockets', [True])
@@ -513,6 +525,7 @@ def test_data_import_binance_history(
     result = assert_proper_sync_response_with_result(response)
     assert result is True
     assert_binance_import_results(rotki, websocket_connection)
+    assert_all_events_have_csv_marker(rotki)
 
 
 @pytest.mark.parametrize('legacy_messages_via_websockets', [True])
@@ -534,6 +547,7 @@ def test_data_import_rotki_generic_trades(
     )
     assert assert_proper_sync_response_with_result(response) is True
     assert_rotki_generic_trades_import_results(rotki, websocket_connection)
+    assert_all_events_have_csv_marker(rotki)
 
     # purge the existing entries to avoid duplicates
     with rotki.data.db.conn.write_ctx() as write_cursor:
@@ -553,6 +567,7 @@ def test_data_import_rotki_generic_trades(
     )
     assert assert_proper_sync_response_with_result(response) is True
     assert_rotki_generic_trades_import_results(rotki, websocket_connection)
+    assert_all_events_have_csv_marker(rotki)
 
 
 @pytest.mark.parametrize('legacy_messages_via_websockets', [True])
@@ -574,6 +589,7 @@ def test_data_import_rotki_generic_events(
     )
     assert assert_proper_sync_response_with_result(response) is True
     assert_rotki_generic_events_import_results(rotki, websocket_connection)
+    assert_all_events_have_csv_marker(rotki)
 
 
 @pytest.mark.parametrize('legacy_messages_via_websockets', [True])
@@ -604,6 +620,7 @@ def test_docker_async_import(
     assert outcome['message'] == ''
     assert outcome['result'] is True
     assert_binance_import_results(rotki, websocket_connection)
+    assert_all_events_have_csv_marker(rotki)
 
 
 def test_bitcoin_tax_import(rotkehlchen_api_server: 'APIServer') -> None:
@@ -643,6 +660,7 @@ def test_bitcoin_tax_import(rotkehlchen_api_server: 'APIServer') -> None:
     )
     assert assert_proper_sync_response_with_result(response) is True
     assert_bitcoin_tax_trades_import_results(rotki, 'bitcoin_tax_spending.csv')
+    assert_all_events_have_csv_marker(rotki)
 
 
 def test_bitstamp_import(rotkehlchen_api_server: 'APIServer') -> None:
@@ -661,6 +679,7 @@ def test_bitstamp_import(rotkehlchen_api_server: 'APIServer') -> None:
     )
     assert assert_proper_sync_response_with_result(response) is True
     assert_bitstamp_trades_import_results(rotki)
+    assert_all_events_have_csv_marker(rotki)
 
 
 def test_bittrex_history_import(rotkehlchen_api_server: 'APIServer') -> None:
@@ -688,6 +707,7 @@ def test_bittrex_history_import(rotkehlchen_api_server: 'APIServer') -> None:
         assert assert_proper_sync_response_with_result(response) is True
 
     assert_bittrex_import_results(rotki)
+    assert_all_events_have_csv_marker(rotki)
 
 
 def test_kucoin_history_import(rotkehlchen_api_server: 'APIServer') -> None:
@@ -709,6 +729,7 @@ def test_kucoin_history_import(rotkehlchen_api_server: 'APIServer') -> None:
         assert assert_proper_sync_response_with_result(response) is True
 
     assert_kucoin_import_results(rotki)
+    assert_all_events_have_csv_marker(rotki)
 
 
 def test_blockpit_history_import(rotkehlchen_api_server: 'APIServer') -> None:
@@ -727,3 +748,4 @@ def test_blockpit_history_import(rotkehlchen_api_server: 'APIServer') -> None:
     assert assert_proper_sync_response_with_result(response) is True
 
     assert_blockpit_import_results(rotki)
+    assert_all_events_have_csv_marker(rotki)

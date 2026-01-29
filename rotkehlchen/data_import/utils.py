@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from rotkehlchen.api.websockets.typedefs import ProgressUpdateSubType, WSMessageType
 from rotkehlchen.assets.converters import LOCATION_TO_ASSET_MAPPING, asset_from_common_identifier
+from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HistoryMappingState
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.errors.misc import InputError
 from rotkehlchen.errors.serialization import DeserializationError
@@ -109,7 +110,11 @@ class BaseExchangeImporter(ABC):
     def flush_all(self, write_cursor: 'DBCursor') -> None:
         self.db.add_margin_positions(write_cursor, margin_positions=self._margin_trades)
         for event in self._history_events:
-            if self.history_db.add_history_event(write_cursor=write_cursor, event=event) is None:
+            if self.history_db.add_history_event(
+                write_cursor=write_cursor,
+                event=event,
+                mapping_values={HISTORY_MAPPING_KEY_STATE: HistoryMappingState.IMPORTED_FROM_CSV},
+            ) is None:
                 self.append_msg(
                     row_index=-1,  # we don't know the row index.
                     msg=(

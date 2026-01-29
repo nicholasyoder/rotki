@@ -7,6 +7,11 @@ This changelog documents API changes, schema modifications, and other developer-
 Unreleased
 ==========
 
+CSV Import Marker for History Events
+------------------------------------
+
+All history events imported via CSV now have the ``imported_from_csv`` state marker automatically applied. This allows the frontend and API consumers to identify which events originated from CSV imports.
+
 Mass Delete History Events by Filter
 -------------------------------------
 
