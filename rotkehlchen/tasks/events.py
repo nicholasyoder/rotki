@@ -369,6 +369,8 @@ def _should_auto_ignore_movement(asset_movement: AssetMovement) -> bool:
     )
 
 
+# TODO: Remove all the extra logs with the MATCH_DEBUG prefix.
+
 def match_asset_movements(database: 'DBHandler') -> None:
     """Analyze asset movements and find corresponding onchain events, then update those onchain
     events with proper event_type, counterparty, etc and cache the matched identifiers.
@@ -376,12 +378,14 @@ def match_asset_movements(database: 'DBHandler') -> None:
     log.debug('Analyzing asset movements for corresponding onchain events...')
     events_db = DBHistoryEvents(database=database)
     asset_movements, fee_events = get_unmatched_asset_movements(database)
+    log.debug(f'MATCH_DEBUG: loaded {len(asset_movements)} unmatched asset movements')
     settings = CachedSettings().get_settings()
     unmatched_asset_movements, movement_ids_to_ignore = [], []
     assets_in_collection_cache: dict[str, tuple[Asset, ...]] = {}
     with events_db.db.conn.read_ctx() as cursor:
         blockchain_accounts = events_db.db.get_blockchain_accounts(cursor=cursor)
         for asset_movement in asset_movements:
+            log.debug('MATCH_DEBUG: processing movement')
             if _should_auto_ignore_movement(asset_movement=asset_movement):
                 movement_ids_to_ignore.append(asset_movement.identifier)
                 continue
@@ -394,6 +398,7 @@ def match_asset_movements(database: 'DBHandler') -> None:
                 )
                 assets_in_collection_cache[asset_identifier] = assets_in_collection
 
+            log.debug('MATCH_DEBUG: checked auto ignore and loaded assets_in_collection')
             if len(matched_events := find_asset_movement_matches(
                 events_db=events_db,
                 asset_movement=asset_movement,
@@ -405,12 +410,14 @@ def match_asset_movements(database: 'DBHandler') -> None:
                 blockchain_accounts=blockchain_accounts,
                 tolerance=settings.asset_movement_amount_tolerance,
             )) == 1:
+                log.debug('MATCH_DEBUG: found a match')
                 success, error_msg = update_asset_movement_matched_event(
                     events_db=events_db,
                     asset_movement=asset_movement,
                     matched_event=matched_events[0],
                     is_deposit=is_deposit,
                 )
+                log.debug('MATCH_DEBUG: updated events')
                 if success:
                     continue
 
@@ -421,6 +428,7 @@ def match_asset_movements(database: 'DBHandler') -> None:
 
             unmatched_asset_movements.append(asset_movement)
 
+    log.debug('MATCH_DEBUG: ready to mark ignored movements')
     if len(movement_ids_to_ignore) > 0:
         with events_db.db.conn.write_ctx() as write_cursor:
             write_cursor.executemany(
@@ -430,6 +438,7 @@ def match_asset_movements(database: 'DBHandler') -> None:
                     ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE,
                 ) for x in movement_ids_to_ignore],
             )
+    log.debug('MATCH_DEBUG: done marking ignored movements')
 
     if (unmatched_count := len(unmatched_asset_movements)) > 0:
         log.warning(f'Failed to match {unmatched_count} asset movements')
@@ -447,6 +456,7 @@ def get_unmatched_asset_movements(
     """
     asset_movements: list[AssetMovement] = []
     fee_events: dict[str, AssetMovement] = {}
+    log.debug('MATCH_DEBUG: ready to load unmatched movements')
     with database.conn.read_ctx() as cursor:
         for entry in cursor.execute(
                 f'SELECT {HISTORY_BASE_ENTRY_FIELDS}, {CHAIN_EVENT_FIELDS} FROM history_events '
@@ -465,6 +475,7 @@ def get_unmatched_asset_movements(
             else:
                 asset_movements.append(asset_movement)
 
+    log.debug('MATCH_DEBUG: done loading unmatched movements')
     return asset_movements, fee_events
 
 
@@ -479,6 +490,7 @@ def _maybe_adjust_fee(
     the amounts are off in the wrong direction where more is received than was sent (can only
     happen in a manual match).
     """
+    log.debug('MATCH_DEBUG: maybe adjusting fee')
     if asset_movement.amount == matched_event.amount or (
         asset_movement.amount > matched_event.amount and is_deposit
     ) or (
@@ -501,6 +513,8 @@ def _maybe_adjust_fee(
             ),
         )
 
+    log.debug('MATCH_DEBUG: loaded existing fees')
+
     amount_diff = abs(asset_movement.amount - matched_event.amount)
     movement_fee = None
     for fee_event in fee_events:
@@ -517,6 +531,7 @@ def _maybe_adjust_fee(
     # Create or edit the movement's fee event
     with events_db.db.conn.write_ctx() as write_cursor:
         if movement_fee is None:
+            log.debug('MATCH_DEBUG: creating fee')
             events_db.add_history_event(
                 write_cursor=write_cursor,
                 event=AssetMovement(
@@ -533,11 +548,14 @@ def _maybe_adjust_fee(
             )
         else:
             movement_fee.amount += amount_diff
+            log.debug('MATCH_DEBUG: editing fee')
             events_db.edit_history_event(
                 write_cursor=write_cursor,
                 event=movement_fee,
                 mapping_state=HistoryMappingState.AUTO_MATCHED,
             )
+
+    log.debug('MATCH_DEBUG: done creating/editing fee')
 
 
 def update_asset_movement_matched_event(
@@ -550,6 +568,7 @@ def update_asset_movement_matched_event(
     event identifiers. Returns a tuple containing a boolean indicating success and a string
     containing any error message.
     """
+    log.debug('MATCH_DEBUG: begin update_asset_movement_matched_event')
     should_edit_notes = True
     if isinstance(matched_event, OnchainEvent):
         # This could also be a plain history event (i.e. a btc event, or custom event)
@@ -597,17 +616,20 @@ def update_asset_movement_matched_event(
 
     # Save the event and cache the matched identifiers
     with events_db.db.conn.write_ctx() as write_cursor:
+        log.debug('MATCH_DEBUG: ready to edit matched event')
         events_db.edit_history_event(
             write_cursor=write_cursor,
             event=matched_event,
             mapping_state=HistoryMappingState.AUTO_MATCHED,
         )
+        log.debug('MATCH_DEBUG: done editing matched event')
         events_db.db.set_dynamic_cache(  # type: ignore[call-overload]  # identifiers will not be None here since the events are from the db
             write_cursor=write_cursor,
             name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
             value=matched_event.identifier,
             identifier=asset_movement.identifier,
         )
+        log.debug('MATCH_DEBUG: done caching match ids')
 
     return True, ''
 
@@ -685,6 +707,7 @@ def find_asset_movement_matches(
     """Find events that closely match what the corresponding event for the given asset movement
     should look like. Returns a list of events that match.
     """
+    log.debug('MATCH_DEBUG: begin find_asset_movement_matches')
     asset_movement_timestamp = ts_ms_to_sec(asset_movement.timestamp)
     if is_deposit:
         from_ts = asset_movement_timestamp - match_window
@@ -701,6 +724,7 @@ def find_asset_movement_matches(
     if tolerance is None:
         tolerance = CachedSettings().get_settings().asset_movement_amount_tolerance
 
+    log.debug('MATCH_DEBUG: ready to load possible matches')
     possible_matches = events_db.get_history_events_internal(
         cursor=cursor,
         filter_query=HistoryEventFilterQuery.make(
@@ -713,6 +737,7 @@ def find_asset_movement_matches(
             ),
         ),
     )
+    log.debug(f'MATCH_DEBUG: loaded {len(possible_matches)} possible matches')
     if blockchain_accounts is None:
         blockchain_accounts = events_db.db.get_blockchain_accounts(cursor=cursor)
 
@@ -759,6 +784,7 @@ def find_asset_movement_matches(
 
     if len(close_matches) == 0:
         log.debug(f'No close matches found for asset movement {asset_movement.group_identifier}')
+        log.debug('MATCH_DEBUG: done finding matches')
         return close_matches
 
     if len(close_matches) > 1:  # Multiple close matches. Check various other heuristics.
@@ -782,6 +808,7 @@ def find_asset_movement_matches(
 
         for match_list in (tx_ref_matches, asset_matches, counterparty_matches):
             if len(match_list) == 1:
+                log.debug('MATCH_DEBUG: done finding matches')
                 return match_list
 
         log.debug(
@@ -789,4 +816,5 @@ def find_asset_movement_matches(
             f'asset movement {asset_movement.group_identifier}.',
         )
 
+    log.debug('MATCH_DEBUG: done finding matches')
     return close_matches
