@@ -53,6 +53,7 @@ class HistoryEventType(SerializableEnumNameMixin):
     MULTI_TRADE = auto()
     MARGIN = auto()
     TRANSACTION_TO_SELF = auto()
+    EXCHANGE_ADJUSTMENT = auto()
 
 
 class HistoryEventSubType(SerializableEnumNameMixin):

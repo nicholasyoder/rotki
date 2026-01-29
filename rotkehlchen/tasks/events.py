@@ -28,6 +28,7 @@ from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.base import (
     HistoryBaseEntry,
     HistoryBaseEntryType,
+    HistoryEvent,
     get_event_direction,
 )
 from rotkehlchen.history.events.structures.onchain_event import OnchainEvent
@@ -403,7 +404,7 @@ def match_asset_movements(database: 'DBHandler') -> None:
                 events_db=events_db,
                 asset_movement=asset_movement,
                 is_deposit=(is_deposit := asset_movement.event_type == HistoryEventType.DEPOSIT),
-                fee_event=fee_events.get(asset_movement.group_identifier),
+                fee_event=(fee_event := fee_events.get(asset_movement.group_identifier)),
                 match_window=settings.asset_movement_time_range,
                 cursor=cursor,
                 assets_in_collection=assets_in_collection,
@@ -414,6 +415,7 @@ def match_asset_movements(database: 'DBHandler') -> None:
                 success, error_msg = update_asset_movement_matched_event(
                     events_db=events_db,
                     asset_movement=asset_movement,
+                    fee_event=fee_event,
                     matched_event=matched_events[0],
                     is_deposit=is_deposit,
                 )
@@ -479,88 +481,115 @@ def get_unmatched_asset_movements(
     return asset_movements, fee_events
 
 
-def _maybe_adjust_fee(
+def _maybe_add_adjustment_event(
         events_db: DBHistoryEvents,
         asset_movement: AssetMovement,
+        fee_event: AssetMovement | None,
         matched_event: HistoryBaseEntry,
         is_deposit: bool,
 ) -> None:
-    """Add/edit the fee to cover the difference between the amounts of the movement and its match.
-    Takes no action if the amounts match, if existing fees already cover the difference, or if
-    the amounts are off in the wrong direction where more is received than was sent (can only
-    happen in a manual match).
+    """Add an event to cover the difference between the amounts of the movement and its match.
+    Takes no action if the amounts match or if existing events already cover the difference.
     """
-    log.debug('MATCH_DEBUG: maybe adjusting fee')
-    if asset_movement.amount == matched_event.amount or (
-        asset_movement.amount > matched_event.amount and is_deposit
-    ) or (
-        asset_movement.amount < matched_event.amount and not is_deposit
-    ):
-        return  # Don't add a fee if the amount is the same or is off in the wrong direction
+    log.debug('MATCH_DEBUG: begin _maybe_add_adjustment_event')
+    # Include the fee amount only for deposits since for withdrawals the matched event happens
+    # after the fee has already been deducted.
+    movement_amount_with_fee = asset_movement.amount - fee_event.amount if (
+        is_deposit and
+        fee_event is not None and
+        fee_event.asset == asset_movement.asset
+    ) else asset_movement.amount
+    if matched_event.amount in (movement_amount_with_fee, asset_movement.amount):
+        return  # Don't add an adjustment if the amount is an exact match
 
-    # Get any existing fees
+    # Get any existing events
     with events_db.db.conn.read_ctx() as cursor:
-        fee_events = events_db.get_history_events_internal(
-            cursor=cursor,
-            filter_query=HistoryEventFilterQuery.make(
-                entry_types=IncludeExcludeFilterData([HistoryBaseEntryType.ASSET_MOVEMENT_EVENT]),
-                group_identifiers=[
-                    asset_movement.group_identifier,
-                    matched_event.group_identifier,  # include the matched event since it may also be an asset movement.  # noqa: E501
-                ],
-                assets=(asset_movement.asset,),
-                event_subtypes=[HistoryEventSubType.FEE],
+        amount_diff = abs(movement_amount_with_fee - matched_event.amount)
+        has_correct_adjustment_event, events_to_delete = False, []
+        for adjustment_id, adjustment_amount in cursor.execute(
+            'SELECT identifier, amount FROM history_events WHERE entry_type=? '
+            'AND group_identifier IN (?,?) AND asset=? AND type=? AND subtype IN (?,?)',
+            (
+                HistoryBaseEntryType.HISTORY_EVENT.serialize_for_db(),
+                asset_movement.group_identifier,
+                matched_event.group_identifier,  # include the matched event since it may also be an asset movement.  # noqa: E501
+                asset_movement.asset.identifier,
+                HistoryEventType.EXCHANGE_ADJUSTMENT.serialize(),
+                HistoryEventSubType.SPEND.serialize(),
+                HistoryEventSubType.RECEIVE.serialize(),
             ),
+        ):
+            if adjustment_amount == str(amount_diff) and has_correct_adjustment_event is False:
+                # An existing adjustment already covers the amount difference. May happen
+                # when a user manually unlinks a match but then re-matches them, or when
+                # processing the second movement when matching a movement with another movement.
+                has_correct_adjustment_event = True
+                continue
+
+            events_to_delete.append(adjustment_id)
+
+    log.debug('MATCH_DEBUG: processed existing adjustments')
+    with events_db.db.conn.write_ctx() as write_cursor:
+        # Remove any existing uncustomized adjustment events present for this match pair (if this
+        # movement was matched before but then unlinked it may have an existing adjustment event).
+        if len(events_to_delete) > 0:
+            events_db.delete_events_and_track(
+                write_cursor=write_cursor,
+                where_clause=(
+                    f'WHERE identifier IN ({",".join("?" for _ in events_to_delete)}) '
+                    'AND identifier NOT IN (SELECT parent_identifier FROM history_events_mappings '
+                    'WHERE name=? AND value=?)'
+                ),
+                where_bindings=(
+                    *events_to_delete,
+                    HISTORY_MAPPING_KEY_STATE,
+                    HistoryMappingState.CUSTOMIZED.serialize_for_db(),
+                ),
+            )
+
+        if has_correct_adjustment_event:
+            return  # An existing adjustment already covers the amount difference.
+
+    # Get the next open sequence index for the adjustment event
+    with events_db.db.conn.read_ctx() as cursor:
+        next_sequence_index = cursor.execute(
+            'SELECT MAX(sequence_index) FROM history_events WHERE group_identifier = ?',
+            (asset_movement.group_identifier,),
+        ).fetchone()[0] + 1
+
+    # Create the movement's adjustment event
+    log.debug('MATCH_DEBUG: creating adjustment')
+    with events_db.db.conn.write_ctx() as write_cursor:
+        events_db.add_history_event(
+            write_cursor=write_cursor,
+            event=HistoryEvent(
+                group_identifier=asset_movement.group_identifier,
+                sequence_index=next_sequence_index,
+                timestamp=asset_movement.timestamp,
+                location=asset_movement.location,
+                event_type=HistoryEventType.EXCHANGE_ADJUSTMENT,
+                event_subtype=HistoryEventSubType.SPEND if (
+                    (is_deposit and movement_amount_with_fee > matched_event.amount) or
+                    (not is_deposit and movement_amount_with_fee < matched_event.amount)
+                ) else HistoryEventSubType.RECEIVE,
+                asset=asset_movement.asset,
+                amount=amount_diff,
+                location_label=asset_movement.location_label,
+                notes=(
+                    f'Adjustment of {amount_diff} {asset_movement.asset.resolve_to_asset_with_symbol().symbol} '  # noqa: E501
+                    f'to account for the difference between exchange and onchain amounts.'
+                ),
+            ),
+            mapping_values={HISTORY_MAPPING_KEY_STATE: HistoryMappingState.AUTO_MATCHED},
         )
 
-    log.debug('MATCH_DEBUG: loaded existing fees')
-
-    amount_diff = abs(asset_movement.amount - matched_event.amount)
-    movement_fee = None
-    for fee_event in fee_events:
-        if fee_event.amount == amount_diff:
-            return  # An existing fee already covers the amount difference. May happen in several
-            # cases: A deposit where the fee is taken from the onchain amount, when a user manually
-            # unlinks a match but then re-matches them, or when processing the second movement
-            # when matching an asset movement with another asset movement.
-
-        if fee_event.group_identifier == asset_movement.group_identifier:
-            movement_fee = fee_event  # There can only be one fee per movement
-            # Don't break since there may also be a fee present from the matched event.
-
-    # Create or edit the movement's fee event
-    with events_db.db.conn.write_ctx() as write_cursor:
-        if movement_fee is None:
-            log.debug('MATCH_DEBUG: creating fee')
-            events_db.add_history_event(
-                write_cursor=write_cursor,
-                event=AssetMovement(
-                    timestamp=asset_movement.timestamp,
-                    location=asset_movement.location,
-                    event_type=asset_movement.event_type,  # type: ignore[arg-type]  # asset movement will have type of either deposit or withdraw
-                    asset=asset_movement.asset,
-                    amount=amount_diff,
-                    group_identifier=asset_movement.group_identifier,
-                    is_fee=True,
-                    location_label=asset_movement.location_label,
-                ),
-                mapping_values={HISTORY_MAPPING_KEY_STATE: HistoryMappingState.AUTO_MATCHED},
-            )
-        else:
-            movement_fee.amount += amount_diff
-            log.debug('MATCH_DEBUG: editing fee')
-            events_db.edit_history_event(
-                write_cursor=write_cursor,
-                event=movement_fee,
-                mapping_state=HistoryMappingState.AUTO_MATCHED,
-            )
-
-    log.debug('MATCH_DEBUG: done creating/editing fee')
+    log.debug('MATCH_DEBUG: done creating adjustment')
 
 
 def update_asset_movement_matched_event(
         events_db: DBHistoryEvents,
         asset_movement: AssetMovement,
+        fee_event: AssetMovement | None,
         matched_event: HistoryBaseEntry,
         is_deposit: bool,
 ) -> tuple[bool, str]:
@@ -607,9 +636,10 @@ def update_asset_movement_matched_event(
         'exchange_name': asset_movement.location_label,
     }
 
-    _maybe_adjust_fee(
+    _maybe_add_adjustment_event(
         events_db=events_db,
         asset_movement=asset_movement,
+        fee_event=fee_event,
         matched_event=matched_event,
         is_deposit=is_deposit,
     )
@@ -679,16 +709,10 @@ def _match_amount(
         movement_amount: FVal,
         event_amount: FVal,
         tolerance: FVal,
-        is_deposit: bool,
 ) -> bool:
-    """Check for matching amounts with the given tolerance as long as there
-    was not more received than was sent (as determined by is_deposit).
-    """
-    return movement_amount == event_amount or (
-        (
-            (movement_amount < event_amount and is_deposit) or
-            (movement_amount > event_amount and not is_deposit)
-        ) and
+    """Check for matching amounts with the given tolerance."""
+    return (
+        movement_amount == event_amount or
         abs(movement_amount - event_amount) <= movement_amount * tolerance
     )
 
@@ -764,14 +788,12 @@ def find_asset_movement_matches(
             movement_amount=asset_movement.amount,
             event_amount=event.amount,
             tolerance=tolerance,
-            is_deposit=is_deposit,
         ) or (
             amount_with_fee is not None and
             _match_amount(
                 movement_amount=amount_with_fee,
                 event_amount=event.amount,
                 tolerance=tolerance,
-                is_deposit=True,
             )
         )):
             log.debug(
@@ -783,7 +805,11 @@ def find_asset_movement_matches(
         close_matches.append(event)
 
     if len(close_matches) == 0:
-        log.debug(f'No close matches found for asset movement {asset_movement.group_identifier}')
+        log.debug(
+            f'No close matches found for asset movement {asset_movement.group_identifier} '
+            f'({asset_movement.event_type.name} {asset_movement.amount} {asset_movement.asset} '
+            f'from/to {asset_movement.location})',
+        )
         log.debug('MATCH_DEBUG: done finding matches')
         return close_matches
 

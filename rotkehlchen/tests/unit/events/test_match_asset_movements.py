@@ -17,6 +17,7 @@ from rotkehlchen.history.events.structures.asset_movement import (
     AssetMovement,
     AssetMovementExtraData,
 )
+from rotkehlchen.history.events.structures.base import HistoryEvent
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.onchain_event import OnchainEvent
 from rotkehlchen.history.events.structures.solana_event import SolanaEvent
@@ -227,7 +228,10 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
             ]),
         )
 
-    asset_movements = [event for event in all_events if isinstance(event, AssetMovement)]
+    asset_movements = [
+        event for event in all_events
+        if isinstance(event, (AssetMovement, HistoryEvent))
+    ]  # include plain history events so the adjustments are included.
     events = [event for event in all_events if isinstance(event, OnchainEvent)]
 
     assert len(events) == 8
@@ -260,10 +264,10 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
     assert deposit3_matched_event.notes == f'Withdraw 100 USDC from {deposit3_user_address} to Bybit 1'  # noqa: E501
     assert deposit3_matched_event.counterparty == Location.BYBIT.name.lower()
 
-    # Last two events should be withdrawal4's matched event and a new fee event to cover the
+    # Last two events should be withdrawal4's matched event and a new adjustment event to cover the
     # difference between withdrawal4 and its matched event. Note that since the matched event is
-    # also an asset movement in this case, the fee is actually added to the matched event since
-    # it gets processed first.
+    # also an asset movement in this case, the adjustment is actually added to the group of the
+    # matched event since it gets processed first.
     withdrawal4_matched_event.identifier = asset_movements[-2].identifier
     withdrawal4_matched_event.extra_data = AssetMovementExtraData(matched_asset_movement={
         'group_identifier': withdrawal4.group_identifier,
@@ -271,10 +275,10 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
         'exchange_name': 'Bitstamp 1',
     })
     assert asset_movements[-2] == withdrawal4_matched_event
-    assert (withdrawal4_new_fee := asset_movements[-1]).event_type == HistoryEventType.DEPOSIT
-    assert withdrawal4_new_fee.event_subtype == HistoryEventSubType.FEE
-    assert withdrawal4_new_fee.group_identifier == withdrawal4_matched_event.group_identifier
-    assert withdrawal4_new_fee.amount == withdrawal4.amount - withdrawal4_matched_event.amount
+    assert (withdrawal4_adjustment := asset_movements[-1]).event_type == HistoryEventType.EXCHANGE_ADJUSTMENT  # noqa: E501
+    assert withdrawal4_adjustment.event_subtype == HistoryEventSubType.RECEIVE
+    assert withdrawal4_adjustment.group_identifier == withdrawal4_matched_event.group_identifier
+    assert withdrawal4_adjustment.amount == withdrawal4.amount - withdrawal4_matched_event.amount
 
     # Check that matches have been cached and that the cached identifiers
     # refer to the correct asset movements (ordered by timestamp descending)
@@ -405,7 +409,7 @@ def test_match_asset_movements_settings(database: 'DBHandler') -> None:
                 identifier=movement_id,
             ) == expected_value
 
-    # Verify the fee event was created properly
+    # Verify the adjustment event was created properly
     with database.conn.read_ctx() as cursor:
         all_events = events_db.get_history_events_internal(
             cursor=cursor,
@@ -415,7 +419,8 @@ def test_match_asset_movements_settings(database: 'DBHandler') -> None:
     assert len(all_events) == 3
     assert all_events[0].group_identifier == movement_event.group_identifier
     assert all_events[1].group_identifier == movement_event.group_identifier
-    assert all_events[1].event_subtype == HistoryEventSubType.FEE
+    assert all_events[1].event_type == HistoryEventType.EXCHANGE_ADJUSTMENT
+    assert all_events[1].event_subtype == HistoryEventSubType.RECEIVE
     assert all_events[1].amount == movement_event.amount - matched_event.amount
     assert all_events[2].group_identifier == matched_event.group_identifier
 
@@ -559,3 +564,70 @@ def test_timestamp_tolerance(database: 'DBHandler') -> None:
             'SELECT * FROM key_value_cache WHERE name LIKE ?',
             ('matched_asset_movement_%',),
         ).fetchall() == [(f'matched_asset_movement_{movement_id}', str(match_id))]
+
+
+def test_adjustments(database: 'DBHandler') -> None:
+    """Test that we properly create adjustment events during matching if amounts differ."""
+    events_db = DBHistoryEvents(database)
+
+    events_to_add = []
+    for idx, (asset, movement_type, movement_amount, match_amount) in enumerate([
+        (A_ETH, HistoryEventType.DEPOSIT, 5.49, 5.5),
+        (A_BTC, HistoryEventType.DEPOSIT, 5.5, 5.49),
+        (A_USDC, HistoryEventType.WITHDRAWAL, 5.49, 5.5),
+        (A_WSOL, HistoryEventType.WITHDRAWAL, 5.5, 5.49),
+    ]):
+        events_to_add.extend([(movement_event := AssetMovement(
+            location=Location.KRAKEN,
+            event_type=movement_type,  # type: ignore[arg-type]  # will be deposit or withdrawal
+            timestamp=TimestampMS(1600000000000 + idx),
+            asset=asset,
+            amount=FVal(movement_amount),
+            location_label='kraken',
+        )), HistoryEvent(  # Existing adjustment event should be replaced
+            group_identifier=movement_event.group_identifier,
+            sequence_index=1,
+            timestamp=movement_event.timestamp,
+            location=movement_event.location,
+            event_type=HistoryEventType.EXCHANGE_ADJUSTMENT,
+            event_subtype=HistoryEventSubType.SPEND,
+            asset=movement_event.asset,
+            amount=FVal('0.1234'),
+        ), EvmEvent(
+            tx_ref=make_evm_tx_hash(),
+            sequence_index=1,
+            timestamp=movement_event.timestamp,
+            location=Location.OPTIMISM,
+            event_type=(
+                HistoryEventType.SPEND if movement_type == HistoryEventType.DEPOSIT
+                else HistoryEventType.RECEIVE
+            ),
+            event_subtype=HistoryEventSubType.NONE,
+            asset=asset,
+            amount=FVal(match_amount),
+        )])
+
+    with database.conn.write_ctx() as write_cursor:
+        events_db.add_history_events(
+            write_cursor=write_cursor,
+            history=events_to_add,
+        )
+
+    # Run matching and check that the adjustment events were created with proper subtypes
+    match_asset_movements(database=database)
+    with database.conn.read_ctx() as cursor:
+        for asset, expected_adjustment_subtype in (
+            (A_ETH, HistoryEventSubType.RECEIVE),
+            (A_BTC, HistoryEventSubType.SPEND),
+            (A_USDC, HistoryEventSubType.SPEND),
+            (A_WSOL, HistoryEventSubType.RECEIVE),
+        ):
+            assert len(events := events_db.get_history_events_internal(
+                cursor=cursor,
+                filter_query=HistoryEventFilterQuery.make(
+                    assets=(asset,),
+                    event_types=[HistoryEventType.EXCHANGE_ADJUSTMENT],
+                ),
+            )) == 1
+            assert events[0].event_subtype == expected_adjustment_subtype
+            assert events[0].amount == FVal('0.01')
