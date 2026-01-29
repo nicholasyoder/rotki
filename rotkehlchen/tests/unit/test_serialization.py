@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock
+
 import pytest
 from marshmallow.exceptions import ValidationError
 
@@ -170,3 +172,35 @@ def test_history_events_deletion_schema_field_coverage() -> None:
     schema = HistoryEventsDeletionSchema()
     all_fields = set(schema.fields.keys())
     assert all_fields - known_filter_fields - schema._NON_FILTER_FIELDS == set()
+
+
+def test_deserialize_evm_transaction_empty_gas_price():
+    """Test that transactions with empty gasPrice fall back to effectiveGasPrice from receipt."""
+    mock_indexer = MagicMock()
+    mock_indexer.get_transaction_receipt.return_value = {
+        'effectiveGasPrice': (expected_gas_price := '0x1234'),
+        'gasUsed': '0x5208',
+    }
+
+    tx, _ = deserialize_evm_transaction(
+        data={
+            'timeStamp': 1688269337,
+            'blockNumber': 739995,
+            'hash': '0x847267ff6d61f991df9c2bbfa8d0cf20f97386bb2fba2e2bb6136d9fc471b547',
+            'from': '0x5153493bB1E1642A63A098A65dD3913daBB6AE24',
+            'to': '0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BAe',
+            'value': 0,
+            'gas': 21000,
+            'gasPrice': '',
+            'gasUsed': 21000,
+            'input': '0x',
+            'nonce': 0,
+        },
+        internal=False,
+        chain_id=ChainID.ETHEREUM,
+        evm_inquirer=None,
+        indexer=mock_indexer,
+    )
+
+    assert tx.gas_price == int(expected_gas_price, 16)
+    assert tx.gas_used == 21000

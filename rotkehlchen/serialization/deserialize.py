@@ -649,23 +649,41 @@ def deserialize_evm_transaction(
             ), None
 
         # else normal transaction
-        gas_price = read_integer(data=data, key='gasPrice', api=source)
+        try:
+            gas_price = read_integer(data=data, key='gasPrice', api=source)
+        except (DeserializationError, KeyError):
+            gas_price = None
+
         input_data = read_hash(data, 'input', source)
-        if 'gasUsed' not in data:  # some etherscan APIs may have this
-            if evm_inquirer is None:
-                raise DeserializationError('Got in deserialize evm transaction without gasUsed and without evm inquirer')  # noqa: E501
-            raw_receipt_data = _get_transaction_receipt(
-                tx_hash=tx_hash,
-                chain_id=chain_id,
-                timestamp=timestamp,
-                evm_inquirer=evm_inquirer,
-            )
-            gas_used = read_integer(raw_receipt_data, 'gasUsed', source)
-            if chain_id == ChainID.ARBITRUM_ONE:
-                # In Arbitrum One the gas price included in the data is the "Gas Price Bid" and not
-                # the "Gas Price Paid". The latter is the actual gas price paid for the transaction
-                # and is included in the transaction receipt as the effectiveGasPrice.
-                gas_price = read_integer(raw_receipt_data, 'effectiveGasPrice', source)
+        if 'gasUsed' not in data or gas_price is None:  # some etherscan APIs may have this
+            if raw_receipt_data is None:
+                if evm_inquirer is not None:
+                    raw_receipt_data = _get_transaction_receipt(
+                        tx_hash=tx_hash,
+                        chain_id=chain_id,
+                        timestamp=timestamp,
+                        evm_inquirer=evm_inquirer,
+                    )
+                elif indexer is not None:
+                    raw_receipt_data = indexer.get_transaction_receipt(
+                        chain_id=chain_id,  # type: ignore[arg-type]  # chain is supported
+                        tx_hash=tx_hash,
+                    )
+                else:
+                    raise DeserializationError(
+                        f'Transaction {data.get("hash", "unknown")} missing gasUsed/gasPrice '
+                        f'and no evm_inquirer or indexer available',
+                    )
+
+            # In Arbitrum One the gas price included in the data is the "Gas Price Bid" and not
+            # the "Gas Price Paid". The latter is the actual gas price paid for the transaction
+            # and is included in the transaction receipt as the effectiveGasPrice.
+            # Also, we've seen cases where gasPrice has no valid value.
+            if gas_price is None or chain_id == ChainID.ARBITRUM_ONE:
+                gas_price = read_integer(raw_receipt_data, 'effectiveGasPrice', source)  # type: ignore[arg-type]  # receipt will be present.
+
+        if 'gasUsed' not in data:
+            gas_used = read_integer(raw_receipt_data, 'gasUsed', source)  # type: ignore[arg-type]  # receipt will be present.
         else:
             gas_used = read_integer(data, 'gasUsed', source)
         nonce = read_integer(data, 'nonce', source)

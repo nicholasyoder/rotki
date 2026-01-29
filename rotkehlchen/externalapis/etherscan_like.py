@@ -585,7 +585,11 @@ class EtherscanLikeApi(ABC):
                                 (GENESIS_HASH, chain_id.serialize_for_db(), TX_DECODED),
                             )
                 except DeserializationError as e:
-                    self.msg_aggregator.add_warning(f'{e!s}. Skipping transaction')
+                    tx_hash = (
+                        parent_tx_hash if parent_tx_hash is not None
+                        else entry.get('hash') or entry.get('transactionHash')
+                    )
+                    self.msg_aggregator.add_warning(f'{e!s}. Skipping transaction {tx_hash} on {chain_id.to_name()} for {account}')  # noqa: E501
                     continue
 
                 timestamp = deserialize_timestamp(entry['timeStamp'])
