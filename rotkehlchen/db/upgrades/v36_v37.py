@@ -7,7 +7,7 @@ from rotkehlchen.constants import ZERO
 from rotkehlchen.constants.assets import A_ETH2
 from rotkehlchen.db.constants import (
     HISTORY_MAPPING_KEY_STATE,
-    HISTORY_MAPPING_STATE_CUSTOMIZED,
+    HistoryMappingState,
 )
 from rotkehlchen.db.utils import update_table_schema
 from rotkehlchen.fval import FVal
@@ -34,7 +34,7 @@ def _reset_decoded_events(write_cursor: 'DBCursor') -> None:
     tx_hashes = [x[0] for x in write_cursor]
     write_cursor.execute(
         'SELECT parent_identifier FROM history_events_mappings WHERE name=? AND value=?',
-        (HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED),
+        (HISTORY_MAPPING_KEY_STATE, HistoryMappingState.CUSTOMIZED),
     )
     customized_event_ids = [x[0] for x in write_cursor]
     length = len(customized_event_ids)

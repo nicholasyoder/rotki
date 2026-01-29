@@ -22,9 +22,8 @@ from rotkehlchen.db.constants import (
     ETH_STAKING_EVENT_FIELDS,
     HISTORY_BASE_ENTRY_FIELDS,
     HISTORY_MAPPING_KEY_STATE,
-    HISTORY_MAPPING_STATE_CUSTOMIZED,
-    HISTORY_MAPPING_STATE_VIRTUAL,
     TX_DECODED,
+    HistoryMappingState,
 )
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
@@ -724,7 +723,7 @@ class HistoryEventCustomizedOnlyJoinsFilter(DBFilter):
             'ON history_events_mappings.parent_identifier = history_events_identifier '
             'WHERE history_events_mappings.name = ? AND history_events_mappings.value = ?'
         )
-        bindings: list[str | int] = [HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED]
+        bindings: list[str | int] = [HISTORY_MAPPING_KEY_STATE, HistoryMappingState.CUSTOMIZED]
         return [query], bindings
 
 
@@ -737,8 +736,7 @@ class HistoryEventVirtualOnlyJoinsFilter(DBFilter):
             'ON history_events_mappings.parent_identifier = history_events_identifier '
             'WHERE history_events_mappings.name = ? AND history_events_mappings.value = ?'
         )
-        bindings: list[str | int] = [HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_VIRTUAL]
-        return [query], bindings
+        return [query], [HISTORY_MAPPING_KEY_STATE, HistoryMappingState.PROFIT_ADJUSTMENT]
 
 
 class HistoryBaseEntryFilterQuery(DBFilterQuery, FilterWithTimestamp, FilterWithLocation, ABC):

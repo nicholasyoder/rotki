@@ -5,7 +5,7 @@ import requests
 
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.constants.misc import ONE
-from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED
+from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HistoryMappingState
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.evm_swap import EvmSwapEvent
@@ -52,7 +52,7 @@ def duplicated_events_setup(
         events_db.add_history_event(
             write_cursor=write_cursor,
             event=customized_event,
-            mapping_values={HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_CUSTOMIZED},
+            mapping_values={HISTORY_MAPPING_KEY_STATE: HistoryMappingState.CUSTOMIZED},
         )
         assert event_id is not None
         auto_fix_events.append(event)
@@ -82,7 +82,7 @@ def duplicated_events_setup(
         events_db.add_history_event(
             write_cursor=write_cursor,
             event=manual_review_customized,
-            mapping_values={HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_CUSTOMIZED},
+            mapping_values={HISTORY_MAPPING_KEY_STATE: HistoryMappingState.CUSTOMIZED},
         )
 
     return auto_fix_events, auto_fix_event_ids, manual_review_event

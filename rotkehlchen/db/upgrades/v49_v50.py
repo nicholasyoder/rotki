@@ -1,7 +1,7 @@
 import logging
 from typing import TYPE_CHECKING
 
-from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED
+from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HistoryMappingState
 from rotkehlchen.logging import RotkehlchenLogsAdapter, enter_exit_debug_log
 from rotkehlchen.utils.progress import perform_userdb_upgrade_steps, progress_step
 
@@ -27,7 +27,7 @@ def upgrade_v49_to_v50(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
         if write_cursor.execute('SELECT COUNT(*) FROM evm_transactions').fetchone()[0] > 0:
             customized_events = write_cursor.execute(
                 'SELECT COUNT(*) FROM history_events_mappings WHERE name=? AND value=?',
-                (HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED),
+                (HISTORY_MAPPING_KEY_STATE, HistoryMappingState.CUSTOMIZED),
             ).fetchone()[0]
             querystr = (
                 "DELETE FROM history_events WHERE identifier IN ("
@@ -38,7 +38,7 @@ def upgrade_v49_to_v50(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
             bindings: tuple = ()
             if customized_events != 0:
                 querystr += ' AND identifier NOT IN (SELECT parent_identifier FROM history_events_mappings WHERE name=? AND value=?)'  # noqa: E501
-                bindings = (HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED)
+                bindings = (HISTORY_MAPPING_KEY_STATE, HistoryMappingState.CUSTOMIZED)
 
             write_cursor.execute(querystr, bindings)
             write_cursor.execute(
@@ -53,7 +53,7 @@ def upgrade_v49_to_v50(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
             "UPDATE history_events SET location_label='Crypto.com App' WHERE "
             "location='P' AND location_label IS NULL AND identifier NOT IN "
             "(SELECT parent_identifier FROM history_events_mappings WHERE name=? AND value=?)",
-            (HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED),
+            (HISTORY_MAPPING_KEY_STATE, HistoryMappingState.CUSTOMIZED),
         )
 
     @progress_step(description='Update accounting_rules table with is_event_specific column and constraint.')  # noqa: E501

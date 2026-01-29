@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 from pysqlcipher3 import dbapi2 as sqlcipher
 
 from rotkehlchen.api.rest_helpers.history_events import edit_grouped_events_with_optional_fee
-from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED
+from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HistoryMappingState
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.errors.misc import AlreadyExists, InputError, RemoteError
 from rotkehlchen.errors.serialization import DeserializationError
@@ -39,7 +39,7 @@ class HistoryEventsService:
                         write_cursor=cursor,
                         event=event,
                         mapping_values={
-                            HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_CUSTOMIZED,
+                            HISTORY_MAPPING_KEY_STATE: HistoryMappingState.CUSTOMIZED,
                         },
                     )
                     if idx == 0:

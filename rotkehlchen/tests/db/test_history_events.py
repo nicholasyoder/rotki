@@ -13,11 +13,7 @@ from rotkehlchen.constants.assets import A_BTC, A_DAI, A_ETH, A_USDC, A_USDT, A_
 from rotkehlchen.constants.limits import FREE_HISTORY_EVENTS_LIMIT
 from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.db.cache import DBCacheStatic
-from rotkehlchen.db.constants import (
-    HISTORY_MAPPING_KEY_STATE,
-    HISTORY_MAPPING_STATE_CUSTOMIZED,
-    HISTORY_MAPPING_STATE_VIRTUAL,
-)
+from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HistoryMappingState
 from rotkehlchen.db.dbhandler import DBHandler
 from rotkehlchen.db.filtering import (
     EthDepositEventFilterQuery,
@@ -44,7 +40,7 @@ from rotkehlchen.tests.utils.factories import (
 from rotkehlchen.types import EVMTxHash, Location, Timestamp, TimestampMS, deserialize_evm_tx_hash
 
 
-def test_get_customized_group_identifiers(database):
+def test_get_event_mapping_states(database):
     db = DBHistoryEvents(database)
     with db.db.user_write() as write_cursor:
         db.add_history_event(
@@ -59,7 +55,7 @@ def test_get_customized_group_identifiers(database):
                 asset=A_ETH,
                 amount=ONE,
             ),
-            mapping_values={HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_CUSTOMIZED},
+            mapping_values={HISTORY_MAPPING_KEY_STATE: HistoryMappingState.CUSTOMIZED},
         )
         db.add_history_events(
             write_cursor=write_cursor,
@@ -97,13 +93,23 @@ def test_get_customized_group_identifiers(database):
                 asset=A_ETH,
                 amount=ONE,
             ),
-            mapping_values={HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_CUSTOMIZED},
+            mapping_values={HISTORY_MAPPING_KEY_STATE: HistoryMappingState.CUSTOMIZED},
         )
 
     with db.db.conn.read_ctx() as cursor:
-        assert db.get_customized_group_identifiers(cursor, location=None) == [1, 4]
-        assert db.get_customized_group_identifiers(cursor, location=Location.ETHEREUM) == [1]
-        assert db.get_customized_group_identifiers(cursor, location=Location.OPTIMISM) == [4]
+        assert db.get_event_mapping_states(
+            cursor=cursor,
+            location=None,
+        ) == {1: [HistoryMappingState.CUSTOMIZED], 4: [HistoryMappingState.CUSTOMIZED]}
+        assert db.get_event_mapping_states(
+            cursor=cursor,
+            location=Location.ETHEREUM,
+        ) == {1: [HistoryMappingState.CUSTOMIZED]}
+        assert db.get_event_mapping_states(
+            cursor=cursor,
+            location=Location.OPTIMISM,
+            mapping_state=HistoryMappingState.CUSTOMIZED,
+        ) == [4]
 
 
 def add_history_events_to_db(db: DBHistoryEvents, data: dict[int, tuple[str, TimestampMS, FVal, dict | None]]) -> None:  # noqa: E501
@@ -234,19 +240,19 @@ def test_read_write_customized_events_from_db(database: DBHandler, entries_limit
     db = DBHistoryEvents(database)
     history_data = {
         1: ('TEST1', TimestampMS(1000), ONE, None),
-        2: ('TEST2', TimestampMS(2000), FVal(2), {HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_CUSTOMIZED}),  # noqa: E501
-        3: ('TEST3', TimestampMS(3000), FVal(3), {HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_CUSTOMIZED}),  # noqa: E501
+        2: ('TEST2', TimestampMS(2000), FVal(2), {HISTORY_MAPPING_KEY_STATE: HistoryMappingState.CUSTOMIZED}),  # noqa: E501
+        3: ('TEST3', TimestampMS(3000), FVal(3), {HISTORY_MAPPING_KEY_STATE: HistoryMappingState.CUSTOMIZED}),  # noqa: E501
     }
 
     tx_hashes = [make_evm_tx_hash() for x in range(5)]
     evm_data = {
         4: (tx_hashes[0], TimestampMS(4), FVal(4), 'gas', '0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5', None),  # noqa: E501
         5: (tx_hashes[1], TimestampMS(5), FVal(5), 'liquity', '0x85222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5', None),  # noqa: E501
-        6: (tx_hashes[2], TimestampMS(6), FVal(6), 'aave', '0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe4', {HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_CUSTOMIZED}),  # noqa: E501
+        6: (tx_hashes[2], TimestampMS(6), FVal(6), 'aave', '0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe4', {HISTORY_MAPPING_KEY_STATE: HistoryMappingState.CUSTOMIZED}),  # noqa: E501
     }
     eth2_data = {
         7: (tx_hashes[3], TimestampMS(7), FVal(6), '0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5', None),  # noqa: E501
-        8: (tx_hashes[4], TimestampMS(8), FVal(8), '0x85222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5', {HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_CUSTOMIZED}),  # noqa: E501
+        8: (tx_hashes[4], TimestampMS(8), FVal(8), '0x85222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5', {HISTORY_MAPPING_KEY_STATE: HistoryMappingState.CUSTOMIZED}),  # noqa: E501
     }
 
     add_history_events_to_db(db, history_data)
@@ -294,7 +300,7 @@ def test_read_write_customized_events_from_db(database: DBHandler, entries_limit
 def test_read_write_virtual_events_from_db(database: DBHandler) -> None:
     add_history_events_to_db(DBHistoryEvents(database), {
         1: ('TEST1', TimestampMS(1000), ONE, None),
-        2: ('TEST2', TimestampMS(2000), FVal(2), {HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_VIRTUAL}),  # noqa: E501
+        2: ('TEST2', TimestampMS(2000), FVal(2), {HISTORY_MAPPING_KEY_STATE: HistoryMappingState.PROFIT_ADJUSTMENT}),  # noqa: E501
         3: ('TEST3', TimestampMS(3000), FVal(3), None),
     })
     with database.conn.read_ctx() as cursor:

@@ -60,7 +60,8 @@ Exchange asset movement events may now be manually matched with specific onchain
 * **Modified Endpoint**: ``POST /api/(version)/history/events``
 
   - New optional ``actual_group_identifier`` field in the response, containing the actual group identifier of the event as stored in the DB.
-  - This change preserves the actual group identifier when asset movements are combined with the group of their matched event for display as a single unit in the frontend.
+    This preserves the actual group identifier when asset movements are combined with the group of their matched event for display as a single unit in the frontend.
+  - Replaced the ``customized`` flag with a ``states`` list. Valid states are ``customized``, ``profit_adjustment``, ``auto_matched``, ``imported_from_csv``.
 
 * **New Settings** (new fields in both ``PUT`` and ``POST`` on ``/api/(version)/settings``)
   - ``asset_movement_amount_tolerance`` The tolerance value used when matching asset movement amounts with onchain events. Must be a positive decimal number. Default is ``"0.000001"``.

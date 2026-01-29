@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING
 
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.constants.misc import ONE
-from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED
+from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HistoryMappingState
 from rotkehlchen.db.drivers.gevent import DBCursor
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.history.events.structures.evm_swap import EvmSwapEvent
@@ -44,7 +44,7 @@ def _insert_duplicate_group(
     events_db.add_history_event(
         write_cursor=write_cursor,
         event=customized_event,
-        mapping_values={HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_CUSTOMIZED},
+        mapping_values={HISTORY_MAPPING_KEY_STATE: HistoryMappingState.CUSTOMIZED},
     )
     assert base_event_id is not None
     return base_event.group_identifier, base_event_id

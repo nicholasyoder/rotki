@@ -14,7 +14,7 @@ from rotkehlchen.db.constants import (
     CHAIN_EVENT_FIELDS,
     HISTORY_BASE_ENTRY_FIELDS,
     HISTORY_MAPPING_KEY_STATE,
-    HISTORY_MAPPING_STATE_CUSTOMIZED,
+    HistoryMappingState,
 )
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
@@ -182,9 +182,9 @@ def _load_customized_event_candidates(
     )
     bindings_base = (
         HISTORY_MAPPING_KEY_STATE,
-        HISTORY_MAPPING_STATE_CUSTOMIZED,
+        HistoryMappingState.CUSTOMIZED,
         HISTORY_MAPPING_KEY_STATE,
-        HISTORY_MAPPING_STATE_CUSTOMIZED,
+        HistoryMappingState.CUSTOMIZED,
         *entry_type_values,
         *entry_type_values,
     )
@@ -512,13 +512,14 @@ def _maybe_adjust_fee(
                     is_fee=True,
                     location_label=asset_movement.location_label,
                 ),
-                mapping_values={HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_CUSTOMIZED},
+                mapping_values={HISTORY_MAPPING_KEY_STATE: HistoryMappingState.AUTO_MATCHED},
             )
         else:
             movement_fee.amount += amount_diff
             events_db.edit_history_event(
                 write_cursor=write_cursor,
                 event=movement_fee,
+                mapping_state=HistoryMappingState.AUTO_MATCHED,
             )
 
 
@@ -582,6 +583,7 @@ def update_asset_movement_matched_event(
         events_db.edit_history_event(
             write_cursor=write_cursor,
             event=matched_event,
+            mapping_state=HistoryMappingState.AUTO_MATCHED,
         )
         events_db.db.set_dynamic_cache(  # type: ignore[call-overload]  # identifiers will not be None here since the events are from the db
             write_cursor=write_cursor,

@@ -7,7 +7,7 @@ from rotkehlchen.assets.asset import Asset
 from rotkehlchen.constants import ALLASSETIMAGESDIR_NAME, ASSETIMAGESDIR_NAME, IMAGESDIR_NAME
 from rotkehlchen.constants.assets import A_COW, A_GNOSIS_COW, A_LQTY
 from rotkehlchen.data_import.utils import maybe_set_transaction_extra_data
-from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED
+from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HistoryMappingState
 from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
@@ -160,7 +160,7 @@ def upgrade_v45_to_v46(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
         if write_cursor.execute('SELECT COUNT(*) FROM evm_transactions').fetchone()[0] > 0:
             customized_events = write_cursor.execute(
                 'SELECT COUNT(*) FROM history_events_mappings WHERE name=? AND value=?',
-                (HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED),
+                (HISTORY_MAPPING_KEY_STATE, HistoryMappingState.CUSTOMIZED),
             ).fetchone()[0]
             querystr = (
                 "DELETE FROM history_events WHERE identifier IN ("
@@ -171,7 +171,7 @@ def upgrade_v45_to_v46(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
             bindings: tuple = ()
             if customized_events != 0:
                 querystr += ' AND identifier NOT IN (SELECT parent_identifier FROM history_events_mappings WHERE name=? AND value=?)'  # noqa: E501
-                bindings = (HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED)
+                bindings = (HISTORY_MAPPING_KEY_STATE, HistoryMappingState.CUSTOMIZED)
 
             write_cursor.execute(querystr, bindings)
             write_cursor.execute(

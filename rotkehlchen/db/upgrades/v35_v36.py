@@ -6,7 +6,7 @@ from rotkehlchen.chain.ethereum.modules.eth2.constants import MIN_EFFECTIVE_BALA
 from rotkehlchen.constants import ONE
 from rotkehlchen.db.constants import (
     HISTORY_MAPPING_KEY_STATE,
-    HISTORY_MAPPING_STATE_CUSTOMIZED,
+    HistoryMappingState,
 )
 from rotkehlchen.db.settings import DEFAULT_ACTIVE_MODULES
 from rotkehlchen.db.utils import table_exists, update_table_schema
@@ -567,7 +567,7 @@ def upgrade_v35_to_v36(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
         tx_hashes = [x[0] for x in write_cursor]
         write_cursor.execute(
             'SELECT parent_identifier FROM history_events_mappings WHERE name=? AND value=?',
-            (HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED),
+            (HISTORY_MAPPING_KEY_STATE, HistoryMappingState.CUSTOMIZED),
         )
         customized_event_ids = [x[0] for x in write_cursor]
         length = len(customized_event_ids)
