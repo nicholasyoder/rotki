@@ -3,13 +3,15 @@ from typing import TYPE_CHECKING
 
 import requests
 
+from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.constants.misc import ONE
 from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HistoryMappingState
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.fval import FVal
+from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.evm_swap import EvmSwapEvent
-from rotkehlchen.history.events.structures.types import HistoryEventSubType
+from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.tests.utils.api import api_url_for, assert_proper_response_with_result
 from rotkehlchen.tests.utils.factories import make_evm_tx_hash
 from rotkehlchen.types import Location, TimestampMS
@@ -152,3 +154,78 @@ def test_fix_customized_event_duplicates(
     result = assert_proper_response_with_result(response, rotkehlchen_api_server, async_query)
     assert result['removed_event_identifiers'] == [auto_fix_event_ids[1]]
     assert result['auto_fix_group_ids'] == []
+
+
+def test_gas_events_duplicate_detection(rotkehlchen_api_server: 'APIServer') -> None:
+    """Test that gas events are only flagged as duplicates of other gas events.
+
+    Gas fees are always present in EVM transactions and should not be considered
+    duplicates of other event types like donate or send.
+
+    1. gas + donate (customized) -> not flagged
+    2. gas + gas (one customized) -> flagged as auto-fix
+    """
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+
+    with rotki.data.db.conn.write_ctx() as write_cursor:
+        DBHistoryEvents(rotki.data.db).add_history_events(
+            write_cursor=write_cursor,
+            history=[EvmEvent(  # gas event for tx1
+                tx_ref=(tx_hash_1 := make_evm_tx_hash()),
+                sequence_index=0,
+                timestamp=(timestamp := TimestampMS(1710000000000)),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.SPEND,
+                event_subtype=HistoryEventSubType.FEE,
+                asset=A_ETH,
+                amount=FVal('0.001'),
+                counterparty=CPT_GAS,
+            ), (donate_event := EvmEvent(  # customized donate for tx1
+                identifier=2,
+                tx_ref=tx_hash_1,
+                sequence_index=1,
+                timestamp=timestamp,
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.SPEND,
+                event_subtype=HistoryEventSubType.DONATE,
+                asset=A_ETH,
+                amount=ONE,
+            )), (gas_event := EvmEvent(  # gas event for tx2
+                tx_ref=(tx_hash_2 := make_evm_tx_hash()),
+                sequence_index=0,
+                timestamp=timestamp,
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.SPEND,
+                event_subtype=HistoryEventSubType.FEE,
+                asset=A_ETH,
+                amount=FVal('0.001'),
+                counterparty=CPT_GAS,
+            )), EvmEvent(  # customized gas event for tx2
+                identifier=4,
+                tx_ref=tx_hash_2,
+                sequence_index=1,
+                timestamp=timestamp,
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.SPEND,
+                event_subtype=HistoryEventSubType.FEE,
+                asset=A_ETH,
+                amount=FVal('0.001'),
+                counterparty=CPT_GAS,
+            )],
+        )
+        write_cursor.executemany(
+            'INSERT INTO history_events_mappings(parent_identifier, name, value) VALUES(?, ?, ?)',
+            [
+                (2, HISTORY_MAPPING_KEY_STATE, HistoryMappingState.CUSTOMIZED),
+                (4, HISTORY_MAPPING_KEY_STATE, HistoryMappingState.CUSTOMIZED),
+            ],
+        )
+
+    result = assert_proper_response_with_result(
+        requests.get(api_url_for(rotkehlchen_api_server, 'customizedeventduplicatesresource')),
+        rotkehlchen_api_server,
+        async_query=False,
+    )
+    assert donate_event.group_identifier not in result['auto_fix_group_ids']  # gas + donate
+    assert donate_event.group_identifier not in result['manual_review_group_ids']
+    assert gas_event.group_identifier in result['auto_fix_group_ids']  # gas + gas

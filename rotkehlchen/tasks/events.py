@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Final
 from rotkehlchen.api.v1.types import IncludeExcludeFilterData
 from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.chain.accounts import BlockchainAccounts
+from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
 from rotkehlchen.constants import HOUR_IN_SECONDS
 from rotkehlchen.constants.resolver import SOLANA_CHAIN_DIRECTIVE, identifier_to_evm_chain
@@ -279,13 +280,17 @@ def find_customized_event_duplicate_groups(
 
     for group_id, events in group_iter:
         # Index by signature to spot exact customized/non-customized duplicates.
+        # Also track if there's a customized gas event for manual review detection.
         signatures: dict[tuple, tuple[set[int], set[int]]] = defaultdict(
             lambda: (set(), set()),
         )
+        has_customized_gas = False
         for event in events:
             customized_ids, non_customized_ids = signatures[event.signature()]
             if event.customized:
                 customized_ids.add(event.identifier)
+                if event.counterparty == CPT_GAS:
+                    has_customized_gas = True
             else:
                 non_customized_ids.add(event.identifier)
 
@@ -300,7 +305,9 @@ def find_customized_event_duplicate_groups(
             auto_fix_group_ids.add(group_id)
             exact_duplicate_ids.update(group_exact_ids)
 
-        # Build asset+direction pairs for remaining manual review detection.
+        # build asset+direction pairs for manual review detection.
+        # gas events can only be duplicates of other gas events
+        # and not of events in the same direction
         customized_pairs: set[tuple[str, EventDirection]] = set()
         non_customized_pairs: set[tuple[str, EventDirection]] = set()
         for event in events:
@@ -309,13 +316,23 @@ def find_customized_event_duplicate_groups(
             pair = (event.asset, direction)
             if event.customized:
                 customized_pairs.add(pair)
-            elif event.identifier not in group_exact_ids:
+            elif (
+                event.identifier not in group_exact_ids and
+                (event.counterparty != CPT_GAS or has_customized_gas)
+            ):
                 non_customized_pairs.add(pair)
 
         # Flag groups where customized/non-customized share asset+direction but are not exact.
         shared_pairs = customized_pairs & non_customized_pairs
         if len(customized_pairs) > 0 and len(non_customized_pairs) > 0 and len(shared_pairs) > 0:
             manual_review_group_ids.add(group_id)
+            # TODO: remove this logging once we're confident no false positives remain
+            # added to help debug cases where events are incorrectly flagged as duplicates
+            events_str = '\n'.join(
+                f'  - {e.event_type}/{e.event_subtype} {e.amount}{" (*)" if e.customized else ""}'
+                for e in events
+            )
+            log.debug(f'Manual review duplicates in {group_id}:\n{events_str}')
 
     return (
         list(auto_fix_group_ids - manual_review_group_ids),  # Don't include groups in auto fix if they also have pairs that need manual review  # noqa: E501
