@@ -1,11 +1,11 @@
 import { startPromise } from '@shared/utils';
 import { isEqual } from 'es-toolkit';
 import { useUnmatchedAssetMovements } from '@/composables/history/events/use-unmatched-asset-movements';
+import { useRefWithDebounce } from '@/composables/ref';
 import { useExchanges } from '@/modules/balances/exchanges/use-exchanges';
 import { useManualBalances } from '@/modules/balances/manual/use-manual-balances';
 import { useBalancesStore } from '@/modules/balances/use-balances-store';
 import { useBlockchainBalances } from '@/modules/balances/use-blockchain-balances';
-import { useUnifiedProgress } from '@/modules/dashboard/progress/composables/use-unified-progress';
 import { useHistoricalBalances } from '@/modules/history/balances/use-historical-balances';
 import { useHistoryEventsStatus } from '@/modules/history/events/use-history-events-status';
 import { useIgnoredAssetsStore } from '@/store/assets/ignored';
@@ -30,9 +30,7 @@ export function useMonitorWatchers(): void {
 
   const { ignoredAssets } = storeToRefs(useIgnoredAssetsStore());
 
-  const { showIdleMessage, longQuery, hasUndecodedTransactions } = useUnifiedProgress();
-
-  const historyEventsUnfinished = refDebounced(logicOr(processing, showIdleMessage, longQuery, hasUndecodedTransactions), 500);
+  const processingDebounced = useRefWithDebounce(processing, 500);
 
   watch(balanceValueThreshold, (current, old) => {
     if (!isEqual(current[BalanceSource.MANUAL], old[BalanceSource.MANUAL])) {
@@ -66,8 +64,8 @@ export function useMonitorWatchers(): void {
     }
   });
 
-  watch(historyEventsUnfinished, async (isUnfinished, wasUnfinished) => {
-    if (!isUnfinished && wasUnfinished) {
+  watch(processingDebounced, async (processing, wasProcessing) => {
+    if (!processing && wasProcessing) {
       resetEventsModifiedSignal();
       await triggerHistoricalBalancesProcessing();
       await triggerAssetMovementAutoMatching();
