@@ -22,7 +22,7 @@ Backend Tasks
      - API
      - WebSocket Messages
    * - Historical Balances
-     - Yes (10 min)
+     - No
      - Yes
      - ``PROGRESS_UPDATES``, ``NEGATIVE_BALANCE_DETECTED``
    * - Asset Movements
@@ -38,15 +38,14 @@ Backend Tasks
 Historical Balances Processing
 -------------------------------
 
-Runs every 10 minutes or via API. When history events are mutated, a cache stores the earliest affected timestamp so only necessary recomputation happens.
+Runs via API only. When history events are mutated, a cache stores the earliest affected timestamp so only necessary recomputation happens.
 
 Sends ``PROGRESS_UPDATES`` during processing. Sends ``NEGATIVE_BALANCE_DETECTED`` if any asset would go negative (indicating missing or incorrect events).
 
 ::
 
-    Periodic Scheduler (10 min)              API: POST /api/v1/tasks
-             |                                        |
-             +----------------+-----------------------+
+                   API: POST /api/v1/tasks/trigger
+                              |
                               v
                 process_historical_balances()
                               |

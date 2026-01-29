@@ -14258,7 +14258,7 @@ Historical Balance Queries
     If asset is provided, returns balance for that specific asset. Otherwise returns balances for all assets.
 
     The response includes a ``processing_required`` flag that indicates whether historical events exist but haven't
-    been processed yet. If ``processing_required`` is true, call ``POST /balances/historical/process`` to trigger
+    been processed yet. If ``processing_required`` is true, call ``POST /tasks/trigger`` to trigger
     processing, then retry this endpoint.
 
     .. note::
@@ -14398,7 +14398,7 @@ Historical Balance Queries
     It's the total amount of asset held at each timestamp where a change occurred.
 
     The response includes a ``processing_required`` flag that indicates whether historical events exist but haven't
-    been processed yet. If ``processing_required`` is true, call ``POST /balances/historical/process`` to trigger
+    been processed yet. If ``processing_required`` is true, call ``POST /tasks/trigger`` to trigger
     processing, then retry this endpoint.
 
     **Example Request:**

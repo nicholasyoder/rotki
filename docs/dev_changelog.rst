@@ -84,7 +84,7 @@ The common identifier for groups of events (i.e. all events from a given EVM tx)
 Historical Balance Metrics
 --------------------------
 
-Historical balance data is now computed via a periodic task and stored in the ``event_metrics`` table.
+Historical balance data is now computed via an API task and stored in the ``event_metrics`` table.
 
 * **Modified Endpoint**: ``POST /api/(version)/balances/historical/asset``
 

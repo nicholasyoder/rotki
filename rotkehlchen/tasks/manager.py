@@ -19,7 +19,6 @@ from rotkehlchen.constants.timing import (
     DATA_UPDATES_REFRESH,
     DAY_IN_SECONDS,
     EVMLIKE_ACCOUNTS_DETECTION_REFRESH,
-    HISTORICAL_BALANCE_PROCESSING_REFRESH,
     HOUR_IN_SECONDS,
     OWNED_ASSETS_UPDATE,
     SPAM_ASSETS_DETECTION_REFRESH,
@@ -66,12 +65,10 @@ from rotkehlchen.types import (
     Optional,
     SupportedBlockchain,
     Timestamp,
-    TimestampMS,
 )
 from rotkehlchen.utils.misc import ts_now
 
 from .events import process_eth2_events
-from .historical_balances import process_historical_balances
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.aggregator import ChainsAggregator
@@ -179,7 +176,6 @@ class TaskManager:
             self._maybe_delete_past_calendar_events,
             self._maybe_sync_google_calendar,
             self._maybe_query_graph_delegated_tokens,
-            self._maybe_process_historical_balances,
         ]
         if self.premium_sync_manager is not None:
             self.potential_tasks.append(self._maybe_schedule_db_upload)
@@ -651,36 +647,6 @@ class TaskManager:
             method=process_eth2_events,
             chains_aggregator=self.chains_aggregator,
             database=self.database,
-        )]
-
-    def _maybe_process_historical_balances(self) -> Optional[list[gevent.Greenlet]]:
-        """Schedule historical balance processing if enough time has passed.
-
-        Processes history events to compute and store pre-computed balance metrics
-        in the event_metrics table.
-        """
-        if should_run_periodic_task(
-            database=self.database,
-            key_name=DBCacheStatic.LAST_HISTORICAL_BALANCE_PROCESSING_TS,
-            refresh_period=HISTORICAL_BALANCE_PROCESSING_REFRESH,
-        ) is False:
-            return None
-
-        with self.database.conn.read_ctx() as cursor:
-            stale_from_ts = self.database.get_static_cache(
-                cursor=cursor,
-                name=DBCacheStatic.STALE_BALANCES_FROM_TS,
-            )
-
-        log.debug('Scheduling task for historical balance processing')
-        return [self.greenlet_manager.spawn_and_track(
-            after_seconds=None,
-            task_name='Process historical balances',
-            exception_is_error=True,
-            method=process_historical_balances,
-            database=self.database,
-            msg_aggregator=self.msg_aggregator,
-            from_ts=TimestampMS(int(stale_from_ts)) if stale_from_ts else None,
         )]
 
     def _maybe_check_data_updates(self) -> Optional[list[gevent.Greenlet]]:
