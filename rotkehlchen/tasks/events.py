@@ -116,6 +116,7 @@ class CustomizedEventCandidate:
                 event_type=HistoryEventType.deserialize(self.event_type),
                 event_subtype=HistoryEventSubType.deserialize(self.event_subtype),
                 location=Location.deserialize_from_db(self.location),
+                for_balance_tracking=True,
             )
         except DeserializationError:
             return None
@@ -327,13 +328,6 @@ def find_customized_event_duplicate_groups(
         shared_pairs = customized_pairs & non_customized_pairs
         if len(customized_pairs) > 0 and len(non_customized_pairs) > 0 and len(shared_pairs) > 0:
             manual_review_group_ids.add(group_id)
-            # TODO: remove this logging once we're confident no false positives remain
-            # added to help debug cases where events are incorrectly flagged as duplicates
-            events_str = '\n'.join(
-                f'  - {e.event_type}/{e.event_subtype} {e.amount}{" (*)" if e.customized else ""}'
-                for e in events
-            )
-            log.debug(f'Manual review duplicates in {group_id}:\n{events_str}')
 
     return (
         list(auto_fix_group_ids - manual_review_group_ids),  # Don't include groups in auto fix if they also have pairs that need manual review  # noqa: E501
