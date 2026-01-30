@@ -18,6 +18,7 @@ from rotkehlchen.db.utils import update_table_schema
 from rotkehlchen.history.events.structures.base import HistoryBaseEntryType
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter, enter_exit_debug_log
+from rotkehlchen.types import Location
 from rotkehlchen.utils.progress import perform_userdb_upgrade_steps, progress_step
 
 if TYPE_CHECKING:
@@ -311,6 +312,31 @@ def upgrade_v50_to_v51(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
                 HistoryEventSubType.DEPOSIT_ASSET.serialize(),
                 HistoryEventType.WITHDRAWAL.serialize(),
                 HistoryEventSubType.REMOVE_ASSET.serialize(),
+            ),
+        )
+
+    @progress_step(description='Remove Coinbase swaps with identical spend/receive amounts and assets.')  # noqa: E501
+    def _remove_same_asset_same_amount_coinbase_swaps(write_cursor: 'DBCursor') -> None:
+        """Removes any Coinbase swaps where the spend and receive have the same amount and asset.
+        Coinbase reports these in some cases in connection with usually a stablecoin to fiat
+        swap, but they do not provide any useful data, and we are now ignoring them. So need to
+        remove any existing instances.
+        """
+        write_cursor.execute(
+            """DELETE FROM history_events WHERE group_identifier IN (
+                SELECT spend.group_identifier FROM history_events spend
+                JOIN history_events receive ON spend.group_identifier = receive.group_identifier
+                WHERE spend.asset = receive.asset AND spend.amount = receive.amount
+                AND spend.location = ? AND spend.type = ? AND spend.subtype = ?
+                AND receive.location = ? AND receive.type = ? AND receive.subtype = ?
+            );""",
+            (
+                Location.COINBASE.serialize_for_db(),
+                HistoryEventType.TRADE.serialize(),
+                HistoryEventSubType.SPEND.serialize(),
+                Location.COINBASE.serialize_for_db(),
+                HistoryEventType.TRADE.serialize(),
+                HistoryEventSubType.RECEIVE.serialize(),
             ),
         )
 

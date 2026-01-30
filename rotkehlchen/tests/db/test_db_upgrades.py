@@ -3762,7 +3762,7 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
     subtype_migration_query = (
         'SELECT h.identifier, h.type, h.subtype, c.counterparty '
         'FROM history_events h LEFT JOIN chain_events_info c ON h.identifier = c.identifier '
-        'WHERE h.identifier >= 5 ORDER BY h.identifier'
+        'WHERE h.identifier >= 5 AND h.identifier <= 9 ORDER BY h.identifier'
     )
     db_v50 = _init_db_with_target_version(
         target_version=50,
@@ -3774,7 +3774,7 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
         assert column_exists(cursor=cursor, table_name='history_events', column_name='event_identifier')  # noqa: E501
         assert not column_exists(cursor=cursor, table_name='history_events', column_name='group_identifier')  # noqa: E501
         assert cursor.execute('SELECT COUNT(*) FROM chain_events_info').fetchone()[0] == 5
-        assert cursor.execute('SELECT identifier, event_identifier, sequence_index, asset FROM history_events ORDER BY identifier').fetchall() == (result := [  # noqa: E501
+        assert cursor.execute('SELECT identifier, event_identifier, sequence_index, asset FROM history_events WHERE identifier <= 9 ORDER BY identifier').fetchall() == (result := [  # noqa: E501
             (1, 'TEST_EVENT_1', 0, 'ETH'),
             (2, 'TEST_EVENT_2', 0, 'BTC'),
             (3, 'TEST_EVENT_3', 1, 'USD'),
@@ -3820,6 +3820,15 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
             'profiles',
             'default_profile_id',
         }.issubset(json.loads(raw_monerium_credentials))
+        assert cursor.execute(
+            'SELECT identifier, event_identifier, sequence_index, asset, amount, type, subtype '
+            'FROM history_events WHERE identifier >= 10 ORDER BY identifier',
+        ).fetchall() == ([
+            (10, 'TEST_EVENT_4', 0, 'eip155:1/erc20:0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', '200.000000', 'trade', 'spend'),  # noqa: E501
+            (11, 'TEST_EVENT_4', 1, 'USD', '200.00', 'trade', 'receive'),
+            (12, 'TEST_EVENT_5', 0, 'USD', '200.00', 'trade', 'spend'),
+            (13, 'TEST_EVENT_5', 1, 'USD', '200.00', 'trade', 'receive'),
+        ])
 
     db_v50.logout()
     db = _init_db_with_target_version(
@@ -3832,7 +3841,7 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
         assert not column_exists(cursor=cursor, table_name='history_events', column_name='event_identifier')  # noqa: E501
         assert column_exists(cursor=cursor, table_name='history_events', column_name='group_identifier')  # noqa: E501
         assert cursor.execute('SELECT COUNT(*) FROM chain_events_info').fetchone()[0] == 5
-        assert cursor.execute('SELECT identifier, group_identifier, sequence_index, asset FROM history_events ORDER BY identifier').fetchall() == result  # noqa: E501
+        assert cursor.execute('SELECT identifier, group_identifier, sequence_index, asset FROM history_events WHERE identifier <= 9 ORDER BY identifier').fetchall() == result  # noqa: E501
         assert cursor.execute(  # Verify the unique constraint was updated
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='history_events'",
         ).fetchone()[0].find('UNIQUE(group_identifier, sequence_index)') != -1
@@ -3874,5 +3883,13 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
             'expires_at': 1765794259,
             'user_email': 'user@example.com',
         }
+        # Check that the USD->USD trade is removed and only the actual USDC->USD trade remains.
+        assert cursor.execute(
+            'SELECT identifier, group_identifier, sequence_index, asset, amount, type, subtype '
+            'FROM history_events WHERE identifier >= 10 ORDER BY identifier',
+        ).fetchall() == ([
+            (10, 'TEST_EVENT_4', 0, 'eip155:1/erc20:0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', '200.000000', 'trade', 'spend'),  # noqa: E501
+            (11, 'TEST_EVENT_4', 1, 'USD', '200.00', 'trade', 'receive'),
+        ])
 
     db.logout()
