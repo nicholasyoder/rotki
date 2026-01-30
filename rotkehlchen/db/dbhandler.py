@@ -1051,6 +1051,40 @@ class DBHandler:
             (name.get_db_key(**kwargs), value),
         )
 
+    def get_historical_balance_cache(
+            self,
+            cursor: 'DBCursor',
+            blockchain: SupportedBlockchain,
+            address: str,
+            asset: Asset,
+            block_number: int,
+    ) -> FVal | None:
+        if (result := cursor.execute(
+            'SELECT amount FROM historical_balance_cache '
+            'WHERE blockchain=? AND address=? AND asset=? AND block_number=?',
+            (blockchain.value, address, asset.identifier, block_number),
+        ).fetchone()) is None:
+            return None
+
+        return FVal(result[0])
+
+    def set_historical_balance_cache(
+            self,
+            write_cursor: 'DBCursor',
+            blockchain: SupportedBlockchain,
+            address: str,
+            asset: Asset,
+            amount: FVal,
+            timestamp: Timestamp,
+            block_number: int,
+    ) -> None:
+        write_cursor.execute(
+            'INSERT OR REPLACE INTO historical_balance_cache('
+            'blockchain, address, asset, amount, timestamp, block_number'
+            ') VALUES (?, ?, ?, ?, ?, ?)',
+            (blockchain.value, address, asset.identifier, str(amount), timestamp, block_number),
+        )
+
     def add_external_service_credentials(
             self,
             write_cursor: 'DBCursor',
