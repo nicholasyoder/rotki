@@ -3606,7 +3606,7 @@ class RestAPI:
 
     def unlink_matched_asset_movements(
             self,
-            asset_movement_identifier: int,
+            identifier: int,
     ) -> Response:
         """Unlink an asset movement from its matched event. Also attempts to remove an entry for
         the matched event's identifier since it could be two asset movements matched to each other
@@ -3619,20 +3619,30 @@ class RestAPI:
         delete the event and redecode the tx to reset it if needed.
         """
         with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
-            matched_event_identifier = self.rotkehlchen.data.db.get_dynamic_cache(
+            if (matched_event_identifier := self.rotkehlchen.data.db.get_dynamic_cache(
                 cursor=cursor,
                 name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
-                identifier=asset_movement_identifier,
-            )
-
-        if matched_event_identifier is None:
-            return api_response(wrap_in_fail_result(message=(
-                f'asset movement {asset_movement_identifier} is not matched with an event '
-                f'or marked as having no match'
-            )), HTTPStatus.BAD_REQUEST)
+                identifier=identifier,
+            )) is not None:
+                asset_movement_identifier = identifier
+            elif (result := cursor.execute(
+                'SELECT SUBSTR(name, ?) FROM key_value_cache WHERE name LIKE ? AND value = ?',
+                (
+                    len(DBCacheDynamic.MATCHED_ASSET_MOVEMENT.name) + 2,
+                    'matched_asset_movement_%',
+                    identifier,
+                ),
+            ).fetchone()) is not None:
+                asset_movement_identifier = int(result[0])
+                matched_event_identifier = identifier
+            else:
+                return api_response(wrap_in_fail_result(message=(
+                    f'The specified identifier {identifier} does not correspond to either the '
+                    'asset movement or its match for any matched pairs in the DB.'
+                )), HTTPStatus.BAD_REQUEST)
 
         with self.rotkehlchen.data.db.conn.write_ctx() as write_cursor:
-            for identifier in (
+            for id_to_remove in (
                 [asset_movement_identifier]
                 if matched_event_identifier == ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE else
                 [asset_movement_identifier, matched_event_identifier]
@@ -3640,7 +3650,7 @@ class RestAPI:
                 self.rotkehlchen.data.db.delete_dynamic_cache(
                     write_cursor=write_cursor,
                     name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
-                    identifier=str(identifier),
+                    identifier=str(id_to_remove),
                 )
 
         return api_response(OK_RESULT)

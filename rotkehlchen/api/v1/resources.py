@@ -183,7 +183,6 @@ from rotkehlchen.api.v1.schemas import (
     TransactionQuerySchema,
     TransactionReferenceAdditionSchema,
     TriggerTaskSchema,
-    UnlinkMatchedAssetMovementSchema,
     UpdateCalendarReminderSchema,
     UpdateCalendarSchema,
     UserActionLoginSchema,
@@ -3691,7 +3690,7 @@ class MatchAssetMovementsResource(BaseMethodView):
     get_schema = GetUnmatchedAssetMovementsSchema()
     put_schema = MatchAssetMovementsSchema()
     post_schema = FindPossibleMatchesSchema()
-    delete_schema = UnlinkMatchedAssetMovementSchema()
+    delete_schema = IntegerIdentifierSchema()
 
     @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
@@ -3724,10 +3723,8 @@ class MatchAssetMovementsResource(BaseMethodView):
 
     @require_loggedin_user()
     @use_kwargs(delete_schema, location='json')
-    def delete(self, asset_movement: int) -> Response:
-        return self.rest_api.unlink_matched_asset_movements(
-            asset_movement_identifier=asset_movement,
-        )
+    def delete(self, identifier: int) -> Response:
+        return self.rest_api.unlink_matched_asset_movements(identifier=identifier)
 
 
 class CustomizedEventDuplicatesResource(BaseMethodView):

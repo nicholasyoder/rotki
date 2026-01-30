@@ -222,23 +222,23 @@ def test_unlink_matched_asset_movements(rotkehlchen_api_server: 'APIServer') -> 
 
     match_asset_movements(database=rotki.data.db)
 
-    for method, movement, expected_cache in [
-        ('put', movement4, [  # First mark movement4 as having no match. All movements should have an entry in the cache.  # noqa: E501
+    for method, key, value, expected_cache in [
+        ('put', 'asset_movement', movement4.identifier, [  # First mark movement4 as having no match. All movements should have an entry in the cache.  # noqa: E501
             (f'matched_asset_movement_{movement3.identifier}', str(movement3_match.identifier)),
             (f'matched_asset_movement_{movement1.identifier}', str(movement2.identifier)),
             (f'matched_asset_movement_{movement2.identifier}', str(movement1.identifier)),
             (f'matched_asset_movement_{movement4.identifier}', str(ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE)),  # noqa: E501
-        ]), ('delete', movement1, [  # unlink movement1
+        ]), ('delete', 'identifier', movement1.identifier, [  # unlink movement1
             (f'matched_asset_movement_{movement3.identifier}', str(movement3_match.identifier)),
             (f'matched_asset_movement_{movement4.identifier}', str(ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE)),  # noqa: E501
-        ]), ('delete', movement3, [  # unlink movement3
+        ]), ('delete', 'identifier', movement3_match.identifier, [  # unlink movement3 via its match's identifier  # noqa: E501
             (f'matched_asset_movement_{movement4.identifier}', str(ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE)),  # noqa: E501
-        ]), ('delete', movement4, []),  # unlink movement4 (removes the "no match" value)
+        ]), ('delete', 'identifier', movement4.identifier, []),  # unlink movement4 (removes the "no match" value)  # noqa: E501
     ]:
         assert_simple_ok_response(requests.request(
             method=method,
             url=api_url_for(rotkehlchen_api_server, 'matchassetmovementsresource'),
-            json={'asset_movement': movement.identifier},
+            json={key: value},
         ))
         with rotki.data.db.conn.read_ctx() as cursor:
             assert cursor.execute(

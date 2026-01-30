@@ -6491,10 +6491,10 @@ Match exchange asset movements with onchain events
       Content-Type: application/json;charset=UTF-8
 
       {
-          "asset_movement": 123
+          "identifier": 123
       }
 
-   :reqjson int asset_movement: DB identifier of the asset movement to unlink
+   :reqjson int identifier: DB identifier of an asset movement or an event matched with an asset movement to unlink.
 
    **Example Response**:
 
