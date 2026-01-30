@@ -14,6 +14,7 @@ from pysqlcipher3 import dbapi2 as sqlcipher
 from rotkehlchen.accounting.constants import EVENT_GROUPING_ORDER
 from rotkehlchen.accounting.debugimporter.json import DebugHistoryImporter
 from rotkehlchen.accounting.export.csv import CSVWriteError, dict_to_csv_file
+from rotkehlchen.accounting.export.report import export_pnl_report_csv_from_db
 from rotkehlchen.accounting.pot import AccountingPot
 from rotkehlchen.api.rest_helpers.downloads import register_post_download_cleanup
 from rotkehlchen.chain.ethereum.constants import CPT_KRAKEN
@@ -160,26 +161,33 @@ class HistoryService:
         }
         return {'result': result, 'message': '', 'status_code': HTTPStatus.OK}
 
-    def export_processed_history_csv(self, directory_path: Path) -> dict[str, Any]:
-        success, msg = self.rotkehlchen.accountant.export(directory_path)
-        if success is False:
-            return {'result': None, 'message': msg, 'status_code': HTTPStatus.CONFLICT}
+    def export_pnl_report_csv(
+            self,
+            report_id: int,
+            directory_path: Path | None,
+    ) -> dict[str, Any]:
+        export_result, message = export_pnl_report_csv_from_db(
+            database=self.rotkehlchen.data.db,
+            premium=self.rotkehlchen.premium,
+            report_id=report_id,
+            directory_path=directory_path,
+        )
+        return {
+            'result': export_result,
+            'message': message,
+            'status_code': HTTPStatus.CONFLICT if export_result is None else HTTPStatus.OK,
+        }
 
-        return {'result': True, 'message': '', 'status_code': HTTPStatus.OK}
+    def download_pnl_report_csv(self, report_id: int) -> dict[str, Any] | Response:
+        response = self.export_pnl_report_csv(report_id=report_id, directory_path=None)
+        if response.get('status_code') != HTTPStatus.OK:
+            return response
 
-    def download_processed_history_csv(self) -> dict[str, Any] | Response:
-        success, zipfile = self.rotkehlchen.accountant.export(directory_path=None)
-        if success is False:
-            return {
-                'result': None,
-                'message': 'Could not create a zip archive',
-                'status_code': HTTPStatus.CONFLICT,
-            }
-
+        file_path = response['result']['file_path']
         try:
-            register_post_download_cleanup(Path(zipfile))
+            register_post_download_cleanup(Path(file_path))
             return send_file(
-                path_or_file=zipfile,
+                path_or_file=file_path,
                 mimetype='application/zip',
                 as_attachment=True,
                 download_name='report.zip',

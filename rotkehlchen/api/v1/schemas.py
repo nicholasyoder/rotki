@@ -2167,6 +2167,13 @@ class AccountingReportDataSchema(TimestampRangeSchema, DBPaginationSchema, DBOrd
         }
 
 
+class AccountingReportExportSchema(AccountingReportsSchema):
+    directory_path = DirectoryField(required=True)
+
+    def __init__(self) -> None:
+        super().__init__(required_report_id=True)
+
+
 class HistoryExportingSchema(Schema):
     directory_path = DirectoryField(required=True)
 

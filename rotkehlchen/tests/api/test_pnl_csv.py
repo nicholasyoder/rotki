@@ -4,7 +4,6 @@ import json
 import os
 import tempfile
 import zipfile
-from contextlib import ExitStack
 from http import HTTPStatus
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -20,7 +19,7 @@ from rotkehlchen.chain.accounts import BlockchainAccountData
 from rotkehlchen.chain.evm.constants import GENESIS_HASH
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.chain.zksync_lite.constants import ZKL_IDENTIFIER
-from rotkehlchen.constants.assets import A_ETH
+from rotkehlchen.constants.assets import A_ETH, A_EUR
 from rotkehlchen.constants.misc import ONE
 from rotkehlchen.db.custom_assets import DBCustomAssets
 from rotkehlchen.fval import FVal
@@ -35,13 +34,11 @@ from rotkehlchen.tests.utils.api import (
     api_url_for,
     assert_error_response,
     assert_proper_response,
+    assert_proper_response_with_result,
 )
 from rotkehlchen.tests.utils.constants import ETH_ADDRESS1, ETH_ADDRESS2, ETH_ADDRESS3
 from rotkehlchen.tests.utils.factories import make_evm_tx_hash
-from rotkehlchen.tests.utils.history import (
-    prepare_rotki_for_history_processing_test,
-    prices,
-)
+from rotkehlchen.tests.utils.history import prices
 from rotkehlchen.tests.utils.pnl_report import query_api_create_and_get_report
 from rotkehlchen.types import Location, SupportedBlockchain, Timestamp, TimestampMS
 from rotkehlchen.utils.misc import create_timestamp
@@ -125,7 +122,7 @@ def test_history_export_download_csv(
 ) -> None:
     """Test that the csv export/download REST API endpoint works correctly."""
     # Query history api to have report data to export
-    query_api_create_and_get_report(
+    report_id, _, _ = query_api_create_and_get_report(
         server=rotkehlchen_api_server_with_exchanges,
         start_ts=Timestamp(0),
         end_ts=Timestamp(1601040361),
@@ -136,34 +133,49 @@ def test_history_export_download_csv(
 
     # now query the export endpoint with json body
     response = requests.get(
-        api_url_for(rotkehlchen_api_server_with_exchanges, 'historyexportingresource'),
+        api_url_for(
+            rotkehlchen_api_server_with_exchanges,
+            'accountingreportexportresource',
+            report_id=report_id,
+        ),
         json={'directory_path': str(csv_dir)},
     )
     assert_csv_export_response(response, csv_dir)
-    # now query the export endpoint with query params
-    response = requests.get(api_url_for(
-        rotkehlchen_api_server_with_exchanges,
-        'historyexportingresource',
-        directory_path=csv_dir2,
-    ))
+    # now query the export endpoint again with a different directory
+    response = requests.get(
+        api_url_for(
+            rotkehlchen_api_server_with_exchanges,
+            'accountingreportexportresource',
+            report_id=report_id,
+        ),
+        json={'directory_path': str(csv_dir2)},
+    )
     assert_csv_export_response(response, csv_dir2)
     # query it again and make sure that csv is recreated and events are not duplicated
 
-    query_api_create_and_get_report(
+    report_id, _, _ = query_api_create_and_get_report(
         server=rotkehlchen_api_server_with_exchanges,
         start_ts=Timestamp(0),
         end_ts=Timestamp(1601040361),
         prepare_mocks=True,
     )
-    response = requests.get(api_url_for(
-        rotkehlchen_api_server_with_exchanges,
-        'historyexportingresource',
-        directory_path=csv_dir2,
-    ))
+    response = requests.get(
+        api_url_for(
+            rotkehlchen_api_server_with_exchanges,
+            'accountingreportexportresource',
+            report_id=report_id,
+        ),
+        json={'directory_path': str(csv_dir2)},
+    )
     assert_csv_export_response(response, csv_dir2)
     # now query the download CSV endpoint
     response = requests.get(
-        api_url_for(rotkehlchen_api_server_with_exchanges, 'historydownloadingresource'))
+        api_url_for(
+            rotkehlchen_api_server_with_exchanges,
+            'accountingreportdownloadresource',
+            report_id=report_id,
+        ),
+    )
     with tempfile.TemporaryDirectory() as tmpdirname:
         tempzipfile = Path(tmpdirname, 'temp.zip')
         extractdir = Path(tmpdirname, 'extractdir')
@@ -172,14 +184,19 @@ def test_history_export_download_csv(
             zip_ref.extractall(extractdir)
         assert_csv_export_response(response, extractdir, is_download=True)
     # query it again and make sure that csv is recreated and events are not duplicated
-    query_api_create_and_get_report(
+    report_id, _, _ = query_api_create_and_get_report(
         server=rotkehlchen_api_server_with_exchanges,
         start_ts=Timestamp(0),
         end_ts=Timestamp(1601040361),
         prepare_mocks=True,
     )
     response = requests.get(
-        api_url_for(rotkehlchen_api_server_with_exchanges, 'historydownloadingresource'))
+        api_url_for(
+            rotkehlchen_api_server_with_exchanges,
+            'accountingreportdownloadresource',
+            report_id=report_id,
+        ),
+    )
     with tempfile.TemporaryDirectory() as tmpdirname:
         tempzipfile = Path(tmpdirname, 'temp.zip')
         extractdir = Path(tmpdirname, 'extractdir')
@@ -195,7 +212,7 @@ def test_history_export_download_csv(
     )
     db_custom_assets = DBCustomAssets(rotkehlchen_api_server_with_exchanges.rest_api.rotkehlchen.data.db)  # noqa: E501
     db_custom_assets.add_custom_asset(custom_asset)
-    accounting_history_process(
+    report, _ = accounting_history_process(
         rotkehlchen_api_server_with_exchanges.rest_api.rotkehlchen.accountant,
         start_ts=Timestamp(0),
         end_ts=Timestamp(1640493376),
@@ -222,15 +239,18 @@ def test_history_export_download_csv(
             )],
         )
     response = requests.get(
-        api_url_for(rotkehlchen_api_server_with_exchanges, 'historyexportingresource'),
+        api_url_for(
+            rotkehlchen_api_server_with_exchanges,
+            'accountingreportexportresource',
+            report_id=report['identifier'],
+        ),
         json={'directory_path': str(csv_dir)},
     )
     rows = assert_csv_export_response(response, csv_dir, expected_num_of_events=1)
     assert rows[0]['notes'] == f'Test note to check if label is added with {ETH_ADDRESS1} [ETH_ADDRESS1] address'  # noqa: E501
-
     # Repeat same label test as above but with zksync which is an evmlike chain
     tx_hash = make_evm_tx_hash()
-    accounting_history_process(
+    report, _ = accounting_history_process(
         rotkehlchen_api_server_with_exchanges.rest_api.rotkehlchen.accountant,
         start_ts=Timestamp(0),
         end_ts=Timestamp(1640493376),
@@ -258,11 +278,77 @@ def test_history_export_download_csv(
             )],
         )
     response = requests.get(
-        api_url_for(rotkehlchen_api_server_with_exchanges, 'historyexportingresource'),
+        api_url_for(
+            rotkehlchen_api_server_with_exchanges,
+            'accountingreportexportresource',
+            report_id=report['identifier'],
+        ),
         json={'directory_path': str(csv_dir)},
     )
     rows = assert_csv_export_response(response, csv_dir, expected_num_of_events=1)
     assert f'Test note to check if label is added with {ETH_ADDRESS1} [ETH_ADDRESS1 IN ZKSYNC] address' in rows[0]['notes']  # noqa: E501
+
+
+@pytest.mark.parametrize('initialize_accounting_rules', [True])
+def test_report_export_uses_transient_db(
+        rotkehlchen_api_server: 'APIServer',
+        tmpdir_factory: pytest.TempdirFactory,
+) -> None:
+    """Ensure report CSV export works after clearing in-memory report state."""
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+    notes = f'Test note to check if label is added with {ETH_ADDRESS1} address'
+    expected_notes = f'Test note to check if label is added with {ETH_ADDRESS1} [ETH_ADDRESS1] address'  # noqa: E501
+    report, _ = accounting_history_process(
+        rotki.accountant,
+        start_ts=Timestamp(0),
+        end_ts=Timestamp(10),
+        history_list=[HistoryEvent(
+            group_identifier='report_export_test',
+            sequence_index=0,
+            timestamp=TimestampMS(1000),
+            location=Location.ETHEREUM,
+            asset=A_EUR,
+            amount=FVal('1.5'),
+            event_type=HistoryEventType.RECEIVE,
+            event_subtype=HistoryEventSubType.NONE,
+            notes=notes,
+        )],
+    )
+
+    pot = rotki.accountant.pots[0]
+    pot.processed_events = []
+    pot.pnls.reset()
+    pot.report_id = None
+
+    csv_dir = Path(tmpdir_factory.mktemp('report_csv_dir'))
+    with rotki.data.db.user_write() as cursor:
+        rotki.data.db.edit_blockchain_accounts(
+            write_cursor=cursor,
+            account_data=[BlockchainAccountData(
+                chain=SupportedBlockchain.ETHEREUM,
+                address=string_to_evm_address(ETH_ADDRESS1),
+                label='ETH_ADDRESS1',
+            )],
+        )
+    response = requests.get(
+        api_url_for(
+            rotkehlchen_api_server,
+            'accountingreportexportresource',
+            report_id=report['identifier'],
+        ),
+        json={'directory_path': str(csv_dir)},
+    )
+    export_result = assert_proper_response_with_result(
+        response=response,
+        rotkehlchen_api_server=rotkehlchen_api_server,
+    )
+    assert export_result is True
+    csv_path = csv_dir / FILENAME_ALL_CSV
+    assert csv_path.exists()
+    with open(csv_path, newline='', encoding='utf-8') as csvfile:
+        rows = list(csv.DictReader(csvfile))
+    assert len(rows) == 1
+    assert rows[0]['notes'] == expected_notes
 
 
 @pytest.mark.parametrize('mocked_price_queries', [{'ETH': {'EUR': {1569924574: 1}}}])
@@ -297,7 +383,7 @@ def test_encoding(
         )]),
     )
     with locale_patch, history_patch:
-        query_api_create_and_get_report(
+        report_id, _, _ = query_api_create_and_get_report(
             server=rotkehlchen_api_server,
             start_ts=Timestamp(0),
             end_ts=Timestamp(1601040361),
@@ -306,7 +392,11 @@ def test_encoding(
         export_dir = Path(tmpdir_factory.mktemp('test_csv_dir'))
         # now query the export endpoint with json body
         response = requests.get(
-            api_url_for(rotkehlchen_api_server, 'historyexportingresource'),
+            api_url_for(
+                rotkehlchen_api_server,
+                'accountingreportexportresource',
+                report_id=report_id,
+            ),
             json={'directory_path': str(export_dir)},
         )
         assert_proper_response(response)
@@ -343,41 +433,30 @@ def test_history_export_csv_errors(
         tmpdir_factory: pytest.TempdirFactory,
 ) -> None:
     """Test that errors on the csv export REST API endpoint are handled correctly"""
-    rotki = rotkehlchen_api_server_with_exchanges.rest_api.rotkehlchen
-    setup = prepare_rotki_for_history_processing_test(
-        rotki,
-        should_mock_history_processing=False,
-    )
     csv_dir = str(tmpdir_factory.mktemp('test_csv_dir'))
 
-    # Query the export endpoint without first having queried the history
+    # Query the export endpoint with a report id that doesn't exist
     response = requests.get(
-        api_url_for(rotkehlchen_api_server_with_exchanges, 'historyexportingresource'),
+        api_url_for(
+            rotkehlchen_api_server_with_exchanges,
+            'accountingreportexportresource',
+            report_id=1,
+        ),
         json={'directory_path': str(csv_dir)},
     )
     assert_error_response(
         response=response,
-        contained_in_msg='No history processed in order to perform an export',
+        contained_in_msg='PnL report with id 1 was not found',
         status_code=HTTPStatus.CONFLICT,
     )
 
-    # Now, query history processing to have data for exporting
-    with ExitStack() as stack:
-        for manager in setup:
-            stack.enter_context(manager)
-            stack.enter_context(patch(
-                'rotkehlchen.chain.evm.node_inquirer.EvmNodeInquirer.is_safe_proxy_or_eoa',
-                return_value=False,
-            ))
-
-        response = requests.get(
-            api_url_for(rotkehlchen_api_server_with_exchanges, 'historyprocessingresource'),
-        )
-    assert_proper_response(response)
-
     # And now provide non-existing path for directory
     response = requests.get(
-        api_url_for(rotkehlchen_api_server_with_exchanges, 'historyexportingresource'),
+        api_url_for(
+            rotkehlchen_api_server_with_exchanges,
+            'accountingreportexportresource',
+            report_id=1,
+        ),
         json={'directory_path': '/idont/exist/for/sure/'},
     )
     assert_error_response(
@@ -390,7 +469,11 @@ def test_history_export_csv_errors(
     temporary_file = Path(Path(csv_dir) / 'f.txt')
     temporary_file.touch()
     response = requests.get(
-        api_url_for(rotkehlchen_api_server_with_exchanges, 'historyexportingresource'),
+        api_url_for(
+            rotkehlchen_api_server_with_exchanges,
+            'accountingreportexportresource',
+            report_id=1,
+        ),
         json={'directory_path': str(temporary_file)},
     )
     assert_error_response(
