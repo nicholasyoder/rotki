@@ -786,6 +786,11 @@ class Coinbase(ExchangeInterface):
         tx_asset = asset_from_coinbase(event['amount']['currency'], time=timestamp)
         native_amount = deserialize_fval_force_positive(event['native_amount']['amount'])
         native_asset = asset_from_coinbase(event['native_amount']['currency'], time=timestamp)
+        if tx_asset == native_asset and tx_amount == native_amount:
+            return []  # There are some cases where coinbase reports trades from/to the same asset.
+            # This has been noticed especially in connection with EURc->EUR and USDC->USD swaps
+            # where there would be an extra useless EUR->EUR or USD->USD swap.
+
         spend_asset, spend_amount, receive_asset, receive_amount = (
             (native_asset, native_amount, tx_asset, tx_amount)
             if event['type'] == 'buy' else  # Either buy or sell in _process_normal_trade

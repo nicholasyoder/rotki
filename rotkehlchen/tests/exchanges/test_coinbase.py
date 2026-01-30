@@ -1766,3 +1766,78 @@ def test_ignore_updated_at_ts(function_scope_coinbase):
         coinbase.query_history_events()
 
     assert tx_query_mock.call_count == 1
+
+
+def test_ignore_same_asset_same_amount_swap(function_scope_coinbase):
+    """Test that swaps are ignored if the spend and receive are exactly the same asset and amount.
+    Regression test for https://github.com/rotki/rotki/issues/11483. Mocks the tx response with
+    both a valid USDC->USD swap and a USD->USD swap that should be ignored.
+    """
+    with patch.object(
+        target=function_scope_coinbase.session,
+        attribute='get',
+        side_effect=_create_coinbase_mock("""{ "data": [{
+            "amount": {"amount": "-200.000000", "currency": "USDC"},
+            "created_at": "2025-12-31T13:52:34Z",
+            "id": "TEST_ID_1",
+            "native_amount": {"amount": "-200.00", "currency": "USD"},
+            "resource": "transaction",
+            "resource_path": "/v2/accounts/REDACTED/transactions/TEST_ID_1",
+            "sell": {
+                "id": "TEST_ID_1",
+                "payment_method_name": "USDC Wallet",
+                "subtotal": {"amount": "200.00", "currency": "USD"},
+                "total": {"amount": "200.00", "currency": "USD"}
+            },
+            "status": "completed",
+            "type": "sell"
+        },{
+            "amount": {"amount": "200.00", "currency": "USD"},
+            "created_at": "2025-12-31T13:52:34Z",
+            "id": "TEST_ID_2",
+            "native_amount": {"amount": "200.00", "currency": "USD"},
+            "resource": "transaction",
+            "resource_path": "/v2/accounts/REDACTED/transactions/TEST_ID_2",
+            "sell": {
+                "id": "TEST_ID_2",
+                "payment_method_name": "USDC Wallet",
+                "subtotal": {"amount": "200.00", "currency": "USD"},
+                "total": {"amount": "200.00", "currency": "USD"}
+            },
+            "status": "completed",
+            "type": "sell"
+        }]}"""),
+    ):
+        function_scope_coinbase.query_history_events()
+
+    assert len(function_scope_coinbase.msg_aggregator.consume_warnings()) == 0
+    assert len(function_scope_coinbase.msg_aggregator.consume_errors()) == 0
+    with function_scope_coinbase.db.conn.read_ctx() as cursor:
+        assert DBHistoryEvents(function_scope_coinbase.db).get_history_events_internal(
+            cursor=cursor,
+            filter_query=HistoryEventFilterQuery.make(),
+        ) == [SwapEvent(
+            identifier=1,
+            timestamp=TimestampMS(1767189154000),
+            location=Location.COINBASE,
+            event_subtype=HistoryEventSubType.SPEND,
+            asset=A_USDC,
+            amount=FVal('200'),
+            location_label='coinbase',
+            group_identifier=create_group_identifier_from_unique_id(
+                location=Location.COINBASE,
+                unique_id='TEST_ID_1',
+            ),
+        ), SwapEvent(
+            identifier=2,
+            timestamp=TimestampMS(1767189154000),
+            location=Location.COINBASE,
+            event_subtype=HistoryEventSubType.RECEIVE,
+            asset=A_USD,
+            amount=FVal('200'),
+            location_label='coinbase',
+            group_identifier=create_group_identifier_from_unique_id(
+                location=Location.COINBASE,
+                unique_id='TEST_ID_1',
+            ),
+        )]
