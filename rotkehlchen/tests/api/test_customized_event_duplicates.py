@@ -5,7 +5,7 @@ import requests
 
 from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.constants.assets import A_ETH
-from rotkehlchen.constants.misc import ONE
+from rotkehlchen.constants.misc import ONE, ZERO
 from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HistoryMappingState
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.fval import FVal
@@ -229,3 +229,89 @@ def test_gas_events_duplicate_detection(rotkehlchen_api_server: 'APIServer') -> 
     assert donate_event.group_identifier not in result['auto_fix_group_ids']  # gas + donate
     assert donate_event.group_identifier not in result['manual_review_group_ids']
     assert gas_event.group_identifier in result['auto_fix_group_ids']  # gas + gas
+
+
+def test_balance_tracking_direction_duplicate_detection(
+        rotkehlchen_api_server: 'APIServer',
+) -> None:
+    """Test that events with different balance-tracking directions are not flagged as duplicates.
+
+    Events that have NEUTRAL direction normally but different directions with
+    for_balance_tracking=True should not be considered duplicates.
+
+    1. protocol withdrawal (customized) + informational -> not flagged (IN vs NEUTRAL)
+    2. account withdrawal (customized) + cex deposit + informational -> not flagged (OUT vs IN)
+    """
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+
+    with rotki.data.db.conn.write_ctx() as write_cursor:
+        DBHistoryEvents(rotki.data.db).add_history_events(
+            write_cursor=write_cursor,
+            history=[(protocol_withdrawal := EvmEvent(  # customized protocol withdrawal for tx1
+                identifier=1,
+                tx_ref=(tx_hash_1 := make_evm_tx_hash()),
+                sequence_index=0,
+                timestamp=(timestamp := TimestampMS(1710000000000)),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.WITHDRAWAL,
+                event_subtype=HistoryEventSubType.WITHDRAW_FROM_PROTOCOL,
+                asset=A_ETH,
+                amount=ONE,
+            )), EvmEvent(  # informational event for tx1
+                tx_ref=tx_hash_1,
+                sequence_index=1,
+                timestamp=timestamp,
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.INFORMATIONAL,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=ZERO,
+            ), EvmEvent(  # customized account withdrawal for tx2
+                identifier=3,
+                tx_ref=(tx_hash_2 := make_evm_tx_hash()),
+                sequence_index=0,
+                timestamp=timestamp,
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.WITHDRAWAL,
+                event_subtype=HistoryEventSubType.REMOVE_ASSET,
+                asset=A_ETH,
+                amount=ONE,
+            ), (cex_deposit := EvmEvent(  # cex deposit for tx2
+                tx_ref=tx_hash_2,
+                sequence_index=1,
+                timestamp=timestamp,
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.DEPOSIT,
+                event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+                asset=A_ETH,
+                amount=ONE,
+            )), EvmEvent(  # informational event for tx2
+                tx_ref=tx_hash_2,
+                sequence_index=2,
+                timestamp=timestamp,
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.INFORMATIONAL,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=ZERO,
+            )],
+        )
+        write_cursor.executemany(
+            'INSERT INTO history_events_mappings(parent_identifier, name, value) VALUES(?, ?, ?)',
+            [
+                (1, HISTORY_MAPPING_KEY_STATE, HistoryMappingState.CUSTOMIZED.serialize_for_db()),
+                (3, HISTORY_MAPPING_KEY_STATE, HistoryMappingState.CUSTOMIZED.serialize_for_db()),
+            ],
+        )
+
+    result = assert_proper_response_with_result(
+        requests.get(api_url_for(rotkehlchen_api_server, 'customizedeventduplicatesresource')),
+        rotkehlchen_api_server,
+        async_query=False,
+    )
+    # tx1: protocol withdrawal + informational -> not flagged (IN vs NEUTRAL)
+    assert protocol_withdrawal.group_identifier not in result['auto_fix_group_ids']
+    assert protocol_withdrawal.group_identifier not in result['manual_review_group_ids']
+    # tx2: account withdrawal + cex deposit + informational -> not flagged (OUT vs IN)
+    assert cex_deposit.group_identifier not in result['auto_fix_group_ids']
+    assert cex_deposit.group_identifier not in result['manual_review_group_ids']
