@@ -3497,7 +3497,7 @@ class RestAPI:
             return api_response(OK_RESULT)
 
         events_db = DBHistoryEvents(database=self.rotkehlchen.data.db)
-        asset_movement = matched_event = None
+        asset_movement = matched_event = fee_event = None
         with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
             for event in events_db.get_history_events_internal(
                 cursor=cursor,
@@ -3510,6 +3510,22 @@ class RestAPI:
                 elif event.identifier == matched_event_identifier:
                     matched_event = event
 
+            if (
+                asset_movement is not None and
+                matched_event is not None and
+                len(fee_events := events_db.get_history_events_internal(
+                    cursor=cursor,
+                    filter_query=HistoryEventFilterQuery.make(
+                        entry_types=IncludeExcludeFilterData(
+                            values=[HistoryBaseEntryType.ASSET_MOVEMENT_EVENT],
+                        ),
+                        group_identifiers=[asset_movement.group_identifier],
+                        event_subtypes=[HistoryEventSubType.FEE],
+                    ),
+                )) == 1
+            ):
+                fee_event = fee_events[0]  # Asset movements only support one fee
+
         if asset_movement is None or not isinstance(asset_movement, AssetMovement):
             error_msg = f'No asset movement event found in the DB for identifier {asset_movement_identifier}'  # noqa: E501
         elif matched_event is None:
@@ -3518,6 +3534,7 @@ class RestAPI:
             success, error_msg = update_asset_movement_matched_event(
                 events_db=events_db,
                 asset_movement=asset_movement,
+                fee_event=fee_event,  # type: ignore[arg-type]  # Will be asset movement fee. Query is filtered by entry type above.
                 matched_event=matched_event,
                 is_deposit=asset_movement.event_type == HistoryEventType.DEPOSIT,
             )

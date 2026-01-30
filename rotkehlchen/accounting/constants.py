@@ -147,6 +147,10 @@ EVENT_CATEGORY_MAPPINGS = {  # possible combinations of types and subtypes mappe
     HistoryEventType.TRANSACTION_TO_SELF: {
         HistoryEventSubType.NONE: {DEFAULT: EventCategory.SELF_TRANSACTION},
     },
+    HistoryEventType.EXCHANGE_ADJUSTMENT: {
+        HistoryEventSubType.SPEND: {DEFAULT: EventCategory.SEND},
+        HistoryEventSubType.RECEIVE: {DEFAULT: EventCategory.RECEIVE},
+    },
 }
 
 EVENT_GROUPING_ORDER = {  # Determines how to group events when serializing for the api
