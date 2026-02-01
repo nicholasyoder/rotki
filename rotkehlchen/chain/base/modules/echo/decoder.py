@@ -45,7 +45,7 @@ class EchoDecoder(EvmDecoderInterface):
         ):
             return DEFAULT_EVM_DECODING_OUTPUT
 
-        if fee_amount_from_input := int.from_bytes(context.transaction.input_data[36:68]) == 0:
+        if (fee_amount_from_input := int.from_bytes(context.transaction.input_data[36:68])) == 0:
             return DEFAULT_EVM_DECODING_OUTPUT
 
         deal_address = bytes_to_address(context.transaction.input_data[68:100])
