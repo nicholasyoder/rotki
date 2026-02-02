@@ -355,13 +355,7 @@ def _should_auto_ignore_movement(asset_movement: AssetMovement) -> bool:
         except DeserializationError:
             return True  # not even a valid SupportedBlockchain
 
-    return not any(
-        (
-            asset.identifier in NATIVE_TOKEN_IDS_OF_CHAINS_WITH_TXS or
-            asset.identifier.startswith(f'{SOLANA_CHAIN_DIRECTIVE}/') or
-            identifier_to_evm_chain(asset.identifier) in EVM_CHAIN_IDS_WITH_TRANSACTIONS
-        ) for asset in GlobalDBHandler.get_assets_in_same_collection(asset_movement.asset.identifier)  # noqa: E501
-    )
+    return False
 
 
 # TODO: Remove all the extra logs with the MATCH_DEBUG prefix.
@@ -395,7 +389,7 @@ def match_asset_movements(database: 'DBHandler') -> None:
                 assets_in_collection_cache[asset_identifier] = assets_in_collection
 
             log.debug('MATCH_DEBUG: checked auto ignore and loaded assets_in_collection')
-            if len(matched_events := find_asset_movement_matches(
+            if (match_count := len(matched_events := find_asset_movement_matches(
                 events_db=events_db,
                 asset_movement=asset_movement,
                 is_deposit=(is_deposit := asset_movement.event_type == HistoryEventType.DEPOSIT),
@@ -406,7 +400,7 @@ def match_asset_movements(database: 'DBHandler') -> None:
                 blockchain_accounts=blockchain_accounts,
                 already_matched_event_ids=already_matched_event_ids,
                 tolerance=settings.asset_movement_amount_tolerance,
-            )) == 1:
+            ))) == 1:
                 log.debug('MATCH_DEBUG: found a match')
                 success, error_msg = update_asset_movement_matched_event(
                     events_db=events_db,
@@ -424,6 +418,17 @@ def match_asset_movements(database: 'DBHandler') -> None:
                     f'Failed to match asset movement {asset_movement.group_identifier} '
                     f'due to: {error_msg}',
                 )
+            elif match_count == 0 and not any(
+                (
+                    asset.identifier in NATIVE_TOKEN_IDS_OF_CHAINS_WITH_TXS or
+                    asset.identifier.startswith(f'{SOLANA_CHAIN_DIRECTIVE}/') or
+                    identifier_to_evm_chain(asset.identifier) in EVM_CHAIN_IDS_WITH_TRANSACTIONS
+                ) for asset in assets_in_collection
+            ):  # Only auto ignore movements with unsupported assets after actually finding no
+                # match, since it may be an exchange to exchange movement or there may be manually
+                # added or csv imported events to match with.
+                movement_ids_to_ignore.append(asset_movement.identifier)
+                continue
 
             unmatched_asset_movements.append(asset_movement)
 
