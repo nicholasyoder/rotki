@@ -4752,10 +4752,6 @@ class FindPossibleMatchesSchema(Schema):
     tolerance = AmountField(required=True, validate=validate.Range(min=ZERO, min_inclusive=False))
 
 
-class UnlinkMatchedAssetMovementSchema(Schema):
-    asset_movement = fields.Integer(required=True)
-
-
 class TriggerTaskSchema(AsyncQueryArgumentSchema):
     task = SerializableEnumField(enum_class=TaskName, required=True)
 

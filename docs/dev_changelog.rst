@@ -82,7 +82,7 @@ Exchange asset movement events may now be manually matched with specific onchain
 
 * **New Endpoint**: ``DELETE /api/(version)/history/events/match/asset_movements``
 
-  - Required ``asset_movement`` parameter specifying the DB identifier of the asset movement to unlink from its corresponding matched event.
+  - Required ``identifier`` parameter specifying the DB identifier of an asset movement or an event matched with an asset movement to unlink.
   - Unlinks the asset movement from its matched event. This asset movement will now appear in the list of unmatched movements again.
 
 * **Modified Endpoint**: ``POST /api/(version)/history/events``
