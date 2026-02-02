@@ -15,6 +15,7 @@ from pysqlcipher3 import dbapi2 as sqlcipher
 
 from rotkehlchen.accounting.structures.balance import BalanceType
 from rotkehlchen.assets.asset import Asset, EvmToken
+from rotkehlchen.assets.resolver import AssetResolver
 from rotkehlchen.assets.types import AssetType
 from rotkehlchen.balances.manual import ManuallyTrackedBalance
 from rotkehlchen.chain.accounts import (
@@ -2838,6 +2839,7 @@ class DBHandler:
         # but think on the performance. This is a synchronous api call so if
         # it starts taking too much time the calling logic needs to change
         results = set()
+        asset_ids_by_table: dict[str, set[str]] = {}
         for table_entry in TABLES_WITH_ASSETS:
             table_name = table_entry[0]
             columns = table_entry[1:]
@@ -2857,31 +2859,41 @@ class DBHandler:
                 log.error(f'Could not fetch assets from table {table_name}. {e!s}')
                 continue
 
+            table_asset_ids: set[str] = set()
             for result in cursor:
                 for asset_id in result:
-                    try:
-                        if asset_id is not None:
-                            results.add(Asset(asset_id).check_existence())
-                    except UnknownAsset:
-                        if table_name == 'manually_tracked_balances':
-                            self.msg_aggregator.add_warning(
-                                f'Unknown/unsupported asset {asset_id} found in the '
-                                f'manually tracked balances. Have you modified the assets DB? '
-                                f'Make sure that the aforementioned asset is in there.',
-                            )
-                        else:
-                            log.debug(
-                                f'Unknown/unsupported asset {asset_id} found in the database '
-                                f'If you believe this should be supported open an issue in github',
-                            )
-
+                    if asset_id is None:
                         continue
-                    except DeserializationError:
+                    if isinstance(asset_id, str) is False:
                         self.msg_aggregator.add_error(
                             f'Asset with non-string type {type(asset_id)} found in the '
                             f'database. Skipping it.',
                         )
                         continue
+                    table_asset_ids.add(asset_id)
+
+            if len(table_asset_ids) != 0:
+                asset_ids_by_table[table_name] = table_asset_ids
+
+        all_asset_ids = set().union(*asset_ids_by_table.values()) if asset_ids_by_table else set()
+        normalized_map, unknown_ids = AssetResolver.bulk_check_existence(all_asset_ids)
+        for table_name, table_asset_ids in asset_ids_by_table.items():
+            for asset_id in table_asset_ids:
+                if asset_id in unknown_ids:
+                    if table_name == 'manually_tracked_balances':
+                        self.msg_aggregator.add_warning(
+                            f'Unknown/unsupported asset {asset_id} found in the '
+                            f'manually tracked balances. Have you modified the assets DB? '
+                            f'Make sure that the aforementioned asset is in there.',
+                        )
+                    else:
+                        log.debug(
+                            f'Unknown/unsupported asset {asset_id} found in the database '
+                            f'If you believe this should be supported open an issue in github',
+                        )
+                    continue
+
+                results.add(Asset(normalized_map.get(asset_id, asset_id)))
 
         return list(results)
 

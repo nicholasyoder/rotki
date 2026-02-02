@@ -2,9 +2,11 @@ import logging
 from typing import TYPE_CHECKING, Optional, TypeVar
 
 from rotkehlchen.assets.types import AssetType
+from rotkehlchen.constants.misc import NFT_DIRECTIVE
 from rotkehlchen.errors.asset import UnknownAsset, WrongAssetType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.utils.data_structures import LRUCacheLowerKey
+from rotkehlchen.utils.misc import get_chunks
 
 if TYPE_CHECKING:
     from rotkehlchen.assets.asset import (
@@ -141,6 +143,62 @@ class AssetResolver:
             )
 
         return normalized_id
+
+    @staticmethod
+    def bulk_check_existence(
+            identifiers: set[str],
+            query_packaged_db: bool = True,
+    ) -> tuple[dict[str, str], set[str]]:
+        """Check identifiers in bulk and return normalized ids and unknown ids."""
+        if len(identifiers) == 0:
+            return {}, set()
+
+        normalized_map: dict[str, str] = {}
+        to_check = set()
+        for identifier in identifiers:
+            if identifier.startswith(NFT_DIRECTIVE):
+                normalized_map[identifier] = identifier
+                continue
+            if (cached_data := AssetResolver.assets_cache.get(identifier)) is not None:
+                normalized_map[identifier] = cached_data.identifier
+                continue
+            to_check.add(identifier)
+
+        found_ids: set[str] = set()
+        if len(to_check) != 0:
+            with AssetResolver._globaldb.conn.read_ctx() as cursor:
+                for chunk in get_chunks(list(to_check), n=500):
+                    placeholders = ','.join(['?'] * len(chunk))
+                    cursor.execute(
+                        f'SELECT identifier FROM assets WHERE identifier IN ({placeholders})',
+                        tuple(chunk),
+                    )
+                    found_ids.update(row[0] for row in cursor)
+
+        normalized_map.update({identifier: identifier for identifier in found_ids})
+
+        if len(missing_ids := to_check - found_ids) == 0:
+            return normalized_map, set()
+
+        if query_packaged_db is False:
+            return normalized_map, missing_ids
+
+        missing_constant = {identifier for identifier in missing_ids if identifier in AssetResolver._constant_assets}  # noqa: E501
+        missing_non_constant = missing_ids - missing_constant
+        packaged_found: set[str] = set()
+        if len(missing_constant) != 0:
+            with AssetResolver._globaldb.packaged_db_conn().read_ctx() as cursor:
+                for chunk in get_chunks(list(missing_constant), n=500):
+                    placeholders = ','.join(['?'] * len(chunk))
+                    cursor.execute(
+                        f'SELECT identifier FROM assets WHERE identifier IN ({placeholders})',
+                        tuple(chunk),
+                    )
+                    packaged_found.update(row[0] for row in cursor)
+
+        normalized_map.update({identifier: identifier for identifier in packaged_found})
+        unknown_ids = missing_non_constant | (missing_constant - packaged_found)
+        return normalized_map, unknown_ids
 
     @staticmethod
     def resolve_asset_to_class(identifier: str, expected_type: type[T]) -> T:
