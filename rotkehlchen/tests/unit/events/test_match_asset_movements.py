@@ -38,6 +38,19 @@ if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
 
 
+def _match_and_check(database: 'DBHandler', expected_matches: list[tuple[int, int]]) -> None:
+    """Helper function for testing that the expected events are properly matched."""
+    match_asset_movements(database=database)
+    with database.conn.read_ctx() as cursor:
+        assert set(cursor.execute(
+            'SELECT * FROM key_value_cache WHERE name LIKE ?',
+            ('matched_asset_movement_%',),
+        ).fetchall()) == {
+            (f'matched_asset_movement_{movement_id}', str(match_id))
+            for movement_id, match_id in expected_matches
+        }
+
+
 @pytest.mark.parametrize('function_scope_initialize_mock_rotki_notifier', [True])
 def test_match_asset_movements(database: 'DBHandler') -> None:
     """Test that the asset movement matching logic works correctly.
@@ -509,12 +522,7 @@ def test_ignore_transfers_between_tracked_accounts(
 
     # Run matching and check that it matched properly with the receive event instead of seeing
     # the transfer event as a second close match.
-    match_asset_movements(database=database)
-    with database.conn.read_ctx() as cursor:
-        assert cursor.execute(
-            'SELECT * FROM key_value_cache WHERE name LIKE ?',
-            ('matched_asset_movement_%',),
-        ).fetchall() == [(f'matched_asset_movement_{movement_id}', str(match_id))]
+    _match_and_check(database=database, expected_matches=[(movement_id, match_id)])
 
 
 def test_timestamp_tolerance(database: 'DBHandler') -> None:
@@ -558,12 +566,7 @@ def test_timestamp_tolerance(database: 'DBHandler') -> None:
         )
 
     # Run matching and check that it matched properly with the event inside the tolerance.
-    match_asset_movements(database=database)
-    with database.conn.read_ctx() as cursor:
-        assert cursor.execute(
-            'SELECT * FROM key_value_cache WHERE name LIKE ?',
-            ('matched_asset_movement_%',),
-        ).fetchall() == [(f'matched_asset_movement_{movement_id}', str(match_id))]
+    _match_and_check(database=database, expected_matches=[(movement_id, match_id)])
 
 
 def test_adjustments(database: 'DBHandler') -> None:
@@ -631,3 +634,45 @@ def test_adjustments(database: 'DBHandler') -> None:
             )) == 1
             assert events[0].event_subtype == expected_adjustment_subtype
             assert events[0].amount == FVal('0.01')
+
+
+def test_match_by_balance_tracking_event_direction(database: 'DBHandler') -> None:
+    """Test that when there are multiple close matches due to the accounting direction being
+    neutral that we narrow the match based on is balance tracking direction.
+    """
+    with database.conn.write_ctx() as write_cursor:
+        DBHistoryEvents(database).add_history_events(
+            write_cursor=write_cursor,
+            history=[(movement_event := AssetMovement(
+                identifier=(movement_id := 1),
+                location=Location.KRAKEN,
+                event_type=HistoryEventType.WITHDRAWAL,
+                timestamp=TimestampMS(1520000000000),
+                asset=A_USDC,
+                amount=FVal('25'),
+                unique_id='xyz',
+                location_label='Kraken 1',
+            )), EvmEvent(  # Ignored event. Balance tracking direction is OUT (wrong direction).
+                identifier=2,
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=movement_event.timestamp,
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.WITHDRAWAL,
+                event_subtype=HistoryEventSubType.REMOVE_ASSET,
+                asset=movement_event.asset,
+                amount=movement_event.amount,
+            ), EvmEvent(  # Matched event. Balance tracking direction is IN (expected direction).
+                identifier=(match_id := 3),
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=movement_event.timestamp,
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.DEPOSIT,
+                event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+                asset=movement_event.asset,
+                amount=movement_event.amount,
+            )],
+        )
+
+    _match_and_check(database=database, expected_matches=[(movement_id, match_id)])
