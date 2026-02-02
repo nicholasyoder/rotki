@@ -905,7 +905,7 @@ def test_vote_cast_abstain(ethereum_inquirer, ethereum_accounts):
 @pytest.mark.vcr
 @pytest.mark.parametrize('ethereum_accounts', [[ADDY]])
 def test_set_attribute_for_non_primary_name(ethereum_inquirer, ethereum_accounts, add_subgraph_api_key):  # pylint: disable=unused-argument  # noqa: E501
-    """Test that setting ens text attribute for a name that is controlle by but not
+    """Test that setting ens text attribute for a name that is controlled by but not
     set as the primary name of the address works correctly"""
     tx_hash = deserialize_evm_tx_hash('0x07aa7d1ac61fc03f6416a25c0d6cf96f286e2ce84e9b350dd2a9a1bd6426aef2')  # noqa: E501
     user_address = ethereum_accounts[0]
