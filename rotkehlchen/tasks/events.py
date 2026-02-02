@@ -307,15 +307,15 @@ def find_customized_event_duplicate_groups(
             auto_fix_group_ids.add(group_id)
             exact_duplicate_ids.update(group_exact_ids)
 
-        # build asset+direction pairs for manual review detection.
+        # build asset+direction+event_type pairs for manual review detection.
         # gas events can only be duplicates of other gas events
         # and not of events in the same direction
-        customized_pairs: set[tuple[str, EventDirection]] = set()
-        non_customized_pairs: set[tuple[str, EventDirection]] = set()
+        customized_pairs: set[tuple[str, EventDirection, str]] = set()
+        non_customized_pairs: set[tuple[str, EventDirection, str]] = set()
         for event in events:
             if (direction := event.direction()) is None:
                 continue
-            pair = (event.asset, direction)
+            pair = (event.asset, direction, event.event_type)
             if event.customized:
                 customized_pairs.add(pair)
             elif (
