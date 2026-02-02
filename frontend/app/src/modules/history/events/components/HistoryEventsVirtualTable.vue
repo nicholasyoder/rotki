@@ -1,17 +1,17 @@
 <script setup lang="ts">
 import type { DataTableSortData, TablePaginationData } from '@rotki/ui-library';
-import type { DuplicateHandlingStatus } from '@/composables/history/events/use-history-events-filters';
+import type { DuplicateHandlingStatus, HighlightType } from '@/composables/history/events/use-history-events-filters';
 import type { UseHistoryEventsSelectionModeReturn } from '@/modules/history/events/composables/use-selection-mode';
 import type { HistoryEventRequestPayload } from '@/modules/history/events/request-types';
 import type { HistoryEventsTableEmits } from '@/modules/history/events/types';
 import type { Collection } from '@/types/collection';
 import type { HistoryEventEntry, HistoryEventRow } from '@/types/history/events/schemas';
-import { useMediaQuery, useVirtualList } from '@vueuse/core';
 import UpgradeRow from '@/components/history/UpgradeRow.vue';
 import { useHistoryEventsData } from '../composables/use-history-events-data';
 import { useHistoryEventsForms } from '../composables/use-history-events-forms';
 import { useHistoryEventsOperations } from '../composables/use-history-events-operations';
 import { useVirtualRows } from '../composables/use-virtual-rows';
+import { useVirtualScrollHighlight } from '../composables/use-virtual-scroll-highlight';
 import HistoryEventsDetailItem from './HistoryEventsDetailItem.vue';
 import HistoryEventsGroupItem from './HistoryEventsGroupItem.vue';
 import HistoryEventsLoadMoreRow from './HistoryEventsLoadMoreRow.vue';
@@ -31,6 +31,7 @@ const props = defineProps<{
   tableHeightOffset?: number;
   identifiers?: string[];
   highlightedIdentifiers?: string[];
+  highlightTypes?: Record<string, HighlightType>;
   hideActions?: boolean;
   selection?: UseHistoryEventsSelectionModeReturn;
   matchExactEvents?: boolean;
@@ -44,12 +45,6 @@ defineSlots<{
 }>();
 
 const { t } = useI18n({ useScope: 'global' });
-
-// Responsive breakpoint for card layout (840px)
-const isCardLayout = useMediaQuery('(max-width: 860px)');
-
-// Variant based on breakpoint
-const itemVariant = computed<'row' | 'card'>(() => get(isCardLayout) ? 'card' : 'row');
 
 const DEFAULT_TABLE_HEIGHT_OFFSET = 390;
 
@@ -92,26 +87,28 @@ const { flattenedRows, getCardHeight, getRowHeight, loadMoreEvents, toggleMoveme
   displayedEventsMapped,
 );
 
-// Use card heights for mobile layout
-const getItemHeight = computed<(index: number) => number>(() =>
-  get(isCardLayout) ? getCardHeight : getRowHeight,
-);
-
-// Virtual list with dynamic item heights
-const { containerProps, list: virtualList, wrapperProps, scrollTo } = useVirtualList(flattenedRows, {
-  itemHeight: (index: number) => get(getItemHeight)(index),
-  overscan: 15, // Render 15 extra items above/below viewport for smoother fast scrolling
+// Virtual list with scroll and highlight management
+const {
+  containerProps,
+  getHighlightType,
+  getSwapHighlightType,
+  isCardLayout,
+  isHighlighted,
+  isSwapHighlighted,
+  virtualList,
+  wrapperProps,
+} = useVirtualScrollHighlight({
+  flattenedRows,
+  getRowHeight,
+  getCardHeight,
+  highlightedIdentifiers: computed(() => props.highlightedIdentifiers),
+  highlightTypes: computed(() => props.highlightTypes),
+  loading,
+  pagination,
 });
 
-// Scroll to top only when page changes (limit change resets page to 1, which triggers this)
-watch(pagination, (current, previous) => {
-  if (!previous)
-    return;
-
-  if (current.page !== previous.page) {
-    scrollTo(0);
-  }
-});
+// Variant based on breakpoint
+const itemVariant = computed<'row' | 'card'>(() => get(isCardLayout) ? 'card' : 'row');
 
 // Event operations (delete, redecode, etc.)
 const {
@@ -178,22 +175,6 @@ function handleMissingRuleAction(data: Parameters<typeof addMissingRule>[0], gro
   const group = findGroup(groupId);
   if (group)
     addMissingRule(data, group);
-}
-
-// Helper to check if an event should be highlighted
-function isHighlighted(event: HistoryEventEntry): boolean {
-  const identifiers = props.highlightedIdentifiers;
-  if (!identifiers || identifiers.length === 0)
-    return false;
-  return identifiers.includes(event.identifier.toString());
-}
-
-// Helper to check if any event in a swap should be highlighted
-function isSwapHighlighted(swapEvents: HistoryEventEntry[]): boolean {
-  const identifiers = props.highlightedIdentifiers;
-  if (!identifiers || identifiers.length === 0)
-    return false;
-  return swapEvents.some(e => identifiers.includes(e.identifier.toString()));
 }
 
 // Helper to check if a group has hidden events due to ignored assets
@@ -359,6 +340,7 @@ function unlinkGroup(groupId: string): void {
             :group-location-label="findGroup(row.groupId)?.locationLabel ?? undefined"
             :hide-actions="hideActions"
             :highlight="isHighlighted(row.data)"
+            :highlight-type="getHighlightType(row.data)"
             :selection="selection"
             :variant="itemVariant"
             @edit-event="handleEditEvent($event, row.groupId)"
@@ -375,6 +357,7 @@ function unlinkGroup(groupId: string): void {
             :group-location-label="findGroup(row.groupId)?.locationLabel ?? undefined"
             :hide-actions="hideActions"
             :highlight="isSwapHighlighted(row.events)"
+            :highlight-type="getSwapHighlightType(row.events)"
             :selection="selection"
             :variant="itemVariant"
             @edit-event="handleEditEvent($event, row.groupId)"
@@ -399,6 +382,7 @@ function unlinkGroup(groupId: string): void {
             :group-location-label="findGroup(row.groupId)?.locationLabel ?? undefined"
             :hide-actions="hideActions"
             :highlight="isSwapHighlighted(row.events)"
+            :highlight-type="getSwapHighlightType(row.events)"
             :selection="selection"
             :variant="itemVariant"
             @edit-event="handleEditEvent($event, row.groupId)"

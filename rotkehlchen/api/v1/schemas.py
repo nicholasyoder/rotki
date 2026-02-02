@@ -801,6 +801,14 @@ class HistoryEventFilterSchema(
         return {}
 
 
+class EventGroupPositionSchema(HistoryEventFilterSchema):
+    """Schema for finding the position of a group in the filtered event list."""
+    group_identifier = fields.String(required=True)
+
+    def generate_fields_post_validation(self, data: dict[str, Any]) -> dict[str, Any]:
+        return {'group_identifier': data['group_identifier']}
+
+
 class HistoryEventSchema(
     HistoryEventFilterSchema,
     DBPaginationSchema,

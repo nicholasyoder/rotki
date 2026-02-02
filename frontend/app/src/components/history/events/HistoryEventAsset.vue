@@ -10,6 +10,8 @@ import { AssetAmountDisplay, AssetValueDisplay } from '@/modules/amount-display/
 
 const props = defineProps<{
   event: HistoryEventEntry;
+  dense?: boolean;
+  disableOptions?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -57,18 +59,20 @@ function openMenuHandler(event: MouseEvent): void {
     v-model="menuOpened"
     class="flex"
     menu-class="w-[16rem] max-w-[90%] z-[100]"
+    :disabled="disableOptions"
     :popper="{ placement: 'bottom-start', scroll: false, resize: false }"
   >
     <template #activator="{ attrs }">
       <div
-        class="py-2 flex items-center gap-2 overflow-hidden cursor-pointer hover:bg-rui-grey-100 dark:hover:bg-rui-grey-800 rounded-md group/asset -ml-1 pl-1 min-h-14 pr-14 relative"
+        class="flex items-center py-2 gap-2 overflow-hidden"
+        :class="!disableOptions && 'cursor-pointer hover:bg-rui-grey-100 dark:hover:bg-rui-grey-800 rounded-md group/asset -ml-1 pl-1 min-h-14 pr-14 relative'"
         v-bind="attrs"
         @contextmenu="openMenuHandler($event)"
       >
         <AssetDetails
-          size="32px"
+          :size="dense ? '24px' : '32px'"
           icon-only
-          hide-menuca
+          hide-menu
           optimize-for-virtual-scroll
           :asset="event.asset"
           :resolution-options="ASSET_RESOLUTION_OPTIONS"
@@ -82,7 +86,7 @@ function openMenuHandler(event: MouseEvent): void {
             :amount="event.amount"
             :asset="event.asset"
             no-collection-parent
-            class="text-sm"
+            :class="dense ? 'text-xs' : 'text-sm'"
           />
           <AssetValueDisplay
             :key="event.timestamp"
@@ -90,7 +94,8 @@ function openMenuHandler(event: MouseEvent): void {
             :asset="event.asset"
             :value="Zero"
             :timestamp="{ ms: event.timestamp }"
-            class="text-rui-text-secondary text-[13px]"
+            class="text-rui-text-secondary"
+            :class="dense ? 'text-xs' : 'text-[13px]'"
           />
         </div>
         <div
@@ -100,16 +105,19 @@ function openMenuHandler(event: MouseEvent): void {
           {{ symbol }}
         </div>
 
-        <div class="bg-gradient-to-r from-transparent to-white dark:to-rui-grey-900 -my-2 pr-2 h-[calc(100%+1rem)] flex items-center opacity-0 group-hover/asset:opacity-100 z-[1] absolute right-0">
+        <div
+          v-if="!disableOptions"
+          class="bg-gradient-to-r from-transparent to-white dark:to-rui-grey-900 -my-2 pr-2 h-[calc(100%+1rem)] flex items-center opacity-0 group-hover/asset:opacity-100 z-[1] absolute right-0"
+        >
           <RuiButton
             variant="text"
             icon
-            class="!p-2"
+            :class="!dense ? '!p-2' : 'p-0'"
             @click.stop="openMenuHandler($event)"
           >
             <RuiIcon
               name="lu-ellipsis-vertical"
-              size="20"
+              :size="dense ? 16 : 20"
             />
           </RuiButton>
         </div>

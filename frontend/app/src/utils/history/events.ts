@@ -8,7 +8,9 @@ import {
   type EvmSwapEvent,
   type HistoryEvent,
   HistoryEventAccountingRuleStatus,
+  type HistoryEventCollectionRow,
   type HistoryEventEntry,
+  type HistoryEventEntryWithMeta,
   HistoryEventState,
   type OnlineHistoryEvent,
   type SolanaEvent,
@@ -122,4 +124,8 @@ export function hasEventState(event: HistoryEventEntry, state: HistoryEventState
 
 export function isCustomizedEvent(event: HistoryEventEntry): boolean {
   return hasEventState(event, HistoryEventState.CUSTOMIZED);
+}
+
+export function getEventEntryFromCollection(row: HistoryEventCollectionRow): HistoryEventEntryWithMeta {
+  return Array.isArray(row) ? row[0] : row;
 }

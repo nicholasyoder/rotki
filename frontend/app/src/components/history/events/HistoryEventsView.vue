@@ -9,7 +9,6 @@ import HistoryEventsFiltersChips from '@/components/history/events/HistoryEvents
 import HistoryEventsTableActions from '@/components/history/events/HistoryEventsTableActions.vue';
 import HistoryEventsViewButtons from '@/components/history/events/HistoryEventsViewButtons.vue';
 import TablePageLayout from '@/components/layout/TablePageLayout.vue';
-import CardTitle from '@/components/typography/CardTitle.vue';
 import { HISTORY_EVENT_ACTIONS, type HistoryEventAction } from '@/composables/history/events/types';
 import { useHistoryEventsActions } from '@/composables/history/events/use-history-events-actions';
 import { useHistoryEventsFilters } from '@/composables/history/events/use-history-events-filters';
@@ -19,6 +18,7 @@ import { useHistoryEventsDeletion } from '@/modules/history/events/composables/u
 import { useHistoryEventsSelectionActions } from '@/modules/history/events/composables/use-history-events-selection-actions';
 import { useHistoryEventsSelectionMode } from '@/modules/history/events/composables/use-selection-mode';
 import { useHistoryEventsStatus } from '@/modules/history/events/use-history-events-status';
+import { useHistoryStore } from '@/store/history';
 
 defineOptions({ inheritAttrs: false });
 
@@ -113,6 +113,7 @@ const {
   groupLoading,
   groups,
   highlightedIdentifiers,
+  highlightTypes,
   identifiers,
   includes,
   locationLabels,
@@ -177,6 +178,7 @@ const {
 
 const debouncedProcessing = refDebounced(processing, 200);
 const { autoMatchLoading, refreshUnmatchedAssetMovements } = useUnmatchedAssetMovements();
+const { eventsModificationCounter } = storeToRefs(useHistoryStore());
 const backgroundLoading = logicOr(debouncedProcessing, autoMatchLoading);
 
 // Handle updating available event IDs from the table
@@ -225,6 +227,12 @@ watch(backgroundLoading, async (isLoading, wasLoading) => {
     await actions.fetch.dataAndLocations();
 });
 
+// Refresh when events are modified (e.g., from pinned sidebar matching)
+watch(eventsModificationCounter, async (current, previous) => {
+  if (current > previous)
+    await actions.fetch.dataAndLocations();
+});
+
 // Wait until the route doesn't change anymore to give time for the persisted filter to be set.
 watchDebounced(route, async () => {
   await actions.refresh.all();
@@ -269,14 +277,14 @@ watchDebounced(route, async () => {
             v-if="!mainPage"
             #header
           >
-            <CardTitle>
+            <div class="flex items-center gap-x-1">
               <RefreshButton
                 :disabled="refreshing"
                 :tooltip="t('transactions.refresh_tooltip')"
                 @refresh="actions.refresh.all(true)"
               />
               {{ usedTitle }}
-            </CardTitle>
+            </div>
           </template>
 
           <HistoryEventsTableActions
@@ -313,6 +321,7 @@ watchDebounced(route, async () => {
             :exclude-ignored="!toggles.showIgnoredAssets"
             :identifiers="identifiers"
             :highlighted-identifiers="highlightedIdentifiers"
+            :highlight-types="highlightTypes"
             :selection="selectionMode"
             :match-exact-events="toggles.matchExactEvents"
             :duplicate-handling-status="duplicateHandlingStatus"

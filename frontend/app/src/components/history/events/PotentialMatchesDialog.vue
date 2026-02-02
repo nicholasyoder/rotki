@@ -1,19 +1,9 @@
 <script setup lang="ts">
-import type {
-  HistoryEventCollectionRow,
-  HistoryEventEntryWithMeta,
-} from '@/types/history/events/schemas';
-import { bigNumberify } from '@rotki/common';
-import PotentialMatchesList from '@/components/history/events/PotentialMatchesList.vue';
+import type { UnmatchedAssetMovement } from '@/composables/history/events/use-unmatched-asset-movements';
+import type { Pinned } from '@/types/session';
+import PotentialMatchesContent from '@/components/history/events/PotentialMatchesContent.vue';
 import CardTitle from '@/components/typography/CardTitle.vue';
-import { useHistoryEventsApi } from '@/composables/api/history/events';
-import { useAssetMovementMatchingApi } from '@/composables/api/history/events/asset-movement-matching';
-import {
-  type PotentialMatchRow,
-  type UnmatchedAssetMovement,
-  useUnmatchedAssetMovements,
-} from '@/composables/history/events/use-unmatched-asset-movements';
-import { useGeneralSettingsStore } from '@/store/settings/general';
+import { useAreaVisibilityStore } from '@/store/session/visibility';
 
 const modelValue = defineModel<boolean>({ required: true });
 
@@ -23,146 +13,48 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   matched: [];
+  pinned: [];
 }>();
 
 const { t } = useI18n({ useScope: 'global' });
-
-const {
-  matchAssetMovement,
-  refreshUnmatchedAssetMovements,
-} = useUnmatchedAssetMovements();
-
-const { fetchHistoryEvents } = useHistoryEventsApi();
-const { getAssetMovementMatches } = useAssetMovementMatchingApi();
-
-const { assetMovementAmountTolerance, assetMovementTimeRange } = storeToRefs(useGeneralSettingsStore());
-
-function getDefaultHourRange(): number {
-  return get(assetMovementTimeRange) / 3600;
-}
-
-function getDefaultTolerancePercentage(): string {
-  return bigNumberify(get(assetMovementAmountTolerance)).multipliedBy(100).toString();
-}
-
-function percentageToDecimal(percentage: string): string {
-  return bigNumberify(percentage).dividedBy(100).toString();
-}
-
-const searchLoading = ref<boolean>(false);
-const matchingLoading = ref<boolean>(false);
-const potentialMatches = ref<PotentialMatchRow[]>([]);
-const selectedMatchId = ref<number>();
-const searchTimeRange = ref<string>(getDefaultHourRange().toString());
-const onlyExpectedAssets = ref<boolean>(true);
-const tolerancePercentage = ref<string>(getDefaultTolerancePercentage());
-
-function getEventEntry(row: HistoryEventCollectionRow): HistoryEventEntryWithMeta {
-  return Array.isArray(row) ? row[0] : row;
-}
-
-function transformToMatchRow(row: HistoryEventCollectionRow, isCloseMatch: boolean): PotentialMatchRow {
-  const { entry, ...meta } = getEventEntry(row);
-  const eventEntry = { ...entry, ...meta };
-  return {
-    entry: eventEntry,
-    identifier: eventEntry.identifier,
-    isCloseMatch,
-  };
-}
-
-async function searchPotentialMatches(): Promise<void> {
-  set(searchLoading, true);
-  set(potentialMatches, []);
-
-  try {
-    const groupIdentifier = props.movement.groupIdentifier;
-
-    const hours = Number.parseInt(get(searchTimeRange), 10) || getDefaultHourRange();
-    const timeRangeInSeconds = hours * 60 * 60;
-
-    // Get match suggestions from backend
-    const suggestions = await getAssetMovementMatches(groupIdentifier, timeRangeInSeconds, get(onlyExpectedAssets), percentageToDecimal(get(tolerancePercentage)));
-    const allIdentifiers = [...suggestions.closeMatches, ...suggestions.otherEvents];
-
-    if (allIdentifiers.length === 0) {
-      set(potentialMatches, []);
-      return;
-    }
-
-    // Fetch the actual events using the identifiers
-    const response = await fetchHistoryEvents({
-      aggregateByGroupIds: false,
-      identifiers: allIdentifiers.map(String),
-      limit: -1,
-      offset: 0,
-    });
-
-    // Transform and mark close matches
-    const closeMatchSet = new Set(suggestions.closeMatches);
-    const matches = response.entries
-      .map(row => transformToMatchRow(row, closeMatchSet.has(getEventEntry(row).entry.identifier)));
-
-    // Reorder matches to follow the order of allIdentifiers from backend
-    const identifierOrderMap = new Map(allIdentifiers.map((id, index) => [id, index]));
-    matches.sort((a, b) => {
-      const orderA = identifierOrderMap.get(a.entry.identifier) ?? Number.MAX_SAFE_INTEGER;
-      const orderB = identifierOrderMap.get(b.entry.identifier) ?? Number.MAX_SAFE_INTEGER;
-      return orderA - orderB;
-    });
-
-    set(potentialMatches, matches);
-  }
-  catch (error) {
-    console.error('Failed to search potential matches:', error);
-  }
-  finally {
-    set(searchLoading, false);
-  }
-}
-
-async function confirmMatch(): Promise<void> {
-  const matchId = get(selectedMatchId);
-
-  if (!matchId)
-    return;
-
-  set(matchingLoading, true);
-
-  try {
-    const eventEntry = getEventEntry(props.movement.events);
-    const assetMovementId = eventEntry.entry.identifier;
-
-    if (!assetMovementId)
-      return;
-
-    const result = await matchAssetMovement(assetMovementId, matchId);
-
-    if (result.success) {
-      await refreshUnmatchedAssetMovements(true);
-      set(modelValue, false);
-      emit('matched');
-    }
-  }
-  finally {
-    set(matchingLoading, false);
-  }
-}
+const { pinned, showPinned } = storeToRefs(useAreaVisibilityStore());
 
 function closeDialog(): void {
   set(modelValue, false);
 }
 
-watch(modelValue, async (isOpen) => {
-  if (isOpen) {
-    set(potentialMatches, []);
-    set(selectedMatchId, undefined);
-    set(searchTimeRange, getDefaultHourRange().toString());
-    set(onlyExpectedAssets, true);
-    set(tolerancePercentage, getDefaultTolerancePercentage());
-    await searchPotentialMatches();
-  }
-}, { immediate: true });
+function onMatched(): void {
+  set(modelValue, false);
+  emit('matched');
+}
+
+function showUnmatchedInEvents(): void {
+  const pin: Pinned = {
+    name: 'match-asset-movements-pinned',
+    props: { highlightedGroupIdentifier: props.movement.groupIdentifier },
+  };
+
+  set(pinned, pin);
+  set(showPinned, true);
+  set(modelValue, false);
+  emit('pinned');
+}
+
+function showPotentialMatchInEvents(data: { identifier: number; groupIdentifier: string }): void {
+  const pin: Pinned = {
+    name: 'match-asset-movements-pinned',
+    props: {
+      highlightedGroupIdentifier: props.movement.groupIdentifier,
+      highlightedPotentialMatchIdentifier: data.identifier,
+      potentialMatchGroupIdentifier: data.groupIdentifier,
+    },
+  };
+
+  set(pinned, pin);
+  set(showPinned, true);
+  set(modelValue, false);
+  emit('pinned');
+}
 </script>
 
 <template>
@@ -170,7 +62,7 @@ watch(modelValue, async (isOpen) => {
     v-model="modelValue"
     max-width="1000"
   >
-    <RuiCard content-class="max-h-[calc(100vh-210px)]">
+    <RuiCard content-class="!pb-0">
       <template #custom-header>
         <div class="flex items-center justify-between w-full px-4 pt-2">
           <CardTitle>
@@ -186,35 +78,13 @@ watch(modelValue, async (isOpen) => {
         </div>
       </template>
 
-      <PotentialMatchesList
-        v-model:selected-match-id="selectedMatchId"
-        v-model:search-time-range="searchTimeRange"
-        v-model:only-expected-assets="onlyExpectedAssets"
-        v-model:tolerance-percentage="tolerancePercentage"
+      <PotentialMatchesContent
         :movement="movement"
-        :matches="potentialMatches"
-        :loading="searchLoading"
-        @search="searchPotentialMatches()"
+        @close="closeDialog()"
+        @matched="onMatched()"
+        @show-in-events="showPotentialMatchInEvents($event)"
+        @show-unmatched-in-events="showUnmatchedInEvents()"
       />
-
-      <template #footer>
-        <div class="w-full flex justify-end gap-2">
-          <RuiButton
-            variant="text"
-            @click="closeDialog()"
-          >
-            {{ t('common.actions.cancel') }}
-          </RuiButton>
-          <RuiButton
-            color="primary"
-            :disabled="!selectedMatchId"
-            :loading="matchingLoading"
-            @click="confirmMatch()"
-          >
-            {{ t('asset_movement_matching.dialog.confirm_match') }}
-          </RuiButton>
-        </div>
-      </template>
     </RuiCard>
   </RuiDialog>
 </template>

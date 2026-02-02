@@ -11,6 +11,7 @@ import { toMessages } from '@/utils/validation';
 
 defineProps<{
   disabled: boolean;
+  isPinned?: boolean;
 }>();
 
 const SECONDS_PER_HOUR = 3600;
@@ -87,7 +88,8 @@ onMounted(() => {
             color="primary"
             v-bind="attrs"
             :disabled="disabled"
-            class="!rounded-l-none !px-2 h-9"
+            class="!rounded-l-none !px-2"
+            :class="isPinned ? 'h-[30px]' : 'h-9'"
           >
             <RuiIcon
               name="lu-settings"
