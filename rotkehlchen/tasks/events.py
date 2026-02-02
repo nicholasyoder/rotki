@@ -379,6 +379,7 @@ def match_asset_movements(database: 'DBHandler') -> None:
     assets_in_collection_cache: dict[str, tuple[Asset, ...]] = {}
     with events_db.db.conn.read_ctx() as cursor:
         blockchain_accounts = events_db.db.get_blockchain_accounts(cursor=cursor)
+        already_matched_event_ids = get_already_matched_event_ids(cursor=cursor)
         for asset_movement in asset_movements:
             log.debug('MATCH_DEBUG: processing movement')
             if _should_auto_ignore_movement(asset_movement=asset_movement):
@@ -403,6 +404,7 @@ def match_asset_movements(database: 'DBHandler') -> None:
                 cursor=cursor,
                 assets_in_collection=assets_in_collection,
                 blockchain_accounts=blockchain_accounts,
+                already_matched_event_ids=already_matched_event_ids,
                 tolerance=settings.asset_movement_amount_tolerance,
             )) == 1:
                 log.debug('MATCH_DEBUG: found a match')
@@ -410,11 +412,12 @@ def match_asset_movements(database: 'DBHandler') -> None:
                     events_db=events_db,
                     asset_movement=asset_movement,
                     fee_event=fee_event,
-                    matched_event=matched_events[0],
+                    matched_event=(matched_event := matched_events[0]),
                     is_deposit=is_deposit,
                 )
                 log.debug('MATCH_DEBUG: updated events')
                 if success:
+                    already_matched_event_ids.add(matched_event.identifier)  # type: ignore[arg-type]  # ids from db will not be none
                     continue
 
                 log.error(
@@ -662,6 +665,7 @@ def should_exclude_possible_match(
         asset_movement: AssetMovement,
         event: HistoryBaseEntry,
         blockchain_accounts: BlockchainAccounts,
+        already_matched_event_ids: set[int],
         exclude_unexpected_direction: bool = False,
 ) -> bool:
     """Check if the given event should be excluded from being a possible match.
@@ -675,6 +679,7 @@ def should_exclude_possible_match(
        for a withdrawal could have been customized to also be a withdrawal for instance (NEUTRAL
        accounting direction vs OUT balance tracking direction). But if there are multiple close
        matches, the match will be narrowed by the balance tracking direction later.
+    - Event identifier is in the list of already matched ids.
     """
     return (
         event.location == asset_movement.location and
@@ -698,7 +703,7 @@ def should_exclude_possible_match(
         exclude_unexpected_direction and
         (direction := event.maybe_get_direction()) != EventDirection.NEUTRAL and
         direction != (EventDirection.OUT if asset_movement.event_type == HistoryEventType.DEPOSIT else EventDirection.IN)  # noqa: E501
-    )
+    ) or event.identifier in already_matched_event_ids
 
 
 def _match_amount(
@@ -713,6 +718,16 @@ def _match_amount(
     )
 
 
+def get_already_matched_event_ids(
+        cursor: 'DBCursor',
+) -> set[int]:
+    """Get the ids of events that are already matched with asset movements."""
+    return {int(row[0]) for row in cursor.execute(
+        'SELECT value FROM key_value_cache WHERE name LIKE ?;',
+        ('matched_asset_movement_%',),
+    )}
+
+
 def find_asset_movement_matches(
         events_db: DBHistoryEvents,
         asset_movement: AssetMovement,
@@ -720,8 +735,9 @@ def find_asset_movement_matches(
         fee_event: AssetMovement | None,
         match_window: int,
         cursor: 'DBCursor',
-        assets_in_collection: tuple['Asset', ...] | None = None,
-        blockchain_accounts: BlockchainAccounts | None = None,
+        assets_in_collection: tuple['Asset', ...],
+        blockchain_accounts: BlockchainAccounts,
+        already_matched_event_ids: set[int],
         tolerance: FVal | None = None,
 ) -> list[HistoryBaseEntry]:
     """Find events that closely match what the corresponding event for the given asset movement
@@ -735,11 +751,6 @@ def find_asset_movement_matches(
     else:
         from_ts = asset_movement_timestamp - TIMESTAMP_TOLERANCE
         to_ts = asset_movement_timestamp + match_window
-
-    if assets_in_collection is None:
-        assets_in_collection = GlobalDBHandler.get_assets_in_same_collection(
-            identifier=asset_movement.asset.identifier,
-        )
 
     if tolerance is None:
         tolerance = CachedSettings().get_settings().asset_movement_amount_tolerance
@@ -758,8 +769,6 @@ def find_asset_movement_matches(
         ),
     )
     log.debug(f'MATCH_DEBUG: loaded {len(possible_matches)} possible matches')
-    if blockchain_accounts is None:
-        blockchain_accounts = events_db.db.get_blockchain_accounts(cursor=cursor)
 
     close_matches: list[HistoryBaseEntry] = []
     amount_with_fee: FVal | None = None
@@ -771,6 +780,7 @@ def find_asset_movement_matches(
             asset_movement=asset_movement,
             event=event,
             blockchain_accounts=blockchain_accounts,
+            already_matched_event_ids=already_matched_event_ids,
             exclude_unexpected_direction=True,
         ):
             continue
