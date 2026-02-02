@@ -152,6 +152,7 @@ from rotkehlchen.tasks.events import (
     ENTRY_TYPES_TO_EXCLUDE_FROM_MATCHING,
     find_asset_movement_matches,
     find_customized_event_duplicate_groups,
+    get_already_matched_event_ids,
     get_unmatched_asset_movements,
     process_asset_movements,
     should_exclude_possible_match,
@@ -3691,6 +3692,7 @@ class RestAPI:
 
         with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
             blockchain_accounts = self.rotkehlchen.data.db.get_blockchain_accounts(cursor=cursor)
+            already_matched_event_ids = get_already_matched_event_ids(cursor=cursor)
             close_match_identifiers = [x.identifier for x in find_asset_movement_matches(
                 events_db=events_db,
                 asset_movement=asset_movement,  # type: ignore  # filtered by entry_types
@@ -3700,6 +3702,7 @@ class RestAPI:
                 cursor=cursor,
                 assets_in_collection=assets_in_collection,
                 blockchain_accounts=blockchain_accounts,
+                already_matched_event_ids=already_matched_event_ids,
                 tolerance=tolerance,
             )]
 
@@ -3709,7 +3712,7 @@ class RestAPI:
                     order_by_rules=[(f'ABS(timestamp - {asset_movement.timestamp})', True)],
                     from_ts=Timestamp(asset_movement_timestamp - time_range),
                     to_ts=Timestamp(asset_movement_timestamp + time_range),
-                    ignored_ids=[str(x) for x in close_match_identifiers] + [str(asset_movement.identifier)],  # noqa: E501
+                    ignored_ids=close_match_identifiers + [asset_movement.identifier],  # type: ignore[arg-type]  # ids from db will not be none
                     assets=assets_in_collection if only_expected_assets else None,
                     entry_types=IncludeExcludeFilterData(
                         values=ENTRY_TYPES_TO_EXCLUDE_FROM_MATCHING,
@@ -3727,6 +3730,7 @@ class RestAPI:
                     asset_movement=asset_movement,  # type: ignore[arg-type]  # will be an asset movement - the query is filtered by entry type
                     event=event,
                     blockchain_accounts=blockchain_accounts,
+                    already_matched_event_ids=already_matched_event_ids,
                 )
             ],
         }))

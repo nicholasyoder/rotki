@@ -404,6 +404,30 @@ def test_get_possible_matches(rotkehlchen_api_server: 'APIServer') -> None:
             'other_events': expected_other_events,
         }
 
+    with rotki.data.db.conn.write_ctx() as write_cursor:
+        for idx, value in enumerate(already_matched_ids := [5, 3]):
+            rotki.data.db.set_dynamic_cache(
+                write_cursor=write_cursor,
+                name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
+                value=value,
+                identifier=100 + idx,  # simulate matching with some other movement's id
+            )
+
+    result = assert_proper_response_with_result(
+        response=requests.post(
+            api_url_for(rotkehlchen_api_server, 'matchassetmovementsresource'),
+            json={
+                'asset_movement': matched_movement.group_identifier,
+                'time_range': HOUR_IN_SECONDS * 2,
+                'tolerance': '0.002',
+            },
+        ),
+        rotkehlchen_api_server=rotkehlchen_api_server,
+    )
+    for already_matched_id in already_matched_ids:
+        assert already_matched_id not in result['close_matches']
+        assert already_matched_id not in result['other_events']
+
 
 def test_get_history_events_with_matched_asset_movements(
         rotkehlchen_api_server: 'APIServer',
