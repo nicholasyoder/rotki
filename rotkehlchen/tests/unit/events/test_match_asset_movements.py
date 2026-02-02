@@ -676,3 +676,53 @@ def test_match_by_balance_tracking_event_direction(database: 'DBHandler') -> Non
         )
 
     _match_and_check(database=database, expected_matches=[(movement_id, match_id)])
+
+
+def test_match_coinbasepro_coinbase_transfer(database: 'DBHandler') -> None:
+    """Test that we properly match transfers between coinbasepro and coinbase.
+    Regression test for matching exchange to exchange movements even if the asset is
+    for an unsupported chain (ICP in this case).
+    """
+    with database.conn.write_ctx() as write_cursor:
+        DBHistoryEvents(database).add_history_events(
+            write_cursor=write_cursor,
+            history=[AssetMovement(
+                identifier=1,
+                location=Location.COINBASEPRO,
+                event_type=HistoryEventType.WITHDRAWAL,
+                timestamp=TimestampMS(1670000330000),
+                asset=A_USDC,
+                amount=FVal('2.256789'),
+                unique_id='xyz1',
+            ), AssetMovement(
+                identifier=2,
+                location=Location.COINBASE,
+                event_type=HistoryEventType.DEPOSIT,
+                timestamp=TimestampMS(1670000329000),
+                asset=A_USDC,
+                amount=FVal('2.256789'),
+                unique_id='xyz2',
+                notes='Transfer funds from CoinbasePro',
+            ), AssetMovement(
+                identifier=3,
+                location=Location.COINBASEPRO,
+                event_type=HistoryEventType.WITHDRAWAL,
+                timestamp=TimestampMS(1670000315000),
+                asset=Asset('ICP'),
+                amount=FVal('0.0098765'),
+                unique_id='xyz3',
+            ), AssetMovement(
+                identifier=4,
+                location=Location.COINBASE,
+                event_type=HistoryEventType.DEPOSIT,
+                timestamp=TimestampMS(1670000313000),
+                asset=Asset('ICP'),
+                amount=FVal('0.0098765'),
+                unique_id='xyz4',
+                notes='Transfer funds from CoinbasePro',
+            )],
+        )
+
+    # Since these are exchange to exchange movements, there are two entries for each pair,
+    # one entry for every asset movement.
+    _match_and_check(database=database, expected_matches=[(1, 2), (2, 1), (3, 4), (4, 3)])
