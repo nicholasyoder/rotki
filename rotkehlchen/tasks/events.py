@@ -669,10 +669,12 @@ def should_exclude_possible_match(
     - Event is from the same exchange as the asset movement
     - Event is an INFORMATIONAL/APPROVE event
     - Event is a TRANSFER/NONE between tracked accounts.
-    - exclude_unexpected_direction is True and the event has the opposite direction of what would
-       be expected based on the asset movement's type. This is used during automatic matching but
-       is not used when getting possible matches for manual matching since there may be edge cases
-       where an event was customized with the wrong event types.
+    - exclude_unexpected_direction is True and the event direction opposes the expected direction
+       for the movement type. Used for close matches only (allows manually matching edge cases).
+       Uses accounting direction instead of balance tracking direction, since the onchain match
+       for a withdrawal could have been customized to also be a withdrawal for instance (NEUTRAL
+       accounting direction vs OUT balance tracking direction). But if there are multiple close
+       matches, the match will be narrowed by the balance tracking direction later.
     """
     return (
         event.location == asset_movement.location and
@@ -811,11 +813,21 @@ def find_asset_movement_matches(
         asset_matches: list[HistoryBaseEntry] = []
         tx_ref_matches: list[HistoryBaseEntry] = []
         counterparty_matches: list[HistoryBaseEntry] = []
+        event_type_matches: list[HistoryBaseEntry] = []
         tx_ref = asset_movement.extra_data.get('transaction_id') if asset_movement.extra_data is not None else None  # noqa: E501
         for match in close_matches:
             # Maybe match by exact asset match (matched events can have any asset in the collection)  # noqa: E501
             if match.asset == asset_movement.asset:
                 asset_matches.append(match)
+
+            if (  # Maybe match by balance tracking event direction
+                (match_direction := match.maybe_get_direction(
+                    for_balance_tracking=True,
+                )) != EventDirection.NEUTRAL and
+                ((is_deposit and match_direction == EventDirection.OUT) or
+                (not is_deposit and match_direction == EventDirection.IN))
+            ):
+                event_type_matches.append(match)
 
             if isinstance(match, OnchainEvent):
                 if tx_ref is not None and str(match.tx_ref) == tx_ref:  # Maybe match by tx ref
@@ -826,7 +838,7 @@ def find_asset_movement_matches(
                     # part of a properly decoded onchain operation. Monerium is an exception.
                     counterparty_matches.append(match)
 
-        for match_list in (tx_ref_matches, asset_matches, counterparty_matches):
+        for match_list in (tx_ref_matches, asset_matches, counterparty_matches, event_type_matches):  # noqa: E501
             if len(match_list) == 1:
                 log.debug('MATCH_DEBUG: done finding matches')
                 return match_list
