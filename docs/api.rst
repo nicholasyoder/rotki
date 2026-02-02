@@ -6972,65 +6972,6 @@ Import Accounting rules
    :statuscode 500: Internal rotki error.
 
 
-Export action history to CSV
-================================
-
-.. http:get:: /api/(version)/history/export
-
-   .. note::
-      This endpoint also accepts parameters as query arguments.
-
-   Doing a GET on the history export endpoint will export the last previously queried history to CSV files and save them in the given directory. If history has not been queried before an error is returned.
-
-   **Example Request**:
-
-   .. http:example:: curl wget httpie python-requests
-
-      GET /api/1/history/export HTTP/1.1
-      Host: localhost:5042
-      Content-Type: application/json;charset=UTF-8
-
-      {"directory_path": "/home/username/path/to/csvdir"}
-
-   :reqjson str directory_path: The directory in which to write the exported CSV files
-   :param str directory_path: The directory in which to write the exported CSV files
-
-   **Example Response**:
-
-   .. sourcecode:: http
-
-      HTTP/1.1 200 OK
-      Content-Type: application/json
-
-      {
-          "result": true
-          "message": ""
-      }
-
-   :resjson bool result: Boolean denoting success or failure of the query
-   :statuscode 200: File were exported successfully
-   :statuscode 400: Provided JSON is in some way malformed or given string is not a directory.
-   :statuscode 409: No user is currently logged in. No history has been processed. No permissions to write in the given directory. Check error message.
-   :statuscode 500: Internal rotki error.
-
-
-Download action history CSV
-================================
-
-.. http:get:: /api/(version)/history/download
-
-
-   Doing a GET on the history download endpoint will download the last previously queried history to CSV files and return it in a zip file. If history has not been queried before an error is returned.
-
-   **Example Request**:
-
-   .. http:example:: curl wget httpie python-requests
-
-      GET /api/1/history/download HTTP/1.1
-      Host: localhost:5042
-      Content-Type: application/json;charset=UTF-8
-
-
 Get missing acquisitions and prices
 ====================================
 
@@ -7383,6 +7324,70 @@ Get saved events of a PnL Report
    :statuscode 400: Report id does not exist.
    :statuscode 409: No user is currently logged in.
    :statuscode 500: Internal rotki error.
+
+Export PnL report CSV
+======================
+
+.. http:get:: /api/(version)/reports/(report_id)/export
+
+   .. note::
+      This exports the CSV for a specific saved PnL report using data from the
+      transient DB, so it works after app restart.
+
+   Doing a GET on this endpoint will export the PnL report for the given report id
+   to CSV files and save them in the given directory.
+
+   **Example Request**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      GET /api/1/reports/4/export HTTP/1.1
+      Host: localhost:5042
+      Content-Type: application/json;charset=UTF-8
+
+      {"directory_path": "/home/username/path/to/csvdir"}
+
+   :reqjson str directory_path: The directory in which to write the exported CSV files
+   :param str directory_path: The directory in which to write the exported CSV files
+
+   **Example Response**:
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+          "result": true,
+          "message": ""
+      }
+
+   :resjson bool result: Boolean denoting success or failure of the export
+   :statuscode 200: File exported successfully
+   :statuscode 409: No user is currently logged in. Report not found. No permissions to write in the given directory. Check error message.
+   :statuscode 500: Internal rotki error.
+
+
+Download PnL report CSV
+========================
+
+.. http:get:: /api/(version)/reports/(report_id)/download
+
+   .. note::
+      This downloads the CSV for a specific saved PnL report using data from the
+      transient DB, so it works after app restart.
+
+   Doing a GET on this endpoint will download the PnL report for the given report id
+   as a zip file. If no report exists, an error is returned.
+
+   **Example Request**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      GET /api/1/reports/4/download HTTP/1.1
+      Host: localhost:5042
+      Content-Type: application/json;charset=UTF-8
+
 
 Purge PnL report and all its data
 ====================================

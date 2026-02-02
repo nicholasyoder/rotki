@@ -1278,16 +1278,6 @@ class RestAPI:
         response_data = self.history_service.get_history_actionable_items()
         return make_response_from_dict(response_data)
 
-    def export_processed_history_csv(self, directory_path: Path) -> Response:
-        response_data = self.history_service.export_processed_history_csv(directory_path)
-        return make_response_from_dict(response_data)
-
-    def download_processed_history_csv(self) -> Response:
-        response = self.history_service.download_processed_history_csv()
-        if isinstance(response, Response):
-            return response
-        return make_response_from_dict(response)
-
     def get_history_status(self) -> Response:
         response_data = self.history_service.get_history_status()
         return make_response_from_dict(response_data)

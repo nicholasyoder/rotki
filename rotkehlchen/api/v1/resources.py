@@ -25,6 +25,7 @@ from rotkehlchen.api.v1.common_resources import BaseMethodView
 from rotkehlchen.api.v1.parser import ignore_kwarg_parser, resource_parser
 from rotkehlchen.api.v1.schemas import (
     AccountingReportDataSchema,
+    AccountingReportExportSchema,
     AccountingReportsSchema,
     AccountingRuleConflictsPagination,
     AccountingRulesQuerySchema,
@@ -113,7 +114,6 @@ from rotkehlchen.api.v1.schemas import (
     HistoricalPricesPerAssetSchema,
     HistoryEventSchema,
     HistoryEventsDeletionSchema,
-    HistoryExportingSchema,
     HistoryProcessingExportSchema,
     HistoryProcessingSchema,
     IgnoredActionsModifySchema,
@@ -1618,21 +1618,32 @@ class AccountingReportDataResource(BaseMethodView):
         return self.rest_api.get_report_data(filter_query=filter_query)
 
 
-class HistoryExportingResource(BaseMethodView):
+class AccountingReportExportResource(BaseMethodView):
 
-    get_schema = HistoryExportingSchema()
-
-    @require_loggedin_user()
-    @use_kwargs(get_schema, location='json_and_query')
-    def get(self, directory_path: Path) -> Response:
-        return self.rest_api.export_processed_history_csv(directory_path=directory_path)
-
-
-class HistoryDownloadingResource(BaseMethodView):
+    get_schema = AccountingReportExportSchema()
 
     @require_loggedin_user()
-    def get(self) -> Response:
-        return self.rest_api.download_processed_history_csv()
+    @use_kwargs(get_schema, location='json_and_query_and_view_args')
+    def get(self, report_id: int, directory_path: Path) -> Response:
+        return make_response_from_dict(
+            self.rest_api.history_service.export_pnl_report_csv(
+                report_id=report_id,
+                directory_path=directory_path,
+            ),
+        )
+
+
+class AccountingReportDownloadResource(BaseMethodView):
+
+    get_schema = AccountingReportsSchema(required_report_id=True)
+
+    @require_loggedin_user()
+    @use_kwargs(get_schema, location='view_args')
+    def get(self, report_id: int) -> Response:
+        response = self.rest_api.history_service.download_pnl_report_csv(report_id=report_id)
+        if isinstance(response, Response):
+            return response
+        return make_response_from_dict(response)
 
 
 class PeriodicDataResource(BaseMethodView):
