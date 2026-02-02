@@ -3773,7 +3773,7 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
     with db_v50.conn.read_ctx() as cursor:
         assert column_exists(cursor=cursor, table_name='history_events', column_name='event_identifier')  # noqa: E501
         assert not column_exists(cursor=cursor, table_name='history_events', column_name='group_identifier')  # noqa: E501
-        assert cursor.execute('SELECT COUNT(*) FROM chain_events_info').fetchone()[0] == 5
+        assert cursor.execute('SELECT COUNT(*) FROM chain_events_info').fetchone()[0] == 6
         assert cursor.execute('SELECT identifier, event_identifier, sequence_index, asset FROM history_events WHERE identifier <= 9 ORDER BY identifier').fetchall() == (result := [  # noqa: E501
             (1, 'TEST_EVENT_1', 0, 'ETH'),
             (2, 'TEST_EVENT_2', 0, 'BTC'),
@@ -3828,6 +3828,7 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
             (11, 'TEST_EVENT_4', 1, 'USD', '200.00', 'trade', 'receive'),
             (12, 'TEST_EVENT_5', 0, 'USD', '200.00', 'trade', 'spend'),
             (13, 'TEST_EVENT_5', 1, 'USD', '200.00', 'trade', 'receive'),
+            kraken_deposit := (14, '10x8f91a9b98a856282cdad74d9b8a683504c13e3c9d810e4e22bd0ca2eb9d71800', 1, 'ETH', '100', 'deposit', 'deposit asset'),  # noqa: E501
         ])
 
     db_v50.logout()
@@ -3840,7 +3841,7 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
     with db.conn.read_ctx() as cursor:
         assert not column_exists(cursor=cursor, table_name='history_events', column_name='event_identifier')  # noqa: E501
         assert column_exists(cursor=cursor, table_name='history_events', column_name='group_identifier')  # noqa: E501
-        assert cursor.execute('SELECT COUNT(*) FROM chain_events_info').fetchone()[0] == 5
+        assert cursor.execute('SELECT COUNT(*) FROM chain_events_info').fetchone()[0] == 6
         assert cursor.execute('SELECT identifier, group_identifier, sequence_index, asset FROM history_events WHERE identifier <= 9 ORDER BY identifier').fetchall() == result  # noqa: E501
         assert cursor.execute(  # Verify the unique constraint was updated
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='history_events'",
@@ -3890,6 +3891,7 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
         ).fetchall() == ([
             (10, 'TEST_EVENT_4', 0, 'eip155:1/erc20:0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', '200.000000', 'trade', 'spend'),  # noqa: E501
             (11, 'TEST_EVENT_4', 1, 'USD', '200.00', 'trade', 'receive'),
+            kraken_deposit,
         ])
 
     db.logout()

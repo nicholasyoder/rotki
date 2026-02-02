@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from pysqlcipher3 import dbapi2 as sqlcipher
 
+from rotkehlchen.chain.ethereum.constants import CPT_KRAKEN, CPT_POLONIEX, CPT_UPHOLD
 from rotkehlchen.chain.evm.decoding.safe.constants import CPT_SAFE_MULTISIG
 from rotkehlchen.constants import (
     CONTRACT_TAG_BACKGROUND_COLOR,
@@ -289,6 +290,7 @@ def upgrade_v50_to_v51(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
             WHERE history_events.identifier = chain_events_info.identifier
                 AND chain_events_info.counterparty IS NOT NULL
                 AND entry_type != ?
+                AND chain_events_info.counterparty NOT IN (?, ?, ?)
                 AND history_events.identifier IN (
                     SELECT parent_identifier FROM history_events_mappings
                     WHERE name = ? AND value = ?
@@ -306,6 +308,9 @@ def upgrade_v50_to_v51(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
                 HistoryEventSubType.WITHDRAW_FROM_PROTOCOL.serialize(),
                 # WHERE: exclude asset movements, only customized, only with counterparty
                 HistoryBaseEntryType.ASSET_MOVEMENT_EVENT.value,
+                CPT_POLONIEX,  # exclude the 3 exchanges where we track deposits by address
+                CPT_KRAKEN,
+                CPT_UPHOLD,
                 HISTORY_MAPPING_KEY_STATE,
                 HistoryMappingState.CUSTOMIZED.serialize_for_db(),
                 HistoryEventType.DEPOSIT.serialize(),
