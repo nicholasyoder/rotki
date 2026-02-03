@@ -1,3 +1,5 @@
+from collections import defaultdict
+from collections.abc import Callable
 from typing import Any
 
 from hexbytes import HexBytes
@@ -61,112 +63,105 @@ from rotkehlchen.types import (
 from rotkehlchen.utils.version_check import VersionCheckResult
 
 
-def _process_entry(entry: Any) -> str | (list[Any] | (dict[str, Any] | Any)):
-    if isinstance(entry, FVal):
-        return str(entry)
-    if isinstance(entry, list):
-        return [_process_entry(x) for x in entry]
+def _process_dict(entry: dict) -> dict:
+    new_dict = {}
+    for k, v in entry.items():
+        if isinstance(k, Asset) is True:
+            k = k.identifier  # noqa: PLW2901
+        elif isinstance(k, HistoryEventType | HistoryEventSubType | EventCategory | Location | AccountingEventType) is True:  # noqa: E501
+            k = _process_entry(k)  # noqa: PLW2901
+        new_dict[k] = _process_entry(v)
+    return new_dict
 
-    if isinstance(entry, dict | AttributeDict):
-        new_dict = {}
-        for k, v in entry.items():
-            if isinstance(k, Asset) is True:
-                k = k.identifier  # noqa: PLW2901
-            elif isinstance(k, HistoryEventType | HistoryEventSubType | EventCategory | Location | AccountingEventType) is True:  # noqa: E501
-                k = _process_entry(k)  # noqa: PLW2901
-            new_dict[k] = _process_entry(v)
-        return new_dict
-    if isinstance(entry, HexBytes):
-        return entry.to_0x_hex()
-    if isinstance(entry, LocationData):
-        return {
-            'time': entry.time,
-            'location': str(Location.deserialize_from_db(entry.location)),
-            'usd_value': entry.usd_value,
-        }
-    if isinstance(entry, SingleDBAssetBalance):
-        return {
-            'time': entry.time,
-            'category': str(entry.category),
-            'amount': str(entry.amount),
-            'usd_value': str(entry.usd_value),
-        }
-    if isinstance(entry, DBAssetBalance):
-        return {
-            'time': entry.time,
-            'category': str(entry.category),
-            'asset': entry.asset.identifier,
-            'amount': str(entry.amount),
-            'usd_value': str(entry.usd_value),
-        }
-    if isinstance(entry, (
-            AddressbookEntry |
-            AddressbookEntryWithSource |
-            AssetBalance |
-            DefiProtocol |
-            MakerdaoVault |
-            XpubData |
-            NodeName |
-            NodeName |
-            SingleBlockchainAccountData |
-            SupportedBlockchain |
-            HistoryEventType |
-            HistoryEventSubType |
-            EventDirection |
-            DBSettings |
-            TxAccountingTreatment |
-            EventCategoryDetails |
-            CalendarEntry |
-            ReminderEntry |
-            CounterpartyDetails
-    )):
-        return entry.serialize()
-    if isinstance(entry, (
-            MakerdaoVault |
-            Balance |
-            CompoundBalance |
-            LiquidityPool |
-            LiquidityPoolAsset |
-            ManuallyTrackedBalanceWithValue |
-            Trove |
-            DillBalance |
-            NFTResult |
-            ExchangeLocationID |
-            WeightedNode
-    )):
-        return process_result(entry.serialize())
-    if isinstance(entry, (
-            VersionCheckResult |
-            DSRCurrentBalances |
-            VaultEvent |
-            DefiBalance |
-            DefiProtocolBalances |
-            BlockchainAccountData
-    )):
-        return process_result(entry._asdict())
-    if isinstance(entry, tuple):
-        return [_process_entry(x) for x in entry]
-    if isinstance(entry, Asset):
-        return entry.identifier
-    if isinstance(entry, (
-            Location |
-            KrakenAccountType |
-            Location |
-            VaultEventType |
-            CurrentPriceOracle |
-            HistoricalPriceOracle |
-            BalanceType |
-            CostBasisMethod |
-            TokenKind |
-            HistoryBaseEntryType |
-            EventCategory |
-            AccountingEventType |
-            Version |
-            WSMessageType
-    )):
-        return str(entry)
-    if isinstance(entry, ChainID):
-        return entry.to_name()
+
+# Map types to their handler functions
+HANDLERS: dict[type, Callable[[Any], Any]] = {
+    HexBytes: lambda x: x.to_0x_hex(),
+    Asset: lambda x: x.identifier,
+    ChainID: lambda x: x.to_name(),
+    LocationData: lambda entry: {
+        'time': entry.time,
+        'location': str(Location.deserialize_from_db(entry.location)),
+        'usd_value': entry.usd_value,
+    },
+    SingleDBAssetBalance: lambda entry: {
+        'time': entry.time,
+        'category': str(entry.category),
+        'amount': str(entry.amount),
+        'usd_value': str(entry.usd_value),
+    },
+    DBAssetBalance: lambda entry: {
+        'time': entry.time,
+        'category': str(entry.category),
+        'asset': entry.asset.identifier,
+        'amount': str(entry.amount),
+        'usd_value': str(entry.usd_value),
+    },
+}
+HANDLERS.update(dict.fromkeys((list, tuple), lambda x: [_process_entry(z) for z in x]))
+HANDLERS.update(dict.fromkeys((
+    FVal,
+    Location,
+    KrakenAccountType,
+    VaultEventType,
+    CurrentPriceOracle,
+    HistoricalPriceOracle,
+    BalanceType,
+    CostBasisMethod,
+    TokenKind,
+    HistoryBaseEntryType,
+    EventCategory,
+    AccountingEventType,
+    Version,
+    WSMessageType,
+), str))
+HANDLERS.update(dict.fromkeys((
+    AddressbookEntry,
+    AddressbookEntryWithSource,
+    AssetBalance,
+    DefiProtocol,
+    MakerdaoVault,
+    XpubData,
+    NodeName,
+    SingleBlockchainAccountData,
+    SupportedBlockchain,
+    HistoryEventType,
+    HistoryEventSubType,
+    EventDirection,
+    DBSettings,
+    TxAccountingTreatment,
+    EventCategoryDetails,
+    CalendarEntry,
+    ReminderEntry,
+    CounterpartyDetails,
+), lambda x: x.serialize()))
+HANDLERS.update(dict.fromkeys((dict, defaultdict, AttributeDict), _process_dict))
+HANDLERS.update(dict.fromkeys((
+    MakerdaoVault,
+    Balance,
+    CompoundBalance,
+    LiquidityPool,
+    LiquidityPoolAsset,
+    ManuallyTrackedBalanceWithValue,
+    Trove,
+    DillBalance,
+    NFTResult,
+    ExchangeLocationID,
+    WeightedNode,
+), lambda x: _process_dict(x.serialize())))
+HANDLERS.update(dict.fromkeys((
+    VersionCheckResult,
+    DSRCurrentBalances,
+    VaultEvent,
+    DefiBalance,
+    DefiProtocolBalances,
+    BlockchainAccountData,
+), lambda x: _process_dict(x._asdict())))
+
+
+def _process_entry(entry: Any) -> str | (list[Any] | (dict[str, Any] | Any)):
+    if (handler := HANDLERS.get(type(entry))) is not None:
+        return handler(entry)
 
     # else
     return entry
