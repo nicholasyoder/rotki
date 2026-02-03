@@ -729,3 +729,91 @@ def test_match_coinbasepro_coinbase_transfer(database: 'DBHandler') -> None:
     # Since these are exchange to exchange movements, there are two entries for each pair,
     # one entry for every asset movement.
     _match_and_check(database=database, expected_matches=[(1, 2), (2, 1), (3, 4), (4, 3)])
+
+
+def test_deposit_to_anon(database: 'DBHandler') -> None:
+    """Regression test for wrong pairing when a deposit is followed by a withdrawal.
+
+    Scenario: user deposits onchain to Coinbase, then Coinbase withdraws to a different
+    address on the same chain. We expect the deposit movement to match the outgoing
+    onchain transfer and the withdrawal movement to match the incoming transfer. In the
+    reported bug these get swapped due to the matching heuristics.
+    """
+    with database.conn.write_ctx() as write_cursor:
+        (events_db := DBHistoryEvents(database)).add_history_events(
+            write_cursor=write_cursor,
+            history=[(spend_event := EvmEvent(  # onchain spend to exchange
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(1700000000000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.SPEND,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_USDC,
+                amount=FVal('100'),
+                location_label=make_evm_address(),
+                address=make_evm_address(),
+            )), (deposit_movement := AssetMovement(
+                location=Location.COINBASE,
+                event_type=HistoryEventType.DEPOSIT,
+                timestamp=TimestampMS(1700000050000),
+                asset=A_USDC,
+                amount=FVal('100'),
+                unique_id='cb_deposit_1',
+                location_label='Coinbase 1',
+            )), (withdrawal_movement := AssetMovement(
+                location=Location.COINBASE,
+                event_type=HistoryEventType.WITHDRAWAL,
+                timestamp=TimestampMS(1700000300000),
+                asset=A_USDC,
+                amount=FVal('100'),
+                unique_id='cb_withdrawal_1',
+                location_label='Coinbase 1',
+            )), (receive_event := EvmEvent(  # onchain receive from exchange
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(1700000350000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_USDC,
+                amount=FVal('100'),
+                location_label=make_evm_address(),
+                address=make_evm_address(),
+            )),
+        ])
+
+    with database.conn.read_ctx() as cursor:
+        inserted_events = events_db.get_history_events_internal(
+            cursor=cursor,
+            filter_query=HistoryEventFilterQuery.make(
+                group_identifiers=[
+                    spend_event.group_identifier,
+                    deposit_movement.group_identifier,
+                    withdrawal_movement.group_identifier,
+                    receive_event.group_identifier,
+                ],
+                order_by_rules=[('history_events_identifier', True)],
+            ),
+        )
+
+    match_asset_movements(database=database)
+    group_id_to_identifier = {
+        event.group_identifier: event.identifier
+        for event in inserted_events
+    }
+
+    with database.conn.read_ctx() as cursor:
+        deposit_match = database.get_dynamic_cache(  # type: ignore
+            cursor=cursor,
+            name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
+            identifier=group_id_to_identifier[deposit_movement.group_identifier],  # deposit id
+        )
+        withdrawal_match = database.get_dynamic_cache(  # type: ignore
+            cursor=cursor,
+            name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
+            identifier=group_id_to_identifier[withdrawal_movement.group_identifier],  # withdrawal_id  # noqa: E501
+        )
+
+    assert deposit_match == group_id_to_identifier[spend_event.group_identifier]  # outgoing_event_id  # noqa: E501
+    assert withdrawal_match == group_id_to_identifier[receive_event.group_identifier]  # incoming_event_id  # noqa: E501
