@@ -75,7 +75,6 @@ def upgrade_v50_to_v51(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
         """Add new tables
         - lido_csm_node_operators
         - lido_csm_node_operator_metrics
-        - event_metrics
         - solana_ata_address_mappings
         - history_event_links
         - history_event_link_ignores
@@ -105,50 +104,6 @@ def upgrade_v50_to_v51(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
                 ON UPDATE CASCADE ON DELETE CASCADE
         );
         """)
-        write_cursor.execute("""
-        CREATE TABLE IF NOT EXISTS event_metrics (
-            id INTEGER NOT NULL PRIMARY KEY,
-            event_identifier INTEGER NOT NULL REFERENCES history_events(identifier) ON DELETE CASCADE,
-            location CHAR(1) NOT NULL,
-            location_label TEXT,
-            protocol TEXT,
-            metric_key TEXT NOT NULL,
-            metric_value TEXT NOT NULL,
-            asset TEXT NOT NULL,
-            timestamp INTEGER NOT NULL,
-            sequence_index INTEGER NOT NULL,
-            sort_key INTEGER NOT NULL,
-            UNIQUE(event_identifier, location_label, protocol, metric_key, asset)
-        );
-        """)  # noqa: E501
-        write_cursor.execute(
-            'CREATE INDEX IF NOT EXISTS idx_event_metrics_event '
-            'ON event_metrics(event_identifier);',
-        )
-        write_cursor.execute(
-            'CREATE INDEX IF NOT EXISTS idx_event_metrics_location_label '
-            'ON event_metrics(location_label);',
-        )
-        write_cursor.execute(
-            'CREATE INDEX IF NOT EXISTS idx_event_metrics_protocol '
-            'ON event_metrics(protocol);',
-        )
-        write_cursor.execute(
-            'CREATE INDEX IF NOT EXISTS idx_event_metrics_metric_key '
-            'ON event_metrics(metric_key);',
-        )
-        write_cursor.execute(
-            'CREATE INDEX IF NOT EXISTS idx_event_metrics_metric_key_timestamp '
-            'ON event_metrics(metric_key, timestamp);',
-        )
-        write_cursor.execute(
-            'CREATE INDEX IF NOT EXISTS idx_event_metrics_metric_key_asset_sort_key '
-            'ON event_metrics(metric_key, asset, sort_key);',
-        )
-        write_cursor.execute(
-            'CREATE INDEX IF NOT EXISTS idx_event_metrics_asset '
-            'ON event_metrics(asset);',
-        )
         write_cursor.execute("""
         CREATE TABLE IF NOT EXISTS solana_ata_address_mappings (
             blockchain TEXT GENERATED ALWAYS AS ('SOLANA') VIRTUAL,

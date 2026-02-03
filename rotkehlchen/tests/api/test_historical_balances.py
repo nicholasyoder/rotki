@@ -120,13 +120,11 @@ def fixture_setup_historical_data(rotkehlchen_api_server: 'APIServer') -> None:
             history=events,
         )
 
-    # Process events to populate event_metrics table
-    process_historical_balances(
-        database=db,
-        msg_aggregator=db.msg_aggregator,
-    )
+    # Historical balance processing (event_metrics) is temporarily disabled.
+    # When re-enabled, call process_historical_balances here to populate event_metrics.
 
 
+@pytest.mark.skip(reason='Historical balance processing is temporarily disabled.')
 @pytest.mark.parametrize('start_with_valid_premium', [True])
 @pytest.mark.parametrize('have_decoders', [True])
 def test_get_historical_balance(
@@ -169,6 +167,7 @@ def test_get_historical_balance(
     assert outcome['result']['entries']['ETH'] == '10'
 
 
+@pytest.mark.skip(reason='Historical balance processing is temporarily disabled.')
 @pytest.mark.parametrize('start_with_valid_premium', [True])
 @pytest.mark.parametrize('have_decoders', [True])
 def test_get_historical_asset_balance(
@@ -208,6 +207,7 @@ def test_get_historical_asset_balance(
     assert result['entries']['BTC'] == '2.7'  # 2 - 0.5 + 1 (exchange deposit) + 0.2 (swap)
 
 
+@pytest.mark.skip(reason='Historical balance processing is temporarily disabled.')
 @pytest.mark.parametrize('start_with_valid_premium', [True])
 @pytest.mark.parametrize('have_decoders', [True])
 def test_get_historical_balance_with_filters(
@@ -368,6 +368,48 @@ def test_get_historical_asset_amounts_over_time(
             )],
         )
 
+    response = requests.post(
+        api_url_for(rotkehlchen_api_server, 'historicalassetamountsresource'),
+        json={
+            'asset': 'BTC',
+            'from_timestamp': START_TS,
+            'to_timestamp': START_TS + DAY_IN_SECONDS * 10,
+        },
+    )
+    result = assert_proper_sync_response_with_result(response)
+    # Check all balance amount change points are present with correct amounts
+    assert len(result['times']) == len(result['values'])
+    assert 'last_group_identifier' not in result
+    for ts, amount in zip(result['times'], result['values'], strict=True):
+        assert ts in {START_TS, START_TS + DAY_IN_SECONDS * 2, START_TS + DAY_IN_SECONDS * 3}
+        assert amount in {'2', '1.5', '3.5'}
+
+
+@pytest.mark.skip(reason='Historical balance processing is temporarily disabled.')
+@pytest.mark.parametrize('start_with_valid_premium', [True])
+def test_get_historical_asset_amounts_over_time_event_metrics(
+        rotkehlchen_api_server: 'APIServer',
+        setup_historical_data: None,
+) -> None:
+    db = rotkehlchen_api_server.rest_api.rotkehlchen.data.db
+    with db.user_write() as write_cursor:
+        DBHistoryEvents(database=db).add_history_events(
+            write_cursor=write_cursor,
+            history=[*create_swap_events(
+                timestamp=ts_sec_to_ms(Timestamp(START_TS + DAY_IN_SECONDS * 3)),
+                location=Location.EXTERNAL,
+                spend=AssetAmount(asset=A_EUR, amount=FVal('24000.0')),
+                receive=AssetAmount(asset=A_BTC, amount=FVal('1.5')),
+                group_identifier='trade1',
+            ), *create_swap_events(  # Second swap with same asset and timestamp (multiple fill events of the same order)  # noqa: E501
+                timestamp=ts_sec_to_ms(Timestamp(START_TS + DAY_IN_SECONDS * 3)),
+                location=Location.EXTERNAL,
+                spend=AssetAmount(asset=A_EUR, amount=FVal('8000.0')),
+                receive=AssetAmount(asset=A_BTC, amount=FVal('0.5')),
+                group_identifier='trade2',
+            )],
+        )
+
     process_historical_balances(database=db, msg_aggregator=db.msg_aggregator)
     response = requests.post(
         api_url_for(
@@ -392,6 +434,66 @@ def test_get_historical_asset_amounts_over_time(
 
 @pytest.mark.parametrize('start_with_valid_premium', [True])
 def test_get_historical_asset_amounts_over_time_with_negative_amount(
+        rotkehlchen_api_server: 'APIServer',
+        setup_historical_data: None,
+) -> None:
+    # Add more events to create a scenario with multiple potential negative balance events
+    db = rotkehlchen_api_server.rest_api.rotkehlchen.data.db
+    events = [
+        HistoryEvent(
+            group_identifier='btc_spend_2',
+            sequence_index=3,
+            timestamp=ts_sec_to_ms(Timestamp(START_TS + DAY_IN_SECONDS * 3)),
+            event_type=HistoryEventType.SPEND,
+            event_subtype=HistoryEventSubType.NONE,
+            location=Location.BLOCKCHAIN,
+            asset=A_BTC,
+            amount=FVal('1.6'),  # spending more than remaining balance
+            notes='BTC first overspend attempt',
+        ),
+        HistoryEvent(
+            group_identifier='btc_spend_3',
+            sequence_index=4,
+            timestamp=ts_sec_to_ms(four_days_after_start := Timestamp(START_TS + DAY_IN_SECONDS * 4)),  # noqa: E501
+            event_type=HistoryEventType.SPEND,
+            event_subtype=HistoryEventSubType.NONE,
+            location=Location.BLOCKCHAIN,
+            asset=A_BTC,
+            amount=FVal('0.7'),
+            notes='BTC second overspend attempt',
+        ),
+    ]
+    with db.user_write() as write_cursor:
+        DBHistoryEvents(database=db).add_history_events(
+            write_cursor=write_cursor,
+            history=events,
+        )
+
+    response = requests.post(
+        api_url_for(
+            rotkehlchen_api_server,
+            'historicalassetamountsresource',
+        ),
+        json={
+            'asset': 'BTC',
+            'from_timestamp': START_TS,
+            'to_timestamp': four_days_after_start,
+        },
+    )
+    result = assert_proper_sync_response_with_result(response)
+    assert len(result['times']) == len(result['values'])
+    assert len(result['times']) == 2
+
+    assert result['last_group_identifier'] == [7, events[0].group_identifier]
+    assert result['times'][0] == START_TS  # Initial timestamp
+    assert result['times'][1] == START_TS + DAY_IN_SECONDS * 2  # First spend
+    assert result['values'][0] == '2'  # Initial balance
+    assert result['values'][1] == '1.5'  # Balance after first spend
+
+
+@pytest.mark.skip(reason='Historical balance processing is temporarily disabled.')
+@pytest.mark.parametrize('start_with_valid_premium', [True])
+def test_get_historical_asset_amounts_over_time_with_negative_amount_event_metrics(
         rotkehlchen_api_server: 'APIServer',
         setup_historical_data: None,
 ) -> None:
@@ -457,6 +559,7 @@ def test_get_historical_asset_amounts_over_time_with_negative_amount(
     assert result['values'][2] == '1.5'  # Balance after withdrawal
 
 
+@pytest.mark.skip(reason='Historical balance processing is temporarily disabled.')
 @pytest.mark.parametrize('start_with_valid_premium', [True])
 def test_get_historical_assets_in_collection_amounts_over_time(
         rotkehlchen_api_server: 'APIServer',
@@ -523,6 +626,7 @@ def test_get_historical_assets_in_collection_amounts_over_time(
     assert result['values'][2] == '1.5'  # Balance after withdrawal
 
 
+@pytest.mark.skip(reason='Historical balance processing is temporarily disabled.')
 @pytest.mark.parametrize('start_with_valid_premium', [True])
 @pytest.mark.parametrize('have_decoders', [True])
 def test_get_historical_balance_before_first_event(
@@ -583,6 +687,7 @@ def test_get_historical_asset_balance_without_premium(rotkehlchen_api_server: 'A
     )
 
 
+@pytest.mark.skip(reason='Historical balance processing is temporarily disabled.')
 @pytest.mark.parametrize('start_with_valid_premium', [True])
 def test_get_historical_netvalue(
         rotkehlchen_api_server: 'APIServer',
@@ -691,6 +796,7 @@ def test_get_historical_netvalue(
         assert balances == expected_bal
 
 
+@pytest.mark.skip(reason='Historical balance processing is temporarily disabled.')
 @pytest.mark.parametrize('start_with_valid_premium', [True])
 def test_get_historical_netvalue_with_negative_balance_events(
         rotkehlchen_api_server: 'APIServer',
@@ -1070,6 +1176,7 @@ def test_historical_price_cache_only_special_assets(
     assert result['prices'][str(START_TS)] == '1400'
 
 
+@pytest.mark.skip(reason='Historical balance processing is temporarily disabled.')
 @pytest.mark.parametrize('start_with_valid_premium', [True])
 def test_get_historical_asset_amounts_processing_required(
         rotkehlchen_api_server: 'APIServer',
@@ -1141,6 +1248,7 @@ def test_get_historical_asset_amounts_processing_required(
     assert 'values' in result
 
 
+@pytest.mark.skip(reason='Historical balance processing is temporarily disabled.')
 @pytest.mark.parametrize('start_with_valid_premium', [True])
 def test_get_historical_asset_amounts_no_events(
         rotkehlchen_api_server: 'APIServer',

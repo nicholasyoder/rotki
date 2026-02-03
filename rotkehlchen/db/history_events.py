@@ -14,7 +14,7 @@ from rotkehlchen.chain.bitcoin.bch.constants import BCH_GROUP_IDENTIFIER_PREFIX
 from rotkehlchen.chain.bitcoin.btc.constants import BTC_GROUP_IDENTIFIER_PREFIX
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants import ZERO
-from rotkehlchen.db.cache import DBCacheDynamic, DBCacheStatic
+from rotkehlchen.db.cache import DBCacheDynamic
 from rotkehlchen.db.constants import (
     CHAIN_EVENT_FIELDS,
     CHAIN_EVENT_NULL_FIELDS,
@@ -83,7 +83,7 @@ from rotkehlchen.types import (
     Timestamp,
     TimestampMS,
 )
-from rotkehlchen.utils.misc import ts_ms_to_sec, ts_now_in_ms, ts_sec_to_ms
+from rotkehlchen.utils.misc import ts_ms_to_sec, ts_sec_to_ms
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
@@ -118,16 +118,7 @@ class DBHistoryEvents:
             timestamp: TimestampMS,
     ) -> None:
         """Track earliest modified event timestamp and when modification occurred."""
-        write_cursor.execute(
-            'INSERT INTO key_value_cache (name, value) VALUES (?, ?) '
-            'ON CONFLICT(name) DO UPDATE SET value = '
-            'MIN(CAST(value AS INTEGER), CAST(excluded.value AS INTEGER))',
-            (DBCacheStatic.STALE_BALANCES_FROM_TS.value, str(timestamp)),
-        )
-        write_cursor.execute(
-            'INSERT OR REPLACE INTO key_value_cache (name, value) VALUES (?, ?)',
-            (DBCacheStatic.STALE_BALANCES_MODIFICATION_TS.value, str(ts_now_in_ms())),
-        )
+        # Historical balances processing is temporarily disabled.
 
     def _execute_and_track_modified(
             self,
@@ -143,8 +134,7 @@ class DBHistoryEvents:
             if min_ts is None or ts < min_ts:
                 min_ts = ts
 
-        if count > 0:
-            self._mark_events_modified(write_cursor=write_cursor, timestamp=TimestampMS(min_ts))  # type: ignore
+        # TODO (balances): add _mark_events_modified for min_ts if count > 0
         return count
 
     def delete_events_and_track(
@@ -242,8 +232,7 @@ class DBHistoryEvents:
                 [(identifier, k, v.serialize_for_db()) for k, v in mapping_values.items()],
             )
 
-        if not skip_tracking:
-            self._mark_events_modified(write_cursor=write_cursor, timestamp=event.timestamp)
+        # TODO (balances): add _mark_events_modified for event.timestamp if not skip_tracking
         return identifier
 
     def add_history_events(
@@ -279,8 +268,7 @@ class DBHistoryEvents:
                 min_timestamp = event.timestamp
 
         # Call tracking ONCE for the entire batch with minimum timestamp
-        if min_timestamp is not None:
-            self._mark_events_modified(write_cursor=write_cursor, timestamp=min_timestamp)
+        # TODO (balances): add _mark_events_modified for min_timestamp if min_timestamp is not None
 
     def edit_history_event(
             self,
@@ -349,10 +337,7 @@ class DBHistoryEvents:
         ):
             return
 
-        self._mark_events_modified(
-            write_cursor=write_cursor,
-            timestamp=TimestampMS(min(old_data[0], event.timestamp)),
-        )
+        # TODO (balances): add _mark_events_modified for min(old_data[0], event.timestamp)
 
     @staticmethod
     def set_event_mapping_state(
