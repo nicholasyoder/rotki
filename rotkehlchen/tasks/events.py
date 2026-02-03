@@ -7,6 +7,7 @@ from rotkehlchen.api.v1.types import IncludeExcludeFilterData
 from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.chain.accounts import BlockchainAccounts
 from rotkehlchen.chain.decoding.constants import CPT_GAS
+from rotkehlchen.chain.ethereum.constants import EXCHANGES_CPT
 from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
 from rotkehlchen.constants import HOUR_IN_SECONDS
 from rotkehlchen.constants.resolver import SOLANA_CHAIN_DIRECTIVE, identifier_to_evm_chain
@@ -690,17 +691,40 @@ def should_exclude_possible_match(
     if isinstance(event, AssetMovement) and event.location == asset_movement.location:
         return True  # only allow exchange-to-exchange between different exchanges
 
-    return (
+    if (
         event.location == asset_movement.location and
         event.location_label == asset_movement.location_label
-    ) or (
-        event.event_type == HistoryEventType.SPEND and
-        event.event_subtype == HistoryEventSubType.FEE and
-        getattr(event, 'counterparty', None) == CPT_GAS
-    ) or (
+    ):
+        return True
+
+    if isinstance(event, OnchainEvent):
+        if (
+            event.event_type == HistoryEventType.SPEND and
+            event.event_subtype == HistoryEventSubType.FEE and
+            getattr(event, 'counterparty', None) == CPT_GAS
+        ):
+            return True
+
+        if event.counterparty in EXCHANGES_CPT and (
+            (
+                asset_movement.event_type == HistoryEventType.WITHDRAWAL and
+                event.event_type == HistoryEventType.DEPOSIT and
+                event.event_subtype == HistoryEventSubType.DEPOSIT_ASSET
+            ) or (
+                asset_movement.event_type == HistoryEventType.DEPOSIT and
+                event.event_type == HistoryEventType.WITHDRAWAL and
+                event.event_subtype == HistoryEventSubType.REMOVE_ASSET
+            )
+        ):
+            return True
+
+    if (
         event.event_type == HistoryEventType.INFORMATIONAL and
         event.event_subtype == HistoryEventSubType.APPROVE
-    ) or (
+    ):
+        return True
+
+    if (
         event.event_type == HistoryEventType.TRANSFER and
         event.event_subtype == HistoryEventSubType.NONE and
         event.location in BLOCKCHAIN_LOCATIONS and
@@ -712,11 +736,20 @@ def should_exclude_possible_match(
             (addr := getattr(event, 'address', None)) is None and
             event.location in (Location.BITCOIN, Location.BITCOIN_CASH)
         ) or addr in chain_accounts)
-    ) or (
-        exclude_unexpected_direction and
-        (direction := event.maybe_get_direction()) != EventDirection.NEUTRAL and
-        direction != (EventDirection.OUT if asset_movement.event_type == HistoryEventType.DEPOSIT else EventDirection.IN)  # noqa: E501
-    ) or event.identifier in already_matched_event_ids
+    ):
+        return True
+
+    if exclude_unexpected_direction:
+        direction = event.maybe_get_direction()
+        expected_direction = (
+            EventDirection.OUT
+            if asset_movement.event_type == HistoryEventType.DEPOSIT
+            else EventDirection.IN
+        )
+        if direction not in {EventDirection.NEUTRAL, expected_direction}:
+            return True
+
+    return event.identifier in already_matched_event_ids
 
 
 def _match_amount(
@@ -903,7 +936,19 @@ def _find_close_matches(
     if len(close_matches) == 0:
         return close_matches
 
-    if len(close_matches) > 1:  # Multiple close matches. Check various other heuristics.
+    if len(close_matches) > 1:  # Multiple close matches. Prefer expected direction, then other heuristics.  # noqa: E501
+        expected_direction = (
+            EventDirection.OUT
+            if asset_movement.event_type == HistoryEventType.DEPOSIT
+            else EventDirection.IN
+        )
+        direction_matches = [
+            match for match in close_matches
+            if match.maybe_get_direction(for_balance_tracking=True) == expected_direction
+        ]
+        if len(direction_matches) > 0:
+            close_matches = direction_matches
+
         asset_matches: list[HistoryBaseEntry] = []
         tx_ref_matches: list[HistoryBaseEntry] = []
         counterparty_matches: list[HistoryBaseEntry] = []

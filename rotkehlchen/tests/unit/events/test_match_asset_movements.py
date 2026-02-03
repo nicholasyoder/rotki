@@ -6,9 +6,20 @@ import pytest
 from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.decoding.constants import CPT_GAS
+from rotkehlchen.chain.ethereum.constants import CPT_KRAKEN
+from rotkehlchen.chain.ethereum.decoding.constants import CPT_GNOSIS_CHAIN
 from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
 from rotkehlchen.constants import HOUR_IN_SECONDS, ONE
-from rotkehlchen.constants.assets import A_AAVE, A_BTC, A_ETH, A_USD, A_USDC, A_WETH_OPT, A_WSOL
+from rotkehlchen.constants.assets import (
+    A_AAVE,
+    A_BTC,
+    A_ETH,
+    A_GNO,
+    A_USD,
+    A_USDC,
+    A_WETH_OPT,
+    A_WSOL,
+)
 from rotkehlchen.db.cache import DBCacheDynamic
 from rotkehlchen.db.constants import (
     HISTORY_MAPPING_KEY_STATE,
@@ -568,6 +579,149 @@ def test_customized_deposit(database: 'DBHandler') -> None:
             name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
             identifier=movement_id,
         ) == customized_id
+
+
+def test_deposit_withdrawal_direction(database: 'DBHandler') -> None:
+    """Onchain deposit to exchange should not match an exchange withdrawal."""
+    events_db = DBHistoryEvents(database)
+    with database.conn.write_ctx() as write_cursor:
+        events_db.add_history_events(
+            write_cursor=write_cursor,
+            history=[EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(1700003000000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.DEPOSIT,
+                event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+                asset=A_ETH,
+                amount=ONE,
+                counterparty=CPT_KRAKEN,
+                location_label=make_evm_address(),
+            ), (movement_event := AssetMovement(
+                location=Location.KRAKEN,
+                event_type=HistoryEventType.WITHDRAWAL,
+                timestamp=TimestampMS(1700003001000),
+                asset=A_ETH,
+                amount=ONE,
+                unique_id='kraken_withdrawal_1',
+                location_label='Kraken 1',
+            ))],
+        )
+
+    match_asset_movements(database=database)
+    with database.conn.read_ctx() as cursor:
+        movement_id = cursor.execute(
+            'SELECT identifier FROM history_events WHERE group_identifier=?',
+            (movement_event.group_identifier,),
+        ).fetchone()[0]
+        assert database.get_dynamic_cache(
+            cursor=cursor,
+            name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
+            identifier=movement_id,
+        ) is None
+
+
+def test_gno_kraken_flow(database: 'DBHandler') -> None:
+    """Test GNO deposit/withdrawal flow with fees and bridge event."""
+    with database.conn.write_ctx() as write_cursor:
+        DBHistoryEvents(database).add_history_events(
+            write_cursor=write_cursor,
+            history=[EvmEvent(  # deposit to kraken
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(1700004000000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.DEPOSIT,
+                event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+                asset=A_GNO,
+                amount=FVal('64'),
+                counterparty=CPT_KRAKEN,
+                location_label=make_evm_address(),
+            ), EvmEvent(  # gas fee for deposit
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=1,
+                timestamp=TimestampMS(1700004000000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.SPEND,
+                event_subtype=HistoryEventSubType.FEE,
+                asset=A_ETH,
+                amount=FVal('0.001'),
+                counterparty=CPT_GAS,
+                location_label=make_evm_address(),
+            ), (deposit_movement := AssetMovement(
+                location=Location.KRAKEN,
+                event_type=HistoryEventType.DEPOSIT,
+                timestamp=TimestampMS(1700004060000),
+                asset=A_GNO,
+                amount=FVal('64'),
+                unique_id='kraken_gno_deposit_1',
+                location_label='Kraken 1',
+            )), (withdrawal_movement := AssetMovement(
+                location=Location.KRAKEN,
+                event_type=HistoryEventType.WITHDRAWAL,
+                timestamp=TimestampMS(1700005000000),
+                asset=A_GNO,
+                amount=FVal('64'),
+                unique_id='kraken_gno_withdrawal_1',
+                location_label='Kraken 1',
+            )), AssetMovement(  # withdrawal fee
+                location=Location.KRAKEN,
+                event_type=HistoryEventType.WITHDRAWAL,
+                timestamp=TimestampMS(1700005000000),
+                asset=A_GNO,
+                amount=FVal('0.01'),
+                unique_id='kraken_gno_withdrawal_1',
+                location_label='Kraken 1',
+                is_fee=True,
+            ), (withdraw_event := EvmEvent(  # onchain received after withdrawal
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(1700005060000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.WITHDRAWAL,
+                event_subtype=HistoryEventSubType.REMOVE_ASSET,
+                asset=A_GNO,
+                amount=FVal('63.99'),
+                location_label=make_evm_address(),
+            )), EvmEvent(  # bridge event
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(1700006000000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.DEPOSIT,
+                event_subtype=HistoryEventSubType.BRIDGE,
+                asset=A_GNO,
+                amount=FVal('64'),
+                counterparty=CPT_GNOSIS_CHAIN,
+                location_label=make_evm_address(),
+            )],
+        )
+
+    match_asset_movements(database=database)
+    with database.conn.read_ctx() as cursor:
+        deposit_id = cursor.execute(
+            'SELECT identifier FROM history_events WHERE group_identifier=?',
+            (deposit_movement.group_identifier,),
+        ).fetchone()[0]
+        withdrawal_id = cursor.execute(
+            'SELECT identifier FROM history_events WHERE group_identifier=?',
+            (withdrawal_movement.group_identifier,),
+        ).fetchone()[0]
+        withdraw_event_id = cursor.execute(
+            'SELECT identifier FROM history_events WHERE group_identifier=?',
+            (withdraw_event.group_identifier,),
+        ).fetchone()[0]
+        assert database.get_dynamic_cache(
+            cursor=cursor,
+            name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
+            identifier=deposit_id,
+        ) is not None
+        assert database.get_dynamic_cache(
+            cursor=cursor,
+            name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
+            identifier=withdrawal_id,
+        ) == withdraw_event_id
 
 
 def test_match_asset_movements_settings(database: 'DBHandler') -> None:
