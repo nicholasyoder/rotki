@@ -1,7 +1,7 @@
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Literal
 
 from rotkehlchen.api.v1.types import IncludeExcludeFilterData
 from rotkehlchen.api.websockets.typedefs import WSMessageType
@@ -685,6 +685,7 @@ def should_exclude_possible_match(
        accounting direction vs OUT balance tracking direction). But if there are multiple close
        matches, the match will be narrowed by the balance tracking direction later.
     - Event identifier is in the list of already matched ids.
+    - Gas events
     """
     if isinstance(event, AssetMovement) and event.location == asset_movement.location:
         return True  # only allow exchange-to-exchange between different exchanges
@@ -692,6 +693,10 @@ def should_exclude_possible_match(
     return (
         event.location == asset_movement.location and
         event.location_label == asset_movement.location_label
+    ) or (
+        event.event_type == HistoryEventType.SPEND and
+        event.event_subtype == HistoryEventSubType.FEE and
+        getattr(event, 'counterparty', None) == CPT_GAS
     ) or (
         event.event_type == HistoryEventType.INFORMATIONAL and
         event.event_subtype == HistoryEventSubType.APPROVE
@@ -784,127 +789,156 @@ def find_asset_movement_matches(
     if is_deposit and fee_event is not None and fee_event.asset == asset_movement.asset:
         amount_with_fee = asset_movement.amount + fee_event.amount
 
-    def _find_close_matches(
-            candidates: list[HistoryBaseEntry],
-            label: str,
-    ) -> list[HistoryBaseEntry]:
-        close_matches: list[HistoryBaseEntry] = []
-        for event in candidates:
-            if should_exclude_possible_match(
-                asset_movement=asset_movement,
-                event=event,
-                blockchain_accounts=blockchain_accounts,
-                already_matched_event_ids=already_matched_event_ids,
-                exclude_unexpected_direction=True,
-            ):
-                log.debug(
-                    f'MATCH_DEBUG: excluded {label} id={event.identifier} '
-                    f'type={event.event_type.name} subtype={event.event_subtype.name} '
-                    f'amount={event.amount} location={event.location}',
-                )
-                continue
-
-            # Check for matching amount, or matching amount + fee for deposits. The fee doesn't need  # noqa: E501
-            # to be included for withdrawals since the onchain event will happen after the fee is
-            # already deducted and the amount should always match the main asset movement amount.
-            # Also allow a small tolerance as long as the received amount is less
-            # than the sent amount. A fee event will be added later to account for the difference.
-            if not (_match_amount(
-                movement_amount=asset_movement.amount,
-                event_amount=event.amount,
-                tolerance=tolerance,
-            ) or (
-                is_deposit and
-                amount_with_fee is not None and
-                _match_amount(
-                    movement_amount=amount_with_fee,
-                    event_amount=event.amount,
-                    tolerance=tolerance,
-                )
-            ) or (
-                not is_deposit and
-                fee_event is not None and
-                fee_event.asset == asset_movement.asset and
-                _match_amount(
-                    movement_amount=asset_movement.amount - fee_event.amount,
-                    event_amount=event.amount,
-                    tolerance=tolerance,
-                )
-            )):
-                log.debug(
-                    f'MATCH_DEBUG: amount mismatch {label} id={event.identifier} '
-                    f'movement={asset_movement.amount} event={event.amount} '
-                    f'fee={fee_event.amount if fee_event is not None else None}',
-                )
-                log.debug(
-                    f'Excluding possible match for asset movement {asset_movement.group_identifier} '  # noqa: E501
-                    f'due to differing amount. Expected {asset_movement.amount} got {event.amount}',  # noqa: E501
-                )
-                continue
-
-            log.debug(
-                f'MATCH_DEBUG: close match {label} id={event.identifier} '
-                f'type={event.event_type.name} amount={event.amount}',
-            )
-            close_matches.append(event)
-
-        if len(close_matches) == 0:
-            return close_matches
-
-        if len(close_matches) > 1:  # Multiple close matches. Check various other heuristics.
-            asset_matches: list[HistoryBaseEntry] = []
-            tx_ref_matches: list[HistoryBaseEntry] = []
-            counterparty_matches: list[HistoryBaseEntry] = []
-            event_type_matches: list[HistoryBaseEntry] = []
-            tx_ref = asset_movement.extra_data.get('transaction_id') if asset_movement.extra_data is not None else None  # noqa: E501
-            for match in close_matches:
-                # Maybe match by exact asset match (matched events can have any asset in the collection)  # noqa: E501
-                if match.asset == asset_movement.asset:
-                    asset_matches.append(match)
-
-                if (  # Maybe match by balance tracking event direction
-                    (match_direction := match.maybe_get_direction(
-                        for_balance_tracking=True,
-                    )) != EventDirection.NEUTRAL and
-                    ((is_deposit and match_direction == EventDirection.OUT) or
-                    (not is_deposit and match_direction == EventDirection.IN))
-                ):
-                    event_type_matches.append(match)
-
-                if isinstance(match, OnchainEvent):
-                    if tx_ref is not None and str(match.tx_ref) == tx_ref:  # Maybe match by tx ref
-                        tx_ref_matches.append(match)
-
-                    if match.counterparty is None or match.counterparty == CPT_MONERIUM:
-                        # Events with a counterparty are usually not the correct match since they are  # noqa: E501
-                        # part of a properly decoded onchain operation. Monerium is an exception.
-                        counterparty_matches.append(match)
-
-            for match_list in (tx_ref_matches, asset_matches, counterparty_matches, event_type_matches):  # noqa: E501
-                if len(match_list) == 1:
-                    return match_list
-
-            log.debug(
-                f'Multiple close matches found for '
-                f'asset movement {asset_movement.group_identifier}.',
-            )
-
-        return close_matches
-
     onchain_candidates: list[HistoryBaseEntry] = []
     exchange_candidates: list[HistoryBaseEntry] = []
     for event in possible_matches:
         (exchange_candidates if isinstance(event, AssetMovement) else onchain_candidates).append(event)  # noqa: E501
 
-    close_matches = _find_close_matches(onchain_candidates, 'onchain')
+    close_matches = _find_close_matches(
+        candidates=onchain_candidates,
+        label='onchain',
+        asset_movement=asset_movement,
+        is_deposit=is_deposit,
+        fee_event=fee_event,
+        amount_with_fee=amount_with_fee,
+        tolerance=tolerance,
+        blockchain_accounts=blockchain_accounts,
+        already_matched_event_ids=already_matched_event_ids,
+    )
     if len(close_matches) == 0:
-        close_matches = _find_close_matches(exchange_candidates, 'exchange')
+        close_matches = _find_close_matches(
+            candidates=exchange_candidates,
+            label='exchange',
+            asset_movement=asset_movement,
+            is_deposit=is_deposit,
+            fee_event=fee_event,
+            amount_with_fee=amount_with_fee,
+            tolerance=tolerance,
+            blockchain_accounts=blockchain_accounts,
+            already_matched_event_ids=already_matched_event_ids,
+        )
 
     if len(close_matches) == 0:
         log.debug(
             f'No close matches found for asset movement {asset_movement.group_identifier} '
             f'({asset_movement.event_type.name} {asset_movement.amount} {asset_movement.asset} '
             f'from/to {asset_movement.location})',
+        )
+
+    return close_matches
+
+
+def _find_close_matches(
+        candidates: list[HistoryBaseEntry],
+        label: Literal['onchain', 'exchange'],
+        asset_movement: AssetMovement,
+        is_deposit: bool,
+        fee_event: AssetMovement | None,
+        amount_with_fee: FVal | None,
+        tolerance: FVal,
+        blockchain_accounts: BlockchainAccounts,
+        already_matched_event_ids: set[int],
+) -> list[HistoryBaseEntry]:
+    """Return candidate matches that pass amount checks and heuristics."""
+    close_matches: list[HistoryBaseEntry] = []
+    for event in candidates:
+        if should_exclude_possible_match(
+            asset_movement=asset_movement,
+            event=event,
+            blockchain_accounts=blockchain_accounts,
+            already_matched_event_ids=already_matched_event_ids,
+            exclude_unexpected_direction=True,
+        ):
+            log.debug(
+                f'MATCH_DEBUG: excluded {label} id={event.identifier} '
+                f'type={event.event_type.name} subtype={event.event_subtype.name} '
+                f'amount={event.amount} location={event.location}',
+            )
+            continue
+
+        # Check for matching amount, or matching amount + fee for deposits. The fee doesn't need  # noqa: E501
+        # to be included for withdrawals since the onchain event will happen after the fee is
+        # already deducted and the amount should always match the main asset movement amount.
+        # Also allow a small tolerance as long as the received amount is less
+        # than the sent amount. A fee event will be added later to account for the difference.
+        if not (_match_amount(
+            movement_amount=asset_movement.amount,
+            event_amount=event.amount,
+            tolerance=tolerance,
+        ) or (
+            is_deposit and
+            amount_with_fee is not None and
+            _match_amount(
+                movement_amount=amount_with_fee,
+                event_amount=event.amount,
+                tolerance=tolerance,
+            )
+        ) or (
+            not is_deposit and
+            fee_event is not None and
+            fee_event.asset == asset_movement.asset and
+            _match_amount(
+                movement_amount=asset_movement.amount - fee_event.amount,
+                event_amount=event.amount,
+                tolerance=tolerance,
+            )
+        )):
+            log.debug(
+                f'MATCH_DEBUG: amount mismatch {label} id={event.identifier} '
+                f'movement={asset_movement.amount} event={event.amount} '
+                f'fee={fee_event.amount if fee_event is not None else None}',
+            )
+            log.debug(
+                f'Excluding possible match for asset movement {asset_movement.group_identifier} '
+                f'due to differing amount. Expected {asset_movement.amount} got {event.amount}',
+            )
+            continue
+
+        log.debug(
+            f'MATCH_DEBUG: close match {label} id={event.identifier} '
+            f'type={event.event_type.name} amount={event.amount}',
+        )
+        close_matches.append(event)
+
+    if len(close_matches) == 0:
+        return close_matches
+
+    if len(close_matches) > 1:  # Multiple close matches. Check various other heuristics.
+        asset_matches: list[HistoryBaseEntry] = []
+        tx_ref_matches: list[HistoryBaseEntry] = []
+        counterparty_matches: list[HistoryBaseEntry] = []
+        event_type_matches: list[HistoryBaseEntry] = []
+        tx_ref = asset_movement.extra_data.get('transaction_id') if asset_movement.extra_data is not None else None  # noqa: E501
+        for match in close_matches:
+            # Maybe match by exact asset match (matched events can have any asset in the collection)  # noqa: E501
+            if match.asset == asset_movement.asset:
+                asset_matches.append(match)
+
+            if (  # Maybe match by balance tracking event direction
+                (match_direction := match.maybe_get_direction(
+                    for_balance_tracking=True,
+                )) != EventDirection.NEUTRAL and
+                ((is_deposit and match_direction == EventDirection.OUT) or
+                (not is_deposit and match_direction == EventDirection.IN))
+            ):
+                event_type_matches.append(match)
+
+            if isinstance(match, OnchainEvent):
+                if tx_ref is not None and str(match.tx_ref) == tx_ref:  # Maybe match by tx ref
+                    tx_ref_matches.append(match)
+
+                if match.counterparty is None or match.counterparty == CPT_MONERIUM:
+                    # Events with a counterparty are usually not the correct match since they are  # noqa: E501
+                    # part of a properly decoded onchain operation. Monerium is an exception.
+                    counterparty_matches.append(match)
+
+        for match_list in (tx_ref_matches, asset_matches, counterparty_matches, event_type_matches):  # noqa: E501
+            if len(match_list) == 1:
+                return match_list
+
+        log.debug(
+            f'Multiple close matches found for '
+            f'asset movement {asset_movement.group_identifier}.',
         )
 
     return close_matches
