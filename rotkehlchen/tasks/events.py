@@ -658,6 +658,10 @@ def update_asset_movement_matched_event(
                 HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),
             ),
         )
+        log.debug(
+            'MATCH_DEBUG: cached match movement_id='
+            f'{asset_movement.identifier} matched_id={matched_event.identifier}',
+        )
 
     return True, ''
 
@@ -770,6 +774,11 @@ def find_asset_movement_matches(
             ),
         ),
     )
+    log.debug(
+        f'MATCH_DEBUG: possible_matches={len(possible_matches)} '
+        f'movement_id={asset_movement.identifier} is_deposit={is_deposit} '
+        f'movement_amount={asset_movement.amount}',
+    )
 
     amount_with_fee: FVal | None = None
     if is_deposit and fee_event is not None and fee_event.asset == asset_movement.asset:
@@ -788,6 +797,11 @@ def find_asset_movement_matches(
                 already_matched_event_ids=already_matched_event_ids,
                 exclude_unexpected_direction=True,
             ):
+                log.debug(
+                    f'MATCH_DEBUG: excluded {label} id={event.identifier} '
+                    f'type={event.event_type.name} subtype={event.event_subtype.name} '
+                    f'amount={event.amount} location={event.location}',
+                )
                 continue
 
             # Check for matching amount, or matching amount + fee for deposits. The fee doesn't need  # noqa: E501
@@ -800,19 +814,38 @@ def find_asset_movement_matches(
                 event_amount=event.amount,
                 tolerance=tolerance,
             ) or (
+                is_deposit and
                 amount_with_fee is not None and
                 _match_amount(
                     movement_amount=amount_with_fee,
                     event_amount=event.amount,
                     tolerance=tolerance,
                 )
+            ) or (
+                not is_deposit and
+                fee_event is not None and
+                fee_event.asset == asset_movement.asset and
+                _match_amount(
+                    movement_amount=asset_movement.amount - fee_event.amount,
+                    event_amount=event.amount,
+                    tolerance=tolerance,
+                )
             )):
+                log.debug(
+                    f'MATCH_DEBUG: amount mismatch {label} id={event.identifier} '
+                    f'movement={asset_movement.amount} event={event.amount} '
+                    f'fee={fee_event.amount if fee_event is not None else None}',
+                )
                 log.debug(
                     f'Excluding possible match for asset movement {asset_movement.group_identifier} '  # noqa: E501
                     f'due to differing amount. Expected {asset_movement.amount} got {event.amount}',  # noqa: E501
                 )
                 continue
 
+            log.debug(
+                f'MATCH_DEBUG: close match {label} id={event.identifier} '
+                f'type={event.event_type.name} amount={event.amount}',
+            )
             close_matches.append(event)
 
         if len(close_matches) == 0:

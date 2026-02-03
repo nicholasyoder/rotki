@@ -7,11 +7,15 @@ from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
 from rotkehlchen.constants import HOUR_IN_SECONDS, ONE
-from rotkehlchen.constants.assets import A_BTC, A_ETH, A_USD, A_USDC, A_WETH_OPT, A_WSOL
+from rotkehlchen.constants.assets import A_AAVE, A_BTC, A_ETH, A_USD, A_USDC, A_WETH_OPT, A_WSOL
+from rotkehlchen.db.cache import DBCacheDynamic
 from rotkehlchen.db.constants import HistoryEventLinkType
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
-from rotkehlchen.db.settings import DEFAULT_ASSET_MOVEMENT_TIME_RANGE, ModifiableDBSettings
+from rotkehlchen.db.settings import (
+    DEFAULT_ASSET_MOVEMENT_TIME_RANGE,
+    ModifiableDBSettings,
+)
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.asset_movement import (
     AssetMovement,
@@ -369,6 +373,85 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
                 identifiers=[deposit2_matched_event.identifier],
             ),
         )) == 1
+
+
+@pytest.mark.parametrize(('event_type', 'event_subtype'), [
+    (HistoryEventType.WITHDRAWAL, HistoryEventSubType.REMOVE_ASSET),
+    (HistoryEventType.RECEIVE, HistoryEventSubType.NONE),
+])
+def test_withdrawal_fee(
+        database: 'DBHandler',
+        event_type: HistoryEventType,
+        event_subtype: HistoryEventSubType,
+) -> None:
+    """Regression test for incorrect matching due to fee tolerance."""
+    with database.conn.write_ctx() as write_cursor:
+        (events_db := DBHistoryEvents(database)).add_history_events(
+            write_cursor=write_cursor,
+            history=[(withdrawal_movement := AssetMovement(
+                location=Location.POLONIEX,
+                event_type=HistoryEventType.WITHDRAWAL,
+                timestamp=TimestampMS(1700001000000),
+                asset=A_AAVE,
+                amount=FVal('64.57557962'),
+                unique_id='polo_withdrawal_1',
+                location_label='Poloniex 1',
+            )), AssetMovement(
+                location=Location.POLONIEX,
+                event_type=HistoryEventType.WITHDRAWAL,
+                timestamp=TimestampMS(1700001000000),
+                asset=A_AAVE,
+                amount=FVal('0.32548608'),
+                unique_id='polo_withdrawal_1',
+                location_label='Poloniex 1',
+                is_fee=True,
+            ), (receive_event := EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(1700001010000),
+                location=Location.ETHEREUM,
+                event_type=event_type,
+                event_subtype=event_subtype,
+                asset=A_AAVE,
+                amount=FVal('64.25009354'),
+                location_label=make_evm_address(),
+            ))],
+        )
+
+    with database.conn.read_ctx() as cursor:
+        inserted_events = events_db.get_history_events_internal(
+            cursor=cursor,
+            filter_query=HistoryEventFilterQuery.make(
+                group_identifiers=[
+                    withdrawal_movement.group_identifier,
+                    receive_event.group_identifier,
+                ],
+                order_by_rules=[('history_events_identifier', True)],
+            ),
+        )
+
+    group_id_to_identifier = {
+        event.group_identifier: event.identifier
+        for event in inserted_events
+    }
+    assert group_id_to_identifier[withdrawal_movement.group_identifier] is not None
+    assert group_id_to_identifier[receive_event.group_identifier] is not None
+
+    match_asset_movements(database=database)
+    with database.conn.read_ctx() as cursor:
+        withdrawal_id = cursor.execute(
+            'SELECT identifier FROM history_events WHERE group_identifier=?',
+            (withdrawal_movement.group_identifier,),
+        ).fetchone()[0]
+        receive_id = cursor.execute(
+            'SELECT identifier FROM history_events WHERE group_identifier=?',
+            (receive_event.group_identifier,),
+        ).fetchone()[0]
+        assert database.get_dynamic_cache(
+            cursor=cursor,
+            name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
+            identifier=withdrawal_id,
+        ) == receive_id
 
 
 def test_match_asset_movements_settings(database: 'DBHandler') -> None:
