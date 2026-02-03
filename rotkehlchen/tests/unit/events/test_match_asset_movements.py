@@ -5,11 +5,16 @@ import pytest
 
 from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.assets.asset import Asset
+from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
 from rotkehlchen.constants import HOUR_IN_SECONDS, ONE
 from rotkehlchen.constants.assets import A_AAVE, A_BTC, A_ETH, A_USD, A_USDC, A_WETH_OPT, A_WSOL
 from rotkehlchen.db.cache import DBCacheDynamic
-from rotkehlchen.db.constants import HistoryEventLinkType
+from rotkehlchen.db.constants import (
+    HISTORY_MAPPING_KEY_STATE,
+    HistoryEventLinkType,
+    HistoryMappingState,
+)
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.db.settings import (
@@ -452,6 +457,117 @@ def test_withdrawal_fee(
             name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
             identifier=withdrawal_id,
         ) == receive_id
+
+
+def test_customized_deposit(database: 'DBHandler') -> None:
+    """Test matching a customized deposit event with a gas event present.
+
+    The issue in this test is the difference being off by 0.3%. We had 0.2% before.
+    """
+    events_db = DBHistoryEvents(database)
+    with database.conn.write_ctx() as write_cursor:
+        events_db.add_history_events(
+            write_cursor=write_cursor,
+            history=[(gas_event := EvmEvent(
+                tx_ref=(tx_hash := make_evm_tx_hash()),
+                sequence_index=0,
+                timestamp=TimestampMS(1700002000000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.SPEND,
+                event_subtype=HistoryEventSubType.FEE,
+                asset=A_ETH,
+                amount=FVal('0.001'),
+                counterparty=CPT_GAS,
+                location_label=(location_label := make_evm_address()),
+            )), (deposit_event := EvmEvent(
+                tx_ref=tx_hash,
+                sequence_index=1,
+                timestamp=gas_event.timestamp,
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.DEPOSIT,
+                event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+                asset=A_ETH,
+                amount=ONE,
+                location_label=location_label,
+            )), (movement_event := AssetMovement(
+                location=Location.KRAKEN,
+                event_type=HistoryEventType.DEPOSIT,
+                timestamp=TimestampMS(1700002060000),
+                asset=A_ETH,
+                amount=FVal('0.997109827'),
+                unique_id='kraken_deposit_eth_1',
+                location_label='Kraken 1',
+            )), EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(1700002000000 + 900000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.SPEND,
+                event_subtype=HistoryEventSubType.FEE,
+                asset=A_ETH,
+                amount=FVal('0.00182'),
+                counterparty=CPT_GAS,
+                location_label=location_label,
+            ), EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(1700002000000 + 1800000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.SPEND,
+                event_subtype=HistoryEventSubType.FEE,
+                asset=A_ETH,
+                amount=FVal('0.00182'),
+                counterparty=CPT_GAS,
+                location_label=location_label,
+            ), EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(1700002000000 + 2700000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.SPEND,
+                event_subtype=HistoryEventSubType.FEE,
+                asset=A_ETH,
+                amount=FVal('0.00182'),
+                counterparty=CPT_GAS,
+                location_label=location_label,
+            ), EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(1700002000000 + 3600000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.SPEND,
+                event_subtype=HistoryEventSubType.FEE,
+                asset=A_ETH,
+                amount=FVal('0.00182'),
+                counterparty=CPT_GAS,
+                location_label=location_label,
+            )],
+        )
+        customized_id = write_cursor.execute(
+            'SELECT identifier FROM history_events WHERE group_identifier=? AND sequence_index=?',
+            (deposit_event.group_identifier, 1),
+        ).fetchone()[0]
+        write_cursor.execute(
+            'INSERT INTO history_events_mappings(parent_identifier, name, value) '
+            'VALUES(?, ?, ?)',
+            (
+                customized_id,
+                HISTORY_MAPPING_KEY_STATE,
+                HistoryMappingState.CUSTOMIZED.serialize_for_db(),
+            ),
+        )
+
+    match_asset_movements(database=database)
+    with database.conn.read_ctx() as cursor:
+        movement_id = cursor.execute(
+            'SELECT identifier FROM history_events WHERE group_identifier=?',
+            (movement_event.group_identifier,),
+        ).fetchone()[0]
+        assert database.get_dynamic_cache(
+            cursor=cursor,
+            name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
+            identifier=movement_id,
+        ) == customized_id
 
 
 def test_match_asset_movements_settings(database: 'DBHandler') -> None:
