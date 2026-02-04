@@ -10,7 +10,9 @@ from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.ethereum.constants import EXCHANGES_CPT
 from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
 from rotkehlchen.constants import HOUR_IN_SECONDS
+from rotkehlchen.constants.assets import A_DAI, A_SAI
 from rotkehlchen.constants.resolver import SOLANA_CHAIN_DIRECTIVE, identifier_to_evm_chain
+from rotkehlchen.constants.timing import SAI_DAI_MIGRATION_TS
 from rotkehlchen.db.cache import DBCacheStatic
 from rotkehlchen.db.constants import (
     CHAIN_EVENT_FIELDS,
@@ -386,6 +388,11 @@ def match_asset_movements(database: 'DBHandler') -> None:
                 assets_in_collection = GlobalDBHandler.get_assets_in_same_collection(
                     identifier=asset_identifier,
                 )
+                if (
+                    asset_movement.asset in {A_DAI, A_SAI} and
+                    ts_ms_to_sec(asset_movement.timestamp) >= SAI_DAI_MIGRATION_TS
+                ):
+                    assets_in_collection = tuple(set(assets_in_collection) | {A_DAI, A_SAI})
                 assets_in_collection_cache[asset_identifier] = assets_in_collection
 
             match_window = settings.asset_movement_time_range

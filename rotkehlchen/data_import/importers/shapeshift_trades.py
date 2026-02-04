@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from rotkehlchen.assets.converters import asset_from_kraken
 from rotkehlchen.constants import ZERO
 from rotkehlchen.constants.assets import A_DAI, A_SAI
+from rotkehlchen.constants.timing import SAI_DAI_MIGRATION_TS
 from rotkehlchen.data_import.utils import BaseExchangeImporter, SkippedCSVEntry, hash_csv_row
 from rotkehlchen.db.drivers.gevent import DBCursor
 from rotkehlchen.errors.asset import UnknownAsset
@@ -21,8 +22,6 @@ from rotkehlchen.utils.misc import ts_sec_to_ms
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
-
-SAI_TIMESTAMP = 1574035200
 
 
 class ShapeshiftTradesImporter(BaseExchangeImporter):
@@ -74,9 +73,9 @@ Trade from ShapeShift with ShapeShift Deposit Address:
             raise SkippedCSVEntry('Trade was performed on a DEX.')
         # Assuming that before launch of multi collateral dai everything was SAI.
         # Converting DAI to SAI in buy_asset and sell_asset.
-        if buy_asset == A_DAI and timestamp <= SAI_TIMESTAMP:
+        if buy_asset == A_DAI and timestamp <= SAI_DAI_MIGRATION_TS:
             buy_asset = self.sai
-        if sold_asset == A_DAI and timestamp <= SAI_TIMESTAMP:
+        if sold_asset == A_DAI and timestamp <= SAI_DAI_MIGRATION_TS:
             sold_asset = self.sai
         if rate <= ZERO:
             raise SkippedCSVEntry('Entry has negative or zero rate.')

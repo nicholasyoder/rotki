@@ -13,13 +13,16 @@ from rotkehlchen.constants import HOUR_IN_SECONDS, ONE
 from rotkehlchen.constants.assets import (
     A_AAVE,
     A_BTC,
+    A_DAI,
     A_ETH,
     A_GNO,
+    A_SAI,
     A_USD,
     A_USDC,
     A_WETH_OPT,
     A_WSOL,
 )
+from rotkehlchen.constants.timing import SAI_DAI_MIGRATION_TS
 from rotkehlchen.db.cache import DBCacheDynamic
 from rotkehlchen.db.constants import (
     HISTORY_MAPPING_KEY_STATE,
@@ -204,7 +207,7 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
                 event_type=HistoryEventType.DEPOSIT,
                 timestamp=TimestampMS(1550000000000),
                 asset=A_USDC,
-                amount=FVal('1'),
+                amount=ONE,
                 unique_id='6',
                 location_label='Bybit 1',
                 is_fee=True,
@@ -940,7 +943,7 @@ def test_exchange_deposit_delayed_credit(database: 'DBHandler') -> None:
                 event_type=HistoryEventType.SPEND,
                 event_subtype=HistoryEventSubType.NONE,
                 asset=A_ETH,
-                amount=FVal('1'),
+                amount=ONE,
                 location_label=(user_address := make_evm_address()),
             )), (asset_movement := AssetMovement(
                 identifier=(movement_id := 2),
@@ -948,7 +951,7 @@ def test_exchange_deposit_delayed_credit(database: 'DBHandler') -> None:
                 event_type=HistoryEventType.DEPOSIT,
                 timestamp=TimestampMS(1488974400000),  # 2017-03-08 12:00:00 UTC
                 asset=A_ETH,
-                amount=FVal('1'),
+                amount=ONE,
                 unique_id='polo_deposit_1',
                 location_label='Poloniex 1',
             ))],
@@ -970,6 +973,38 @@ def test_exchange_deposit_delayed_credit(database: 'DBHandler') -> None:
         'exchange': 'poloniex',
         'exchange_name': 'Poloniex 1',
     }}
+
+
+def test_exchange_deposit_sai_to_dai_credit(database: 'DBHandler') -> None:
+    """Test matching a SAI onchain deposit with a DAI exchange credit."""
+    events_db = DBHistoryEvents(database)
+    with database.conn.write_ctx() as write_cursor:
+        events_db.add_history_events(
+            write_cursor=write_cursor,
+            history=[(EvmEvent(
+                identifier=(match_id := 1),
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(ts_sec_to_ms(Timestamp(SAI_DAI_MIGRATION_TS + 1))),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.SPEND,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_SAI,
+                amount=FVal('25'),
+                location_label=make_evm_address(),
+            )), AssetMovement(
+                identifier=(movement_id := 2),
+                location=Location.POLONIEX,
+                event_type=HistoryEventType.DEPOSIT,
+                timestamp=TimestampMS(ts_sec_to_ms(Timestamp(SAI_DAI_MIGRATION_TS + 2))),
+                asset=A_DAI,
+                amount=FVal('25'),
+                unique_id='polo_deposit_sai_dai_1',
+                location_label='Poloniex 1',
+            )],
+        )
+
+    _match_and_check(database=database, expected_matches=[(movement_id, match_id)])
 
 
 def test_adjustments(database: 'DBHandler') -> None:
