@@ -178,7 +178,6 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
                 asset=A_USDC,
                 amount=FVal('99'),
                 unique_id='6',
-                location_label='Bybit 1',
             )), AssetMovement(  # deposit3 fee
                 location=Location.BYBIT,
                 event_type=HistoryEventType.DEPOSIT,
@@ -186,7 +185,6 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
                 asset=A_USDC,
                 amount=FVal('1'),
                 unique_id='6',
-                location_label='Bybit 1',
                 is_fee=True,
             ), SolanaEvent(  # deposit3 match, amount includes fee
                 tx_ref=make_solana_signature(),
@@ -271,7 +269,9 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
     # Corresponding event for deposit3
     assert (deposit3_matched_event := events[7]).event_type == HistoryEventType.WITHDRAWAL
     assert deposit3_matched_event.event_subtype == HistoryEventSubType.REMOVE_ASSET
-    assert deposit3_matched_event.notes == f'Withdraw 100 USDC from {deposit3_user_address} to Bybit 1'  # noqa: E501
+    # Check that the note has been updated but doesn't include the 'to {exchange}' part since
+    # deposit3 doesn't have a location_label set.
+    assert deposit3_matched_event.notes == f'Withdraw 100 USDC from {deposit3_user_address}'
     assert deposit3_matched_event.counterparty == Location.BYBIT.name.lower()
 
     # Last two events should be withdrawal4's matched event and a new adjustment event to cover the
