@@ -925,6 +925,53 @@ def test_timestamp_tolerance(database: 'DBHandler') -> None:
     _match_and_check(database=database, expected_matches=[(movement_id, match_id)])
 
 
+def test_exchange_deposit_delayed_credit(database: 'DBHandler') -> None:
+    """Test matching a delayed exchange deposit credit to the onchain spend."""
+    events_db = DBHistoryEvents(database)
+    with database.conn.write_ctx() as write_cursor:
+        events_db.add_history_events(
+            write_cursor=write_cursor,
+            history=[(EvmEvent(
+                identifier=(match_id := 1),
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(1488715200000),  # 2017-03-05 12:00:00 UTC
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.SPEND,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=FVal('1'),
+                location_label=(user_address := make_evm_address()),
+            )), (asset_movement := AssetMovement(
+                identifier=(movement_id := 2),
+                location=Location.POLONIEX,
+                event_type=HistoryEventType.DEPOSIT,
+                timestamp=TimestampMS(1488974400000),  # 2017-03-08 12:00:00 UTC
+                asset=A_ETH,
+                amount=FVal('1'),
+                unique_id='polo_deposit_1',
+                location_label='Poloniex 1',
+            ))],
+        )
+
+    _match_and_check(database=database, expected_matches=[(movement_id, match_id)])
+    with database.conn.read_ctx() as cursor:
+        matched_event = events_db.get_history_events_internal(
+            cursor=cursor,
+            filter_query=HistoryEventFilterQuery.make(identifiers=[match_id]),
+        )[0]
+
+    assert matched_event.event_type == HistoryEventType.WITHDRAWAL
+    assert matched_event.event_subtype == HistoryEventSubType.REMOVE_ASSET
+    assert matched_event.counterparty == 'poloniex'  # type: ignore[attr-defined]
+    assert matched_event.notes == f'Withdraw 1 ETH from {user_address} to Poloniex 1'
+    assert matched_event.extra_data == {'matched_asset_movement': {
+        'group_identifier': asset_movement.group_identifier,
+        'exchange': 'poloniex',
+        'exchange_name': 'Poloniex 1',
+    }}
+
+
 def test_adjustments(database: 'DBHandler') -> None:
     """Test that we properly create adjustment events during matching if amounts differ."""
     events_db = DBHistoryEvents(database)

@@ -74,6 +74,8 @@ ENTRY_TYPES_TO_EXCLUDE_FROM_MATCHING: Final = [
 ]
 # Tolerance for the matched event to be on the wrong side of an asset movement during auto matching
 TIMESTAMP_TOLERANCE: Final = HOUR_IN_SECONDS
+LEGACY_EXCHANGE_MATCH_CUTOFF_TS: Final = Timestamp(1514764800)  # 2018-01-01 00:00:00 UTC
+LEGACY_EXCHANGE_MATCH_WINDOW: Final = HOUR_IN_SECONDS * 100
 
 
 @dataclass(frozen=True)
@@ -386,12 +388,17 @@ def match_asset_movements(database: 'DBHandler') -> None:
                 )
                 assets_in_collection_cache[asset_identifier] = assets_in_collection
 
+            match_window = settings.asset_movement_time_range
+            if ts_ms_to_sec(asset_movement.timestamp) < LEGACY_EXCHANGE_MATCH_CUTOFF_TS:
+                # Some exchanges had unusually long credit windows for certain events in 2017.
+                match_window = LEGACY_EXCHANGE_MATCH_WINDOW
+
             if (match_count := len(matched_events := find_asset_movement_matches(
                 events_db=events_db,
                 asset_movement=asset_movement,
                 is_deposit=(is_deposit := asset_movement.event_type == HistoryEventType.DEPOSIT),
                 fee_event=(fee_event := fee_events.get(asset_movement.group_identifier)),
-                match_window=settings.asset_movement_time_range,
+                match_window=match_window,
                 cursor=cursor,
                 assets_in_collection=assets_in_collection,
                 blockchain_accounts=blockchain_accounts,
