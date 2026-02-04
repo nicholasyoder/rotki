@@ -3363,6 +3363,8 @@ def test_latest_upgrade_correctness(user_data_dir):
         'lido_csm_node_operator_metrics',
         'event_metrics',
         'solana_ata_address_mappings',
+        'history_event_links',
+        'history_event_link_ignores',
     }
     new_views = views_after_upgrade - views_before
     assert new_views == set()

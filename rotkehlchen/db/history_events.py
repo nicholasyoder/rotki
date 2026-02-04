@@ -3,7 +3,7 @@ import logging
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, Optional, TypeAlias, overload
+from typing import TYPE_CHECKING, Any, Literal, Optional, TypeAlias, cast, overload
 
 from pysqlcipher3 import dbapi2 as sqlcipher
 from solders.solders import Signature
@@ -14,7 +14,7 @@ from rotkehlchen.chain.bitcoin.bch.constants import BCH_GROUP_IDENTIFIER_PREFIX
 from rotkehlchen.chain.bitcoin.btc.constants import BTC_GROUP_IDENTIFIER_PREFIX
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants import ZERO
-from rotkehlchen.db.cache import ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE, DBCacheDynamic, DBCacheStatic
+from rotkehlchen.db.cache import DBCacheDynamic, DBCacheStatic
 from rotkehlchen.db.constants import (
     CHAIN_EVENT_FIELDS,
     CHAIN_FIELD_LENGTH,
@@ -25,6 +25,7 @@ from rotkehlchen.db.constants import (
     HISTORY_BASE_ENTRY_LENGTH,
     HISTORY_MAPPING_KEY_STATE,
     TX_DECODED,
+    HistoryEventLinkType,
     HistoryMappingState,
 )
 from rotkehlchen.db.filtering import (
@@ -39,6 +40,7 @@ from rotkehlchen.db.filtering import (
     HistoryEventWithTxRefFilterQuery,
     SolanaEventFilterQuery,
 )
+from rotkehlchen.db.utils import get_query_chunks
 from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.errors.misc import InputError
 from rotkehlchen.errors.serialization import DeserializationError
@@ -1724,26 +1726,97 @@ class DBHistoryEvents:
         Returns a tuple containing the processed events, joined group ids dict, entries found,
         entries with limit, entries total, and group identifiers with ignored assets.
         """
-        movement_group_to_match_info, match_group_to_movement_info, joined_group_ids = {}, {}, {}
-        for match_id, movement_group_identifier, match_group_identifier, movement_group_count, match_group_count in cursor.execute(  # noqa: E501
-                'SELECT value AS match_id, '
+        movement_group_to_match_info: dict[str, tuple[int, str, int]] = {}
+        match_group_to_movement_info: dict[str, tuple[str, int]] = {}
+        joined_group_ids: dict[str, str] = {}
+        if len(events_result) == 0:
+            return (
+                events_result,
+                joined_group_ids,
+                entries_found,
+                entries_with_limit,
+                entries_total,
+                ignored_group_identifiers,
+            )
+
+        if aggregate_by_group_ids:
+            events_list = [event for _, event in cast('list[tuple[int, HistoryBaseEntry]]', events_result)]  # noqa: E501
+        else:
+            events_list = cast('list[HistoryBaseEntry]', events_result)
+
+        result_group_ids = {event.group_identifier for event in events_list}
+        group_ids_to_count: set[str] = set()
+        matched_rows: list[tuple[int, int, str, str, int, int]] = []
+        for chunk, placeholders in get_query_chunks(list(result_group_ids)):
+            for row in cursor.execute(
+                'SELECT history_event_links.left_event_id, history_event_links.right_event_id, '
                 'movement_events_join.group_identifier, match_events_join.group_identifier, '
-                '(SELECT COUNT(*) FROM history_events he2 '
-                'WHERE he2.group_identifier = movement_events_join.group_identifier) as movement_group_count, '  # noqa: E501
-                '(SELECT COUNT(*) FROM history_events he2 '
-                'WHERE he2.group_identifier = match_events_join.group_identifier) as match_group_count '  # noqa: E501
-                'FROM key_value_cache '
-                'JOIN history_events movement_events_join ON CAST(movement_events_join.identifier AS TEXT) = SUBSTR(name, ?) '  # noqa: E501
-                'JOIN history_events match_events_join ON CAST(match_events_join.identifier AS TEXT) = match_id '  # noqa: E501
-                'WHERE name LIKE ? and value != ?;',
-                (
-                    len(DBCacheDynamic.MATCHED_ASSET_MOVEMENT.name) + 2,
-                    f'{DBCacheDynamic.MATCHED_ASSET_MOVEMENT.name.lower()}%',
-                    ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE,
-                ),
-        ):
-            joined_group_ids[movement_group_identifier] = match_group_identifier
-            joined_group_ids[match_group_identifier] = match_group_identifier
+                'movement_events_join.entry_type, match_events_join.entry_type '
+                'FROM history_event_links '
+                'JOIN history_events movement_events_join ON '
+                'movement_events_join.identifier = history_event_links.left_event_id '
+                'JOIN history_events match_events_join ON '
+                'match_events_join.identifier = history_event_links.right_event_id '
+                'WHERE history_event_links.link_type = ? AND ('
+                f'movement_events_join.group_identifier IN ({placeholders}) OR '
+                f'match_events_join.group_identifier IN ({placeholders}))',
+                (HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(), *chunk, *chunk),
+            ):
+                matched_rows.append((
+                    int(row[0]),
+                    int(row[1]),
+                    (movement_group_identifier := row[2]),
+                    (match_group_identifier := row[3]),
+                    int(row[4]),
+                    int(row[5]),
+                ))
+                group_ids_to_count.add(movement_group_identifier)
+                group_ids_to_count.add(match_group_identifier)
+
+        if len(matched_rows) == 0:
+            return (
+                events_result,
+                joined_group_ids,
+                entries_found,
+                entries_with_limit,
+                entries_total,
+                ignored_group_identifiers,
+            )
+
+        group_counts: dict[str, int] = {}
+        for chunk, placeholders in get_query_chunks(list(group_ids_to_count)):
+            for row in cursor.execute(
+                f'SELECT group_identifier, COUNT(*) FROM history_events '
+                f'WHERE group_identifier IN ({placeholders}) GROUP BY group_identifier',
+                tuple(chunk),
+            ):
+                group_counts[row[0]] = row[1]
+
+        asset_movement_entry_type = HistoryBaseEntryType.ASSET_MOVEMENT_EVENT.serialize_for_db()
+        for (
+            movement_id,
+            match_id,
+            movement_group_identifier,
+            match_group_identifier,
+            movement_entry_type,
+            match_entry_type,
+        ) in matched_rows:
+            movement_group_count = group_counts.get(movement_group_identifier, 0)
+            match_group_count = group_counts.get(match_group_identifier, 0)
+            if (
+                movement_entry_type == asset_movement_entry_type and
+                match_entry_type == asset_movement_entry_type
+            ):
+                canonical_group_identifier = (
+                    movement_group_identifier
+                    if movement_id < match_id else
+                    match_group_identifier
+                )
+                joined_group_ids[movement_group_identifier] = canonical_group_identifier
+                joined_group_ids[match_group_identifier] = canonical_group_identifier
+            else:
+                joined_group_ids[movement_group_identifier] = match_group_identifier
+                joined_group_ids[match_group_identifier] = match_group_identifier
             movement_group_to_match_info[movement_group_identifier] = (
                 match_id,
                 match_group_identifier,
@@ -1758,7 +1831,7 @@ class DBHistoryEvents:
                 # another movement, and this logic will run twice for one joined group.
                 entries_total -= 1
 
-        processed_events_result = []
+        processed_events_result: list[tuple[int, HistoryBaseEntry]] | list[HistoryBaseEntry] = []
         if aggregate_by_group_ids:
             # Aggregating by group. Need to ensure that for each movement/match group there is
             # only one event present. Process the events and for each event that is part of a
@@ -1766,42 +1839,67 @@ class DBHistoryEvents:
             # - adjust grouped_events_num to include the events from the other side of the movement
             # - skip the event if we have already processed an event from that movement/match group
             already_processed_matches: set[str] = set()
-            for grouped_events_num, event in events_result:  # type: ignore[misc]  # events_result is a different type depending on aggregate_by_group_ids
+            for grouped_events_num, event in cast('list[tuple[int, HistoryBaseEntry]]', events_result):  # noqa: E501
+                matched_group_identifier: str | None
+                matched_joined_group_count: int
                 if (
                     (match_info := movement_group_to_match_info.get(event.group_identifier)) is not None and  # noqa: E501
                     event.group_identifier in match_group_to_movement_info
                 ):  # This is a movement matched with a movement.
-                    _, match_group_identifier, joined_group_count = match_info
-                    should_skip = len({match_group_identifier, event.group_identifier} & already_processed_matches) != 0  # noqa: E501
+                    _, matched_group_identifier, matched_joined_group_count = match_info
+                    should_skip = len({matched_group_identifier, event.group_identifier} & already_processed_matches) != 0  # noqa: E501
                 elif match_info is not None:
-                    _, match_group_identifier, joined_group_count = match_info
-                    should_skip = match_group_identifier in already_processed_matches
+                    _, matched_group_identifier, matched_joined_group_count = match_info
+                    should_skip = matched_group_identifier in already_processed_matches
                 elif (movement_info := match_group_to_movement_info.get(event.group_identifier)) is not None:  # noqa: E501
-                    _, joined_group_count = movement_info
+                    _, matched_joined_group_count = movement_info
                     should_skip = event.group_identifier in already_processed_matches
-                    match_group_identifier = event.group_identifier
+                    matched_group_identifier = event.group_identifier
                 else:
-                    should_skip, joined_group_count, match_group_identifier = False, 0, None
+                    should_skip, matched_joined_group_count, matched_group_identifier = False, 0, None  # noqa: E501
 
                 if should_skip:  # already processed the other side of this pair, so skip.
                     entries_found -= 1
                     entries_with_limit -= 1
                     continue
 
-                processed_events_result.append((grouped_events_num + joined_group_count, event))
-                if match_group_identifier is not None:
-                    already_processed_matches.add(match_group_identifier)
+                processed_events_result.append(
+                    (grouped_events_num + matched_joined_group_count, event),   # type: ignore[arg-type]  # will be a list of tuple[int, HistoryBaseEntry]
+                )
+                if matched_group_identifier is not None:
+                    already_processed_matches.add(matched_group_identifier)
 
         else:  # Not aggregating. Need to include the asset movements in their matched groups
             events_by_group: dict[str, list[HistoryBaseEntry]] = defaultdict(list)
-            for event in events_result:
-                events_by_group[event.group_identifier].append(event)  # type: ignore
+            for event in cast('list[HistoryBaseEntry]', events_result):
+                events_by_group[event.group_identifier].append(event)
+
+            movement_group_ids = [
+                movement_info[0]
+                for group_identifier in events_by_group
+                if (movement_info := match_group_to_movement_info.get(group_identifier)) is not None  # noqa: E501
+            ]
+
+            movement_events_by_group: dict[str, list[HistoryBaseEntry]] = defaultdict(list)
+            if len(movement_group_ids) > 0:
+                movement_events_result = self._get_history_events_with_ignored_groups(
+                    cursor=cursor,
+                    filter_query=HistoryEventFilterQuery.make(
+                        group_identifiers=movement_group_ids,
+                    ),
+                    entries_limit=None,
+                )
+                for movement in movement_events_result.events:
+                    movement_events_by_group[movement.group_identifier].append(movement)  # type: ignore  # will be a list of HistoryBaseEntry
+                ignored_group_identifiers.update(
+                    movement_events_result.ignored_group_identifiers,
+                )
 
             for group_identifier, events in events_by_group.items():
                 if (
                     (movement_info := match_group_to_movement_info.get(group_identifier)) is not None and  # noqa: E501
                     (match_info := movement_group_to_match_info.get(movement_group_id := movement_info[0])) is not None and  # noqa: E501
-                    len(match_events := [x for x in events if str(x.identifier) == match_info[0]]) == 1  # noqa: E501
+                    len(match_events := [x for x in events if x.identifier == match_info[0]]) == 1
                 ):
                     insert_index = events.index(match_events[0]) + 1  # insert immediately after the matched event  # noqa: E501
                     if (
@@ -1812,20 +1910,10 @@ class DBHistoryEvents:
                         # insert after the fee instead of between the movement and its fee
                         insert_index += 1
 
-                    movement_events_result = self._get_history_events_with_ignored_groups(
-                        cursor=cursor,
-                        filter_query=HistoryEventFilterQuery.make(
-                            group_identifiers=[movement_group_id],
-                        ),
-                        entries_limit=None,
-                    )
-                    movement_events: list[HistoryBaseEntry] = movement_events_result.events  # type: ignore[assignment]  # aggregate_by_group_ids=False for this query.
+                    movement_events = movement_events_by_group.get(movement_group_id, [])
                     events[insert_index:insert_index] = movement_events
-                    ignored_group_identifiers.update(
-                        movement_events_result.ignored_group_identifiers,
-                    )
 
-                processed_events_result.extend(events)  # type: ignore[arg-type]
+                processed_events_result.extend(events)  # type: ignore[arg-type]  # will be a list of HistoryBaseEntry
 
         return (
             processed_events_result,

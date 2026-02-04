@@ -73,11 +73,12 @@ from rotkehlchen.constants.misc import (
     HTTP_STATUS_INTERNAL_DB_ERROR,
 )
 from rotkehlchen.data_import.manager import DataImportSource
-from rotkehlchen.db.cache import ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE, DBCacheDynamic, DBCacheStatic
+from rotkehlchen.db.cache import DBCacheStatic
 from rotkehlchen.db.calendar import CalendarEntry, CalendarFilterQuery, ReminderEntry
 from rotkehlchen.db.constants import (
     LINKABLE_ACCOUNTING_PROPERTIES,
     LINKABLE_ACCOUNTING_SETTINGS_NAME,
+    HistoryEventLinkType,
 )
 from rotkehlchen.db.eth2 import DBEth2
 from rotkehlchen.db.filtering import (
@@ -3479,11 +3480,10 @@ class RestAPI:
         if matched_event_identifier is None:
             # No matched event specified. Mark as having no match so this movement will be ignored.
             with self.rotkehlchen.data.db.conn.write_ctx() as write_cursor:
-                self.rotkehlchen.data.db.set_dynamic_cache(
-                    write_cursor=write_cursor,
-                    name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
-                    identifier=asset_movement_identifier,
-                    value=ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE,
+                write_cursor.execute(
+                    'INSERT OR IGNORE INTO history_event_link_ignores(event_id, link_type) '
+                    'VALUES(?, ?)',
+                    (asset_movement_identifier, HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db()),  # noqa: E501
                 )
             return api_response(OK_RESULT)
 
@@ -3542,14 +3542,12 @@ class RestAPI:
         if only_ignored:
             with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
                 movement_group_ids = [x[0] for x in cursor.execute(
-                    'SELECT DISTINCT group_identifier FROM history_events WHERE identifier IN ('
-                    'SELECT SUBSTR(name, ?) FROM key_value_cache WHERE name LIKE ? and value = ?) '
+                    'SELECT DISTINCT history_events.group_identifier FROM history_events '
+                    'JOIN history_event_link_ignores ON '
+                    'history_events.identifier=history_event_link_ignores.event_id '
+                    'WHERE history_event_link_ignores.link_type=? '
                     'ORDER BY timestamp, sequence_index',
-                    (
-                        len(DBCacheDynamic.MATCHED_ASSET_MOVEMENT.name) + 2,
-                        f'{DBCacheDynamic.MATCHED_ASSET_MOVEMENT.name.lower()}%',
-                        ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE,
-                    ),
+                    (HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),),
                 )]
         else:
             asset_movements, _ = get_unmatched_asset_movements(database=self.rotkehlchen.data.db)
@@ -3620,22 +3618,19 @@ class RestAPI:
         delete the event and redecode the tx to reset it if needed.
         """
         with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
-            if (matched_event_identifier := self.rotkehlchen.data.db.get_dynamic_cache(
-                cursor=cursor,
-                name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
-                identifier=identifier,
-            )) is not None:
-                asset_movement_identifier = identifier
-            elif (result := cursor.execute(
-                'SELECT SUBSTR(name, ?) FROM key_value_cache WHERE name LIKE ? AND value = ?',
-                (
-                    len(DBCacheDynamic.MATCHED_ASSET_MOVEMENT.name) + 2,
-                    'matched_asset_movement_%',
-                    identifier,
-                ),
+            if (result := cursor.execute(
+                'SELECT left_event_id, right_event_id FROM history_event_links '
+                'WHERE link_type=? AND (left_event_id=? OR right_event_id=?)',
+                (HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(), identifier, identifier),  # noqa: E501
             ).fetchone()) is not None:
-                asset_movement_identifier = int(result[0])
-                matched_event_identifier = identifier
+                asset_movement_identifier, matched_event_identifier = result
+            elif cursor.execute(
+                'SELECT 1 FROM history_event_link_ignores '
+                'WHERE event_id=? AND link_type=?',
+                (identifier, HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db()),
+            ).fetchone() is not None:
+                asset_movement_identifier = identifier
+                matched_event_identifier = None
             else:
                 return api_response(wrap_in_fail_result(message=(
                     f'The specified identifier {identifier} does not correspond to either the '
@@ -3643,15 +3638,24 @@ class RestAPI:
                 )), HTTPStatus.BAD_REQUEST)
 
         with self.rotkehlchen.data.db.conn.write_ctx() as write_cursor:
-            for id_to_remove in (
-                [asset_movement_identifier]
-                if matched_event_identifier == ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE else
-                [asset_movement_identifier, matched_event_identifier]
-            ):
-                self.rotkehlchen.data.db.delete_dynamic_cache(
-                    write_cursor=write_cursor,
-                    name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
-                    identifier=str(id_to_remove),
+            if matched_event_identifier is None:
+                write_cursor.execute(
+                    'DELETE FROM history_event_link_ignores WHERE event_id=? AND link_type=?',
+                    (asset_movement_identifier, HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db()),  # noqa: E501
+                )
+            else:
+                write_cursor.execute(
+                    'DELETE FROM history_event_links WHERE left_event_id=? AND link_type=?',
+                    (asset_movement_identifier, HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db()),  # noqa: E501
+                )
+                write_cursor.execute(
+                    'DELETE FROM history_event_links WHERE left_event_id=? AND right_event_id=? '
+                    'AND link_type=?',
+                    (
+                        matched_event_identifier,
+                        asset_movement_identifier,
+                        HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),
+                    ),
                 )
 
         return api_response(OK_RESULT)

@@ -10,11 +10,12 @@ from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
 from rotkehlchen.constants import HOUR_IN_SECONDS
 from rotkehlchen.constants.resolver import SOLANA_CHAIN_DIRECTIVE, identifier_to_evm_chain
-from rotkehlchen.db.cache import ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE, DBCacheDynamic, DBCacheStatic
+from rotkehlchen.db.cache import DBCacheStatic
 from rotkehlchen.db.constants import (
     CHAIN_EVENT_FIELDS,
     HISTORY_BASE_ENTRY_FIELDS,
     HISTORY_MAPPING_KEY_STATE,
+    HistoryEventLinkType,
     HistoryMappingState,
 )
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
@@ -436,11 +437,12 @@ def match_asset_movements(database: 'DBHandler') -> None:
     if len(movement_ids_to_ignore) > 0:
         with events_db.db.conn.write_ctx() as write_cursor:
             write_cursor.executemany(
-                'INSERT OR REPLACE INTO key_value_cache(name, value) VALUES(?, ?)',
-                [(
-                    DBCacheDynamic.MATCHED_ASSET_MOVEMENT.get_db_key(identifier=x),  # type: ignore[arg-type]  # identifiers will not be None since the events are from the db.
-                    ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE,
-                ) for x in movement_ids_to_ignore],
+                'INSERT OR IGNORE INTO history_event_link_ignores(event_id, link_type) '
+                'VALUES(?, ?)',
+                [
+                    (movement_id, HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db())
+                    for movement_id in movement_ids_to_ignore
+                ],
             )
     log.debug('MATCH_DEBUG: done marking ignored movements')
 
@@ -465,13 +467,20 @@ def get_unmatched_asset_movements(
         for entry in cursor.execute(
                 f'SELECT {HISTORY_BASE_ENTRY_FIELDS}, {CHAIN_EVENT_FIELDS} FROM history_events '
                 'LEFT JOIN chain_events_info ON history_events.identifier=chain_events_info.identifier '  # noqa: E501
-                'WHERE history_events.entry_type=? AND CAST(history_events.identifier AS TEXT) NOT IN '  # noqa: E501
-                '(SELECT SUBSTR(name, ?) FROM key_value_cache WHERE name LIKE ?) '
+                'LEFT JOIN history_event_links ON '
+                'history_events.identifier=history_event_links.left_event_id AND '
+                'history_event_links.link_type=? '
+                'LEFT JOIN history_event_link_ignores ON '
+                'history_events.identifier=history_event_link_ignores.event_id AND '
+                'history_event_link_ignores.link_type=? '
+                'WHERE history_events.entry_type=? AND '
+                'history_event_links.left_event_id IS NULL AND '
+                'history_event_link_ignores.event_id IS NULL '
                 'ORDER BY timestamp DESC, sequence_index',
                 (
+                    HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),
+                    HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),
                     HistoryBaseEntryType.ASSET_MOVEMENT_EVENT.serialize_for_db(),
-                    len(DBCacheDynamic.MATCHED_ASSET_MOVEMENT.name) + 2,
-                    'matched_asset_movement_%',
                 ),
         ):
             if (asset_movement := AssetMovement.deserialize_from_db(entry[1:])).event_subtype == HistoryEventSubType.FEE:  # noqa: E501
@@ -655,11 +664,18 @@ def update_asset_movement_matched_event(
             mapping_state=HistoryMappingState.AUTO_MATCHED,
         )
         log.debug('MATCH_DEBUG: done editing matched event')
-        events_db.db.set_dynamic_cache(  # type: ignore[call-overload]  # identifiers will not be None here since the events are from the db
-            write_cursor=write_cursor,
-            name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
-            value=matched_event.identifier,
-            identifier=asset_movement.identifier,
+        write_cursor.execute(
+            'DELETE FROM history_event_link_ignores WHERE event_id=? AND link_type=?',
+            (asset_movement.identifier, HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db()),  # noqa: E501
+        )
+        write_cursor.execute(
+            'INSERT OR REPLACE INTO history_event_links('
+            'left_event_id, right_event_id, link_type) VALUES(?, ?, ?)',
+            (
+                asset_movement.identifier,
+                matched_event.identifier,
+                HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),
+            ),
         )
         log.debug('MATCH_DEBUG: done caching match ids')
 
@@ -728,8 +744,8 @@ def get_already_matched_event_ids(
 ) -> set[int]:
     """Get the ids of events that are already matched with asset movements."""
     return {int(row[0]) for row in cursor.execute(
-        'SELECT value FROM key_value_cache WHERE name LIKE ?;',
-        ('matched_asset_movement_%',),
+        'SELECT right_event_id FROM history_event_links WHERE link_type=?;',
+        (HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),),
     )}
 
 

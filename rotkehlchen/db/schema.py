@@ -696,6 +696,25 @@ DB_CREATE_KEY_VALUE_CACHE = """CREATE TABLE IF NOT EXISTS key_value_cache (
     value TEXT
 );"""
 
+DB_CREATE_HISTORY_EVENT_LINKS = """
+CREATE TABLE IF NOT EXISTS history_event_links (
+    left_event_id INTEGER NOT NULL,
+    right_event_id INTEGER NOT NULL,
+    link_type INTEGER NOT NULL,
+    PRIMARY KEY (left_event_id, link_type),
+    FOREIGN KEY(left_event_id) REFERENCES history_events(identifier) ON DELETE CASCADE,
+    FOREIGN KEY(right_event_id) REFERENCES history_events(identifier) ON DELETE CASCADE
+);
+"""
+
+DB_CREATE_HISTORY_EVENT_LINK_IGNORES = """
+CREATE TABLE IF NOT EXISTS history_event_link_ignores (
+    event_id INTEGER NOT NULL,
+    link_type INTEGER NOT NULL,
+    PRIMARY KEY (event_id, link_type),
+    FOREIGN KEY(event_id) REFERENCES history_events(identifier) ON DELETE CASCADE
+);
+"""
 
 DB_CREATE_CALENDAR = """
 CREATE TABLE IF NOT EXISTS calendar (
@@ -920,6 +939,8 @@ CREATE INDEX IF NOT EXISTS idx_history_events_asset ON history_events(asset);
 CREATE INDEX IF NOT EXISTS idx_history_events_type ON history_events(type);
 CREATE INDEX IF NOT EXISTS idx_history_events_subtype ON history_events(subtype);
 CREATE INDEX IF NOT EXISTS idx_history_events_ignored ON history_events(ignored);
+CREATE INDEX IF NOT EXISTS idx_history_event_links_right ON history_event_links(right_event_id);
+CREATE INDEX IF NOT EXISTS idx_history_event_link_ignores_type ON history_event_link_ignores(link_type);
 CREATE UNIQUE INDEX IF NOT EXISTS unique_generic_accounting_rules ON accounting_rules(type, subtype, counterparty) WHERE is_event_specific = 0;
 CREATE INDEX IF NOT EXISTS idx_event_metrics_event ON event_metrics(event_identifier);
 CREATE INDEX IF NOT EXISTS idx_event_metrics_location_label ON event_metrics(location_label);
@@ -982,6 +1003,8 @@ BEGIN TRANSACTION;
 {DB_CREATE_MAPPED_ACCOUNTING_RULES}
 {DB_CREATE_UNRESOLVED_REMOTE_CONFLICTS}
 {DB_CREATE_KEY_VALUE_CACHE}
+{DB_CREATE_HISTORY_EVENT_LINKS}
+{DB_CREATE_HISTORY_EVENT_LINK_IGNORES}
 {DB_CREATE_CALENDAR}
 {DB_CREATE_CALENDAR_REMINDERS}
 {DB_CREATE_COWSWAP_ORDERS}
