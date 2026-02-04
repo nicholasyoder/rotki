@@ -23,7 +23,6 @@ from rotkehlchen.constants.assets import (
     A_WSOL,
 )
 from rotkehlchen.constants.timing import SAI_DAI_MIGRATION_TS
-from rotkehlchen.db.cache import DBCacheDynamic
 from rotkehlchen.db.constants import (
     HISTORY_MAPPING_KEY_STATE,
     HistoryEventLinkType,
@@ -59,6 +58,7 @@ from rotkehlchen.utils.misc import ts_sec_to_ms
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
+    from rotkehlchen.db.drivers.gevent import DBCursor
 
 
 def _match_and_check(database: 'DBHandler', expected_matches: list[tuple[int, int]]) -> None:
@@ -69,6 +69,14 @@ def _match_and_check(database: 'DBHandler', expected_matches: list[tuple[int, in
             'SELECT left_event_id, right_event_id FROM history_event_links WHERE link_type=?',
             (HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),),
         ).fetchall()) == set(expected_matches)
+
+
+def _get_match_for_movement(cursor: 'DBCursor', movement_id: int | None) -> int | None:
+    """Helper function to check the id of the event matched with a movement."""
+    return None if (result := cursor.execute(
+        'SELECT right_event_id FROM history_event_links WHERE link_type=? AND left_event_id=?',
+        (HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(), movement_id),
+    ).fetchone()) is None else result[0]
 
 
 @pytest.mark.parametrize('function_scope_initialize_mock_rotki_notifier', [True])
@@ -466,11 +474,7 @@ def test_withdrawal_fee(
             'SELECT identifier FROM history_events WHERE group_identifier=?',
             (receive_event.group_identifier,),
         ).fetchone()[0]
-        assert database.get_dynamic_cache(
-            cursor=cursor,
-            name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
-            identifier=withdrawal_id,
-        ) == receive_id
+        assert _get_match_for_movement(cursor=cursor, movement_id=withdrawal_id) == receive_id
 
 
 def test_customized_deposit(database: 'DBHandler') -> None:
@@ -577,11 +581,7 @@ def test_customized_deposit(database: 'DBHandler') -> None:
             'SELECT identifier FROM history_events WHERE group_identifier=?',
             (movement_event.group_identifier,),
         ).fetchone()[0]
-        assert database.get_dynamic_cache(
-            cursor=cursor,
-            name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
-            identifier=movement_id,
-        ) == customized_id
+        assert _get_match_for_movement(cursor=cursor, movement_id=movement_id) == customized_id
 
 
 def test_deposit_withdrawal_direction(database: 'DBHandler') -> None:
@@ -618,11 +618,7 @@ def test_deposit_withdrawal_direction(database: 'DBHandler') -> None:
             'SELECT identifier FROM history_events WHERE group_identifier=?',
             (movement_event.group_identifier,),
         ).fetchone()[0]
-        assert database.get_dynamic_cache(
-            cursor=cursor,
-            name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
-            identifier=movement_id,
-        ) is None
+        assert _get_match_for_movement(cursor=cursor, movement_id=movement_id) is None
 
 
 def test_gno_kraken_flow(database: 'DBHandler') -> None:
@@ -715,16 +711,8 @@ def test_gno_kraken_flow(database: 'DBHandler') -> None:
             'SELECT identifier FROM history_events WHERE group_identifier=?',
             (withdraw_event.group_identifier,),
         ).fetchone()[0]
-        assert database.get_dynamic_cache(
-            cursor=cursor,
-            name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
-            identifier=deposit_id,
-        ) is not None
-        assert database.get_dynamic_cache(
-            cursor=cursor,
-            name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
-            identifier=withdrawal_id,
-        ) == withdraw_event_id
+        assert _get_match_for_movement(cursor=cursor, movement_id=deposit_id) is not None
+        assert _get_match_for_movement(cursor=cursor, movement_id=withdrawal_id) == withdraw_event_id  # noqa: E501
 
 
 def test_match_asset_movements_settings(database: 'DBHandler') -> None:
@@ -1239,15 +1227,13 @@ def test_deposit_to_anon(database: 'DBHandler') -> None:
     }
 
     with database.conn.read_ctx() as cursor:
-        deposit_match = database.get_dynamic_cache(  # type: ignore
+        deposit_match = _get_match_for_movement(
             cursor=cursor,
-            name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
-            identifier=group_id_to_identifier[deposit_movement.group_identifier],  # deposit id
+            movement_id=group_id_to_identifier[deposit_movement.group_identifier],  # deposit id
         )
-        withdrawal_match = database.get_dynamic_cache(  # type: ignore
+        withdrawal_match = _get_match_for_movement(
             cursor=cursor,
-            name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
-            identifier=group_id_to_identifier[withdrawal_movement.group_identifier],  # withdrawal_id  # noqa: E501
+            movement_id=group_id_to_identifier[withdrawal_movement.group_identifier],  # withdrawal_id  # noqa: E501
         )
 
     assert deposit_match == group_id_to_identifier[spend_event.group_identifier]  # outgoing_event_id  # noqa: E501
