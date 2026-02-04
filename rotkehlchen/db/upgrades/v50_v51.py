@@ -77,6 +77,8 @@ def upgrade_v50_to_v51(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
         - lido_csm_node_operator_metrics
         - event_metrics
         - solana_ata_address_mappings
+        - history_event_links
+        - history_event_link_ignores
         """
         write_cursor.execute("""
         CREATE TABLE IF NOT EXISTS lido_csm_node_operators (
@@ -156,6 +158,32 @@ def upgrade_v50_to_v51(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
             FOREIGN KEY(blockchain, account) REFERENCES blockchain_accounts(blockchain, account) ON DELETE CASCADE
         );
         """)  # noqa: E501
+        write_cursor.execute("""
+        CREATE TABLE IF NOT EXISTS history_event_links (
+            left_event_id INTEGER NOT NULL,
+            right_event_id INTEGER NOT NULL,
+            link_type INTEGER NOT NULL,
+            PRIMARY KEY (left_event_id, link_type),
+            FOREIGN KEY(left_event_id) REFERENCES history_events(identifier) ON DELETE CASCADE,
+            FOREIGN KEY(right_event_id) REFERENCES history_events(identifier) ON DELETE CASCADE
+        );
+        """)
+        write_cursor.execute("""
+        CREATE TABLE IF NOT EXISTS history_event_link_ignores (
+            event_id INTEGER NOT NULL,
+            link_type INTEGER NOT NULL,
+            PRIMARY KEY (event_id, link_type),
+            FOREIGN KEY(event_id) REFERENCES history_events(identifier) ON DELETE CASCADE
+        );
+        """)
+        write_cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_history_event_links_right '
+            'ON history_event_links(right_event_id);',
+        )
+        write_cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_history_event_link_ignores_type '
+            'ON history_event_link_ignores(link_type);',
+        )
 
     @progress_step(description='Create historical balance cache table.')
     def _add_historical_balance_cache(write_cursor: 'DBCursor') -> None:

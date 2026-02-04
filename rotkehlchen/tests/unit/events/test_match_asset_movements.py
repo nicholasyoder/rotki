@@ -8,7 +8,7 @@ from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
 from rotkehlchen.constants import HOUR_IN_SECONDS, ONE
 from rotkehlchen.constants.assets import A_BTC, A_ETH, A_USD, A_USDC, A_WETH_OPT, A_WSOL
-from rotkehlchen.db.cache import ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE, DBCacheDynamic
+from rotkehlchen.db.constants import HistoryEventLinkType
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.db.settings import DEFAULT_ASSET_MOVEMENT_TIME_RANGE, ModifiableDBSettings
@@ -43,12 +43,9 @@ def _match_and_check(database: 'DBHandler', expected_matches: list[tuple[int, in
     match_asset_movements(database=database)
     with database.conn.read_ctx() as cursor:
         assert set(cursor.execute(
-            'SELECT * FROM key_value_cache WHERE name LIKE ?',
-            ('matched_asset_movement_%',),
-        ).fetchall()) == {
-            (f'matched_asset_movement_{movement_id}', str(match_id))
-            for movement_id, match_id in expected_matches
-        }
+            'SELECT left_event_id, right_event_id FROM history_event_links WHERE link_type=?',
+            (HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),),
+        ).fetchall()) == set(expected_matches)
 
 
 @pytest.mark.parametrize('function_scope_initialize_mock_rotki_notifier', [True])
@@ -294,7 +291,7 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
     assert withdrawal4_adjustment.amount == withdrawal4.amount - withdrawal4_matched_event.amount
 
     # Check that matches have been cached and that the cached identifiers
-    # refer to the correct asset movements (ordered by timestamp descending)
+    # refer to the correct asset movements
     deposit_1_identifier = 1
     deposit_2_identifier = 2
     withdrawal_1_identifier = 5
@@ -302,18 +299,23 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
     deposit_4_identifier = 16
     withdrawal4_identifier = 17
     with database.conn.read_ctx() as cursor:
-        assert cursor.execute(
-            'SELECT * FROM key_value_cache WHERE name LIKE ?',
-            ('matched_asset_movement_%',),
-        ).fetchall() == [
-            (f'matched_asset_movement_{withdrawal4_matched_event.identifier}', str(withdrawal4_identifier)),  # noqa: E501
-            (f'matched_asset_movement_{withdrawal4_identifier}', str(withdrawal4_matched_event.identifier)),  # noqa: E501
-            (f'matched_asset_movement_{deposit_3_identifier}', str(deposit3_matched_event.identifier)),  # noqa: E501
-            (f'matched_asset_movement_{withdrawal_1_identifier}', str(withdrawal1_matched_event.identifier)),  # noqa: E501
-            (f'matched_asset_movement_{deposit_2_identifier}', str(deposit2_matched_event.identifier)),  # noqa: E501
-            (f'matched_asset_movement_{deposit_4_identifier}', str(ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE)),  # noqa: E501
-            (f'matched_asset_movement_{deposit_1_identifier}', str(ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE)),  # noqa: E501
-        ]
+        assert set(cursor.execute(
+            'SELECT left_event_id, right_event_id FROM history_event_links WHERE link_type=?',
+            (HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),),
+        ).fetchall()) == {
+            (withdrawal4_matched_event.identifier, withdrawal4_identifier),
+            (withdrawal4_identifier, withdrawal4_matched_event.identifier),
+            (deposit_3_identifier, deposit3_matched_event.identifier),
+            (withdrawal_1_identifier, withdrawal1_matched_event.identifier),
+            (deposit_2_identifier, deposit2_matched_event.identifier),
+        }
+        assert set(cursor.execute(
+            'SELECT event_id FROM history_event_link_ignores WHERE link_type=?',
+            (HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),),
+        ).fetchall()) == {
+            (deposit_4_identifier,),
+            (deposit_1_identifier,),
+        }
         matched_asset_movements = events_db.get_history_events_internal(
             cursor=cursor,
             filter_query=HistoryEventFilterQuery.make(identifiers=[
@@ -416,11 +418,12 @@ def test_match_asset_movements_settings(database: 'DBHandler') -> None:
 
         match_asset_movements(database=database)
         with database.conn.read_ctx() as cursor:
-            assert database.get_dynamic_cache(
-                cursor=cursor,
-                name=DBCacheDynamic.MATCHED_ASSET_MOVEMENT,
-                identifier=movement_id,
-            ) == expected_value
+            result = cursor.execute(
+                'SELECT right_event_id FROM history_event_links '
+                'WHERE left_event_id=? AND link_type=?',
+                (movement_id, HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db()),
+            ).fetchone()
+            assert (None if result is None else result[0]) == expected_value
 
     # Verify the adjustment event was created properly
     with database.conn.read_ctx() as cursor:
@@ -466,13 +469,13 @@ def test_auto_ignore_by_asset(database: 'DBHandler') -> None:
 
     match_asset_movements(database=database)
     with database.conn.read_ctx() as cursor:
-        assert cursor.execute(
-            'SELECT * FROM key_value_cache WHERE name LIKE ?',
-            ('matched_asset_movement_%',),
-        ).fetchall() == [  # only 4 & 5 (ICP, and unsupported EVM chain token) are ignored
-            ('matched_asset_movement_4', str(ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE)),
-            ('matched_asset_movement_5', str(ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE)),
-        ]
+        assert set(cursor.execute(
+            'SELECT event_id FROM history_event_link_ignores WHERE link_type=?',
+            (HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),),
+        ).fetchall()) == {  # only 4 & 5 (ICP, and unsupported EVM chain token) are ignored
+            (4,),
+            (5,),
+        }
 
 
 @pytest.mark.parametrize('number_of_arbitrum_one_accounts', [2])

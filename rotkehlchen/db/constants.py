@@ -29,6 +29,10 @@ class HistoryMappingState(DBIntEnumMixIn):
     IMPORTED_FROM_CSV = 4
 
 
+class HistoryEventLinkType(DBIntEnumMixIn):
+    ASSET_MOVEMENT_MATCH = 1
+
+
 EVM_ACCOUNTS_DETAILS_LAST_QUERIED_TS: Final = 'last_queried_timestamp'
 EVM_ACCOUNTS_DETAILS_TOKENS: Final = 'tokens'
 
