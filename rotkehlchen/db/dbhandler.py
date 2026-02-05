@@ -43,7 +43,6 @@ from rotkehlchen.db.cache import (
     DBCacheDynamic,
     DBCacheStatic,
     ExtraTxArgType,
-    IdentifierArgType,
     IndexArgType,
     LabeledLocationArgsType,
     LabeledLocationIdArgsType,
@@ -863,15 +862,6 @@ class DBHandler:
     ) -> str | None:
         ...
 
-    @overload
-    def get_dynamic_cache(
-            self,
-            cursor: 'DBCursor',
-            name: Literal[DBCacheDynamic.MATCHED_ASSET_MOVEMENT],
-            **kwargs: Unpack[IdentifierArgType],
-    ) -> int | None:
-        ...
-
     def get_dynamic_cache(
             self,
             cursor: 'DBCursor',
@@ -1026,16 +1016,6 @@ class DBHandler:
             name: Literal[DBCacheDynamic.SOLANA_TOKEN_ACCOUNT],
             value: str,
             **kwargs: Unpack[AddressArgType],
-    ) -> None:
-        ...
-
-    @overload
-    def set_dynamic_cache(
-            self,
-            write_cursor: 'DBCursor',
-            name: Literal[DBCacheDynamic.MATCHED_ASSET_MOVEMENT],
-            value: int,
-            **kwargs: Unpack[IdentifierArgType],
     ) -> None:
         ...
 

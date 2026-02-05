@@ -13,6 +13,7 @@ ETHEREUM_GENESIS: Final = Timestamp(1438269973)
 CPT_KRAKEN: Final = 'kraken'
 CPT_POLONIEX: Final = 'poloniex'
 CPT_UPHOLD: Final = 'uphold'
+EXCHANGES_CPT: Final = {CPT_KRAKEN, CPT_POLONIEX, CPT_UPHOLD}
 
 EVM_INDEXERS_NODE: Final = WeightedNode(
     node_info=NodeName(

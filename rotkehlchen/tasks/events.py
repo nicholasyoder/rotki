@@ -1,15 +1,18 @@
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Literal
 
 from rotkehlchen.api.v1.types import IncludeExcludeFilterData
 from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.chain.accounts import BlockchainAccounts
 from rotkehlchen.chain.decoding.constants import CPT_GAS
+from rotkehlchen.chain.ethereum.constants import EXCHANGES_CPT
 from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
 from rotkehlchen.constants import HOUR_IN_SECONDS
+from rotkehlchen.constants.assets import A_DAI, A_SAI
 from rotkehlchen.constants.resolver import SOLANA_CHAIN_DIRECTIVE, identifier_to_evm_chain
+from rotkehlchen.constants.timing import SAI_DAI_MIGRATION_TS
 from rotkehlchen.db.cache import DBCacheStatic
 from rotkehlchen.db.constants import (
     CHAIN_EVENT_FIELDS,
@@ -73,6 +76,8 @@ ENTRY_TYPES_TO_EXCLUDE_FROM_MATCHING: Final = [
 ]
 # Tolerance for the matched event to be on the wrong side of an asset movement during auto matching
 TIMESTAMP_TOLERANCE: Final = HOUR_IN_SECONDS
+LEGACY_EXCHANGE_MATCH_CUTOFF_TS: Final = Timestamp(1514764800)  # 2018-01-01 00:00:00 UTC
+LEGACY_EXCHANGE_MATCH_WINDOW: Final = HOUR_IN_SECONDS * 100
 
 
 @dataclass(frozen=True)
@@ -359,8 +364,6 @@ def _should_auto_ignore_movement(asset_movement: AssetMovement) -> bool:
     return False
 
 
-# TODO: Remove all the extra logs with the MATCH_DEBUG prefix.
-
 def match_asset_movements(database: 'DBHandler') -> None:
     """Analyze asset movements and find corresponding onchain events, then update those onchain
     events with proper event_type, counterparty, etc and cache the matched identifiers.
@@ -368,7 +371,6 @@ def match_asset_movements(database: 'DBHandler') -> None:
     log.debug('Analyzing asset movements for corresponding onchain events...')
     events_db = DBHistoryEvents(database=database)
     asset_movements, fee_events = get_unmatched_asset_movements(database)
-    log.debug(f'MATCH_DEBUG: loaded {len(asset_movements)} unmatched asset movements')
     settings = CachedSettings().get_settings()
     unmatched_asset_movements, movement_ids_to_ignore = [], []
     assets_in_collection_cache: dict[str, tuple[Asset, ...]] = {}
@@ -376,7 +378,6 @@ def match_asset_movements(database: 'DBHandler') -> None:
         blockchain_accounts = events_db.db.get_blockchain_accounts(cursor=cursor)
         already_matched_event_ids = get_already_matched_event_ids(cursor=cursor)
         for asset_movement in asset_movements:
-            log.debug('MATCH_DEBUG: processing movement')
             if _should_auto_ignore_movement(asset_movement=asset_movement):
                 movement_ids_to_ignore.append(asset_movement.identifier)
                 continue
@@ -387,22 +388,30 @@ def match_asset_movements(database: 'DBHandler') -> None:
                 assets_in_collection = GlobalDBHandler.get_assets_in_same_collection(
                     identifier=asset_identifier,
                 )
+                if (
+                    asset_movement.asset in {A_DAI, A_SAI} and
+                    ts_ms_to_sec(asset_movement.timestamp) >= SAI_DAI_MIGRATION_TS
+                ):
+                    assets_in_collection = tuple(set(assets_in_collection) | {A_DAI, A_SAI})
                 assets_in_collection_cache[asset_identifier] = assets_in_collection
 
-            log.debug('MATCH_DEBUG: checked auto ignore and loaded assets_in_collection')
+            match_window = settings.asset_movement_time_range
+            if ts_ms_to_sec(asset_movement.timestamp) < LEGACY_EXCHANGE_MATCH_CUTOFF_TS:
+                # Some exchanges had unusually long credit windows for certain events in 2017.
+                match_window = LEGACY_EXCHANGE_MATCH_WINDOW
+
             if (match_count := len(matched_events := find_asset_movement_matches(
                 events_db=events_db,
                 asset_movement=asset_movement,
                 is_deposit=(is_deposit := asset_movement.event_type == HistoryEventType.DEPOSIT),
                 fee_event=(fee_event := fee_events.get(asset_movement.group_identifier)),
-                match_window=settings.asset_movement_time_range,
+                match_window=match_window,
                 cursor=cursor,
                 assets_in_collection=assets_in_collection,
                 blockchain_accounts=blockchain_accounts,
                 already_matched_event_ids=already_matched_event_ids,
                 tolerance=settings.asset_movement_amount_tolerance,
             ))) == 1:
-                log.debug('MATCH_DEBUG: found a match')
                 success, error_msg = update_asset_movement_matched_event(
                     events_db=events_db,
                     asset_movement=asset_movement,
@@ -410,7 +419,6 @@ def match_asset_movements(database: 'DBHandler') -> None:
                     matched_event=(matched_event := matched_events[0]),
                     is_deposit=is_deposit,
                 )
-                log.debug('MATCH_DEBUG: updated events')
                 if success:
                     already_matched_event_ids.add(matched_event.identifier)  # type: ignore[arg-type]  # ids from db will not be none
                     continue
@@ -433,7 +441,6 @@ def match_asset_movements(database: 'DBHandler') -> None:
 
             unmatched_asset_movements.append(asset_movement)
 
-    log.debug('MATCH_DEBUG: ready to mark ignored movements')
     if len(movement_ids_to_ignore) > 0:
         with events_db.db.conn.write_ctx() as write_cursor:
             write_cursor.executemany(
@@ -444,7 +451,6 @@ def match_asset_movements(database: 'DBHandler') -> None:
                     for movement_id in movement_ids_to_ignore
                 ],
             )
-    log.debug('MATCH_DEBUG: done marking ignored movements')
 
     if (unmatched_count := len(unmatched_asset_movements)) > 0:
         log.warning(f'Failed to match {unmatched_count} asset movements')
@@ -462,7 +468,6 @@ def get_unmatched_asset_movements(
     """
     asset_movements: list[AssetMovement] = []
     fee_events: dict[str, AssetMovement] = {}
-    log.debug('MATCH_DEBUG: ready to load unmatched movements')
     with database.conn.read_ctx() as cursor:
         for entry in cursor.execute(
                 f'SELECT {HISTORY_BASE_ENTRY_FIELDS}, {CHAIN_EVENT_FIELDS} FROM history_events '
@@ -488,7 +493,6 @@ def get_unmatched_asset_movements(
             else:
                 asset_movements.append(asset_movement)
 
-    log.debug('MATCH_DEBUG: done loading unmatched movements')
     return asset_movements, fee_events
 
 
@@ -502,7 +506,6 @@ def _maybe_add_adjustment_event(
     """Add an event to cover the difference between the amounts of the movement and its match.
     Takes no action if the amounts match or if existing events already cover the difference.
     """
-    log.debug('MATCH_DEBUG: begin _maybe_add_adjustment_event')
     # Include the fee amount only for deposits since for withdrawals the matched event happens
     # after the fee has already been deducted.
     movement_amount_with_fee = asset_movement.amount - fee_event.amount if (
@@ -539,7 +542,6 @@ def _maybe_add_adjustment_event(
 
             events_to_delete.append(adjustment_id)
 
-    log.debug('MATCH_DEBUG: processed existing adjustments')
     with events_db.db.conn.write_ctx() as write_cursor:
         # Remove any existing uncustomized adjustment events present for this match pair (if this
         # movement was matched before but then unlinked it may have an existing adjustment event).
@@ -569,7 +571,6 @@ def _maybe_add_adjustment_event(
         ).fetchone()[0] + 1
 
     # Create the movement's adjustment event
-    log.debug('MATCH_DEBUG: creating adjustment')
     with events_db.db.conn.write_ctx() as write_cursor:
         events_db.add_history_event(
             write_cursor=write_cursor,
@@ -594,8 +595,6 @@ def _maybe_add_adjustment_event(
             mapping_values={HISTORY_MAPPING_KEY_STATE: HistoryMappingState.AUTO_MATCHED},
         )
 
-    log.debug('MATCH_DEBUG: done creating adjustment')
-
 
 def update_asset_movement_matched_event(
         events_db: DBHistoryEvents,
@@ -608,7 +607,6 @@ def update_asset_movement_matched_event(
     event identifiers. Returns a tuple containing a boolean indicating success and a string
     containing any error message.
     """
-    log.debug('MATCH_DEBUG: begin update_asset_movement_matched_event')
     should_edit_notes = True
     if isinstance(matched_event, OnchainEvent):
         # This could also be a plain history event (i.e. a btc event, or custom event)
@@ -657,13 +655,11 @@ def update_asset_movement_matched_event(
 
     # Save the event and cache the matched identifiers
     with events_db.db.conn.write_ctx() as write_cursor:
-        log.debug('MATCH_DEBUG: ready to edit matched event')
         events_db.edit_history_event(
             write_cursor=write_cursor,
             event=matched_event,
             mapping_state=HistoryMappingState.AUTO_MATCHED,
         )
-        log.debug('MATCH_DEBUG: done editing matched event')
         write_cursor.execute(
             'DELETE FROM history_event_link_ignores WHERE event_id=? AND link_type=?',
             (asset_movement.identifier, HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db()),  # noqa: E501
@@ -677,7 +673,10 @@ def update_asset_movement_matched_event(
                 HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),
             ),
         )
-        log.debug('MATCH_DEBUG: done caching match ids')
+        log.debug(
+            'MATCH_DEBUG: cached match movement_id='
+            f'{asset_movement.identifier} matched_id={matched_event.identifier}',
+        )
 
     return True, ''
 
@@ -701,14 +700,45 @@ def should_exclude_possible_match(
        accounting direction vs OUT balance tracking direction). But if there are multiple close
        matches, the match will be narrowed by the balance tracking direction later.
     - Event identifier is in the list of already matched ids.
+    - Gas events
     """
-    return (
+    if isinstance(event, AssetMovement) and event.location == asset_movement.location:
+        return True  # only allow exchange-to-exchange between different exchanges
+
+    if (
         event.location == asset_movement.location and
         event.location_label == asset_movement.location_label
-    ) or (
+    ):
+        return True
+
+    if isinstance(event, OnchainEvent):
+        if (
+            event.event_type == HistoryEventType.SPEND and
+            event.event_subtype == HistoryEventSubType.FEE and
+            getattr(event, 'counterparty', None) == CPT_GAS
+        ):
+            return True
+
+        if event.counterparty in EXCHANGES_CPT and (
+            (
+                asset_movement.event_type == HistoryEventType.WITHDRAWAL and
+                event.event_type == HistoryEventType.DEPOSIT and
+                event.event_subtype == HistoryEventSubType.DEPOSIT_ASSET
+            ) or (
+                asset_movement.event_type == HistoryEventType.DEPOSIT and
+                event.event_type == HistoryEventType.WITHDRAWAL and
+                event.event_subtype == HistoryEventSubType.REMOVE_ASSET
+            )
+        ):
+            return True
+
+    if (
         event.event_type == HistoryEventType.INFORMATIONAL and
         event.event_subtype == HistoryEventSubType.APPROVE
-    ) or (
+    ):
+        return True
+
+    if (
         event.event_type == HistoryEventType.TRANSFER and
         event.event_subtype == HistoryEventSubType.NONE and
         event.location in BLOCKCHAIN_LOCATIONS and
@@ -720,11 +750,20 @@ def should_exclude_possible_match(
             (addr := getattr(event, 'address', None)) is None and
             event.location in (Location.BITCOIN, Location.BITCOIN_CASH)
         ) or addr in chain_accounts)
-    ) or (
-        exclude_unexpected_direction and
-        (direction := event.maybe_get_direction()) != EventDirection.NEUTRAL and
-        direction != (EventDirection.OUT if asset_movement.event_type == HistoryEventType.DEPOSIT else EventDirection.IN)  # noqa: E501
-    ) or event.identifier in already_matched_event_ids
+    ):
+        return True
+
+    if exclude_unexpected_direction:
+        direction = event.maybe_get_direction()
+        expected_direction = (
+            EventDirection.OUT
+            if asset_movement.event_type == HistoryEventType.DEPOSIT
+            else EventDirection.IN
+        )
+        if direction not in {EventDirection.NEUTRAL, expected_direction}:
+            return True
+
+    return event.identifier in already_matched_event_ids
 
 
 def _match_amount(
@@ -764,7 +803,6 @@ def find_asset_movement_matches(
     """Find events that closely match what the corresponding event for the given asset movement
     should look like. Returns a list of events that match.
     """
-    log.debug('MATCH_DEBUG: begin find_asset_movement_matches')
     asset_movement_timestamp = ts_ms_to_sec(asset_movement.timestamp)
     if is_deposit:
         from_ts = asset_movement_timestamp - match_window
@@ -776,7 +814,6 @@ def find_asset_movement_matches(
     if tolerance is None:
         tolerance = CachedSettings().get_settings().asset_movement_amount_tolerance
 
-    log.debug('MATCH_DEBUG: ready to load possible matches')
     possible_matches = events_db.get_history_events_internal(
         cursor=cursor,
         filter_query=HistoryEventFilterQuery.make(
@@ -789,14 +826,69 @@ def find_asset_movement_matches(
             ),
         ),
     )
-    log.debug(f'MATCH_DEBUG: loaded {len(possible_matches)} possible matches')
+    log.debug(
+        f'MATCH_DEBUG: possible_matches={len(possible_matches)} '
+        f'movement_id={asset_movement.identifier} is_deposit={is_deposit} '
+        f'movement_amount={asset_movement.amount}',
+    )
 
-    close_matches: list[HistoryBaseEntry] = []
     amount_with_fee: FVal | None = None
     if is_deposit and fee_event is not None and fee_event.asset == asset_movement.asset:
         amount_with_fee = asset_movement.amount + fee_event.amount
 
+    onchain_candidates: list[HistoryBaseEntry] = []
+    exchange_candidates: list[HistoryBaseEntry] = []
     for event in possible_matches:
+        (exchange_candidates if isinstance(event, AssetMovement) else onchain_candidates).append(event)  # noqa: E501
+
+    close_matches = _find_close_matches(
+        candidates=onchain_candidates,
+        label='onchain',
+        asset_movement=asset_movement,
+        is_deposit=is_deposit,
+        fee_event=fee_event,
+        amount_with_fee=amount_with_fee,
+        tolerance=tolerance,
+        blockchain_accounts=blockchain_accounts,
+        already_matched_event_ids=already_matched_event_ids,
+    )
+    if len(close_matches) == 0:
+        close_matches = _find_close_matches(
+            candidates=exchange_candidates,
+            label='exchange',
+            asset_movement=asset_movement,
+            is_deposit=is_deposit,
+            fee_event=fee_event,
+            amount_with_fee=amount_with_fee,
+            tolerance=tolerance,
+            blockchain_accounts=blockchain_accounts,
+            already_matched_event_ids=already_matched_event_ids,
+        )
+
+    if len(close_matches) == 0:
+        log.debug(
+            f'No close matches found for asset movement {asset_movement.group_identifier} '
+            f'({asset_movement.event_type.name} {asset_movement.amount} {asset_movement.asset} '
+            f'from/to {asset_movement.location})',
+        )
+
+    return close_matches
+
+
+def _find_close_matches(
+        candidates: list[HistoryBaseEntry],
+        label: Literal['onchain', 'exchange'],
+        asset_movement: AssetMovement,
+        is_deposit: bool,
+        fee_event: AssetMovement | None,
+        amount_with_fee: FVal | None,
+        tolerance: FVal,
+        blockchain_accounts: BlockchainAccounts,
+        already_matched_event_ids: set[int],
+) -> list[HistoryBaseEntry]:
+    """Return candidate matches that pass amount checks and heuristics."""
+    close_matches: list[HistoryBaseEntry] = []
+    for event in candidates:
         if should_exclude_possible_match(
             asset_movement=asset_movement,
             event=event,
@@ -804,9 +896,14 @@ def find_asset_movement_matches(
             already_matched_event_ids=already_matched_event_ids,
             exclude_unexpected_direction=True,
         ):
+            log.debug(
+                f'MATCH_DEBUG: excluded {label} id={event.identifier} '
+                f'type={event.event_type.name} subtype={event.event_subtype.name} '
+                f'amount={event.amount} location={event.location}',
+            )
             continue
 
-        # Check for matching amount, or matching amount + fee for deposits. The fee doesn't need
+        # Check for matching amount, or matching amount + fee for deposits. The fee doesn't need  # noqa: E501
         # to be included for withdrawals since the onchain event will happen after the fee is
         # already deducted and the amount should always match the main asset movement amount.
         # Also allow a small tolerance as long as the received amount is less
@@ -816,31 +913,56 @@ def find_asset_movement_matches(
             event_amount=event.amount,
             tolerance=tolerance,
         ) or (
+            is_deposit and
             amount_with_fee is not None and
             _match_amount(
                 movement_amount=amount_with_fee,
                 event_amount=event.amount,
                 tolerance=tolerance,
             )
+        ) or (
+            not is_deposit and
+            fee_event is not None and
+            fee_event.asset == asset_movement.asset and
+            _match_amount(
+                movement_amount=asset_movement.amount - fee_event.amount,
+                event_amount=event.amount,
+                tolerance=tolerance,
+            )
         )):
+            log.debug(
+                f'MATCH_DEBUG: amount mismatch {label} id={event.identifier} '
+                f'movement={asset_movement.amount} event={event.amount} '
+                f'fee={fee_event.amount if fee_event is not None else None}',
+            )
             log.debug(
                 f'Excluding possible match for asset movement {asset_movement.group_identifier} '
                 f'due to differing amount. Expected {asset_movement.amount} got {event.amount}',
             )
             continue
 
+        log.debug(
+            f'MATCH_DEBUG: close match {label} id={event.identifier} '
+            f'type={event.event_type.name} amount={event.amount}',
+        )
         close_matches.append(event)
 
     if len(close_matches) == 0:
-        log.debug(
-            f'No close matches found for asset movement {asset_movement.group_identifier} '
-            f'({asset_movement.event_type.name} {asset_movement.amount} {asset_movement.asset} '
-            f'from/to {asset_movement.location})',
-        )
-        log.debug('MATCH_DEBUG: done finding matches')
         return close_matches
 
-    if len(close_matches) > 1:  # Multiple close matches. Check various other heuristics.
+    if len(close_matches) > 1:  # Multiple close matches. Prefer expected direction, then other heuristics.  # noqa: E501
+        expected_direction = (
+            EventDirection.OUT
+            if asset_movement.event_type == HistoryEventType.DEPOSIT
+            else EventDirection.IN
+        )
+        direction_matches = [
+            match for match in close_matches
+            if match.maybe_get_direction(for_balance_tracking=True) == expected_direction
+        ]
+        if len(direction_matches) > 0:
+            close_matches = direction_matches
+
         asset_matches: list[HistoryBaseEntry] = []
         tx_ref_matches: list[HistoryBaseEntry] = []
         counterparty_matches: list[HistoryBaseEntry] = []
@@ -865,13 +987,12 @@ def find_asset_movement_matches(
                     tx_ref_matches.append(match)
 
                 if match.counterparty is None or match.counterparty == CPT_MONERIUM:
-                    # Events with a counterparty are usually not the correct match since they are
+                    # Events with a counterparty are usually not the correct match since they are  # noqa: E501
                     # part of a properly decoded onchain operation. Monerium is an exception.
                     counterparty_matches.append(match)
 
         for match_list in (tx_ref_matches, asset_matches, counterparty_matches, event_type_matches):  # noqa: E501
             if len(match_list) == 1:
-                log.debug('MATCH_DEBUG: done finding matches')
                 return match_list
 
         log.debug(
@@ -879,5 +1000,4 @@ def find_asset_movement_matches(
             f'asset movement {asset_movement.group_identifier}.',
         )
 
-    log.debug('MATCH_DEBUG: done finding matches')
     return close_matches
