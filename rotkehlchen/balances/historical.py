@@ -111,8 +111,47 @@ class HistoricalBalancesManager:
             assets: tuple[Asset, ...],
             from_ts: Timestamp,
             to_ts: Timestamp,
+    ) -> tuple[dict[Timestamp, FVal], tuple[str | int | None, str | None] | None]:
+        """Get historical balance amounts for the given assets within the given time range.
+
+        If a negative amount is encountered, returns a tuple of (identifier, group_identifier)
+        for the event that caused it alongside the balances.
+
+        It does not include the value of the balances in the user's profit currency as
+        that is handled separately by the frontend in a different request.
+
+        May raise:
+        - NotFoundError if no events exist for the assets in the specified time period.
+        - DeserializationError if there is a problem deserializing an event from DB.
+        """
+        events, _ = self._get_events_and_currency(from_ts=from_ts, to_ts=to_ts, assets=assets)
+        if len(events) == 0:
+            raise NotFoundError(f'No historical data found for {assets} within {from_ts=} and {to_ts=}.')  # noqa: E501
+
+        negative_balance_data = None
+        current_balances: dict[Asset, FVal] = defaultdict(FVal)
+        amounts: dict[Timestamp, FVal] = defaultdict(lambda: ZERO)
+        for event in events:
+            if (negative_balance_data := self._update_balances(
+                    event=event,
+                    current_balances=current_balances,
+            )) is not None:
+                break
+
+            # Combine balances of all assets. Overwrite any existing value for this timestamp
+            # so the final amount per timestamp is the cumulative result of all processed events.
+            amounts[ts_ms_to_sec(event.timestamp)] = FVal(sum(current_balances[asset] for asset in assets))  # noqa: E501
+
+        return amounts, negative_balance_data
+
+    def get_assets_amounts_event_metrics(
+            self,
+            assets: tuple[Asset, ...],
+            from_ts: Timestamp,
+            to_ts: Timestamp,
     ) -> tuple[bool, dict[Timestamp, FVal] | None]:
         """Get historical balance amounts for the given assets within the given time range.
+        TODO (balances): Replace get_assets_amounts with this.
 
         Returns a tuple of (processing_required, amounts):
         - processing_required: True if events exist but haven't been processed yet

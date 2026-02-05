@@ -14444,12 +14444,12 @@ Historical Balance Queries
 
   .. http:post:: /api/(version)/balances/historical/asset
 
-    Gets historical balance amounts for a specific asset within a given time range, calculated from pre-computed balance metrics.
+    Gets historical balance amounts for a specific asset within a given time range, calculated from processing of historical events.
     It's the total amount of asset held at each timestamp where a change occurred.
 
-    The response includes a ``processing_required`` flag that indicates whether historical events exist but haven't
-    been processed yet. If ``processing_required`` is true, call ``POST /tasks/trigger`` to trigger
-    processing, then retry this endpoint.
+    .. note::
+        If processing reveals a negative total balance amount at any point, the response will include amounts up to
+        the event that caused the negative balance. No amounts after this point are returned.
 
     **Example Request:**
 
@@ -14470,7 +14470,7 @@ Historical Balance Queries
       :reqjsonarr integer from_timestamp: The start timestamp of the query range
       :reqjsonarr integer to_timestamp: The end timestamp of the query range
 
-    **Example Response (data available):**
+    **Example Response:**
 
       .. sourcecode:: http
 
@@ -14480,46 +14480,15 @@ Historical Balance Queries
         {
           "message": "",
           "result": {
-            "processing_required": false,
             "times": [1672531200, 1673308800, 1674518400],
             "values": ["1.5", "2.0", "1.8"]
           },
           "status_code": 200
         }
 
-    **Example Response (processing required):**
-
-      .. sourcecode:: http
-
-        HTTP/1.1 200 OK
-        Content-Type: application/json
-
-        {
-          "message": "",
-          "result": {
-            "processing_required": true
-          },
-          "status_code": 200
-        }
-
-    **Example Response (no events in range):**
-
-      .. sourcecode:: http
-
-        HTTP/1.1 200 OK
-        Content-Type: application/json
-
-        {
-          "message": "",
-          "result": {
-            "processing_required": false
-          },
-          "status_code": 200
-        }
-
-        :resjson bool processing_required: True if events exist but haven't been processed yet. False otherwise.
-        :resjson list[integer] times: Timestamps of balance changes. Only present when data is available.
-        :resjson list[string] values: Net asset balance amount at each corresponding timestamp. Only present when data is available.
+        :resjson list[integer] times: Timestamps of balance changes.
+        :resjson list last_group_identifier: (Optional) A list containing [identifier, group_identifier] of the event that caused the negative balance amount.
+        :resjson list[string] values: Net asset balance amount at each corresponding timestamp.
         :statuscode 200: Historical balances returned
         :statuscode 400: Malformed query
         :statuscode 401: User is not logged in

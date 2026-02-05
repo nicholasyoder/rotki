@@ -73,7 +73,6 @@ from rotkehlchen.constants.misc import (
     HTTP_STATUS_INTERNAL_DB_ERROR,
 )
 from rotkehlchen.data_import.manager import DataImportSource
-from rotkehlchen.db.cache import DBCacheStatic
 from rotkehlchen.db.calendar import CalendarEntry, CalendarFilterQuery, ReminderEntry
 from rotkehlchen.db.constants import (
     LINKABLE_ACCOUNTING_PROPERTIES,
@@ -123,6 +122,7 @@ from rotkehlchen.errors.misc import (
     SystemPermissionError,
 )
 from rotkehlchen.errors.price import NoPriceForGivenTimestamp
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.exchanges.constants import ALL_SUPPORTED_EXCHANGES, SUPPORTED_EXCHANGES
 from rotkehlchen.exchanges.utils import query_binance_exchange_pairs
 from rotkehlchen.externalapis.github import Github
@@ -159,7 +159,6 @@ from rotkehlchen.tasks.events import (
     should_exclude_possible_match,
     update_asset_movement_matched_event,
 )
-from rotkehlchen.tasks.historical_balances import process_historical_balances
 from rotkehlchen.types import (
     AVAILABLE_MODULES_MAP,
     CHAINS_WITH_TRANSACTION_DECODERS_TYPE,
@@ -202,7 +201,6 @@ from rotkehlchen.types import (
     SubstrateAddress,
     SupportedBlockchain,
     Timestamp,
-    TimestampMS,
     UserNote,
 )
 from rotkehlchen.utils.misc import ts_ms_to_sec, ts_now
@@ -3076,6 +3074,47 @@ class RestAPI:
             to_timestamp: Timestamp,
     ) -> Response:
         assets: tuple[Asset, ...]
+        try:
+            if asset is not None:
+                assets = (asset,)
+            else:  # collection_id is present due to validation.
+                with GlobalDBHandler().conn.read_ctx() as cursor:
+                    cursor.execute(
+                        'SELECT asset FROM multiasset_mappings WHERE collection_id=?',
+                        (collection_id,),
+                    )
+                    assets = tuple(Asset(row[0]) for row in cursor)
+
+            balances, last_group_identifier = HistoricalBalancesManager(self.rotkehlchen.data.db).get_assets_amounts(  # noqa: E501
+                assets=assets,
+                from_ts=from_timestamp,
+                to_ts=to_timestamp,
+            )
+        except DeserializationError as e:
+            return api_response(wrap_in_fail_result(str(e)), status_code=HTTPStatus.INTERNAL_SERVER_ERROR)  # noqa: E501
+        except NotFoundError as e:
+            return api_response(wrap_in_fail_result(str(e)), status_code=HTTPStatus.NOT_FOUND)
+
+        result = {
+            'times': list(balances),
+            'values': [str(x) for x in balances.values()],
+        }
+        if last_group_identifier is not None:
+            result['last_group_identifier'] = last_group_identifier
+
+        return api_response(_wrap_in_ok_result(result=result))
+
+    def get_historical_asset_amounts_event_metrics(
+            self,
+            asset: Asset | None,
+            collection_id: int | None,
+            from_timestamp: Timestamp,
+            to_timestamp: Timestamp,
+    ) -> Response:
+        """Get historical asset amounts via the event metrics table.
+        TODO (balances): Replace get_historical_asset_amounts with this.
+        """
+        assets: tuple[Asset, ...]
         if asset is not None:
             assets = (asset,)
         else:  # collection_id is present due to validation.
@@ -3086,7 +3125,7 @@ class RestAPI:
                 )
                 assets = tuple(Asset(row[0]) for row in cursor)
 
-        processing_required, amounts = HistoricalBalancesManager(self.rotkehlchen.data.db).get_assets_amounts(  # noqa: E501
+        processing_required, amounts = HistoricalBalancesManager(self.rotkehlchen.data.db).get_assets_amounts_event_metrics(  # noqa: E501
             assets=assets,
             from_ts=from_timestamp,
             to_ts=to_timestamp,
@@ -3102,17 +3141,7 @@ class RestAPI:
     def trigger_task(self, task: TaskName) -> dict[str, Any]:
         """Trigger the specified async task."""
         if task == TaskName.HISTORICAL_BALANCE_PROCESSING:
-            with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
-                stale_from_ts = TimestampMS(int(value)) if (value := self.rotkehlchen.data.db.get_static_cache(  # noqa: E501
-                    cursor=cursor,
-                    name=DBCacheStatic.STALE_BALANCES_FROM_TS,
-                )) is not None else None
-
-            process_historical_balances(
-                database=self.rotkehlchen.data.db,
-                msg_aggregator=self.rotkehlchen.msg_aggregator,
-                from_ts=stale_from_ts,
-            )
+            return wrap_in_fail_result('Historical balance processing is temporarily disabled.')
         else:  # task == TaskName.ASSET_MOVEMENT_MATCHING
             process_asset_movements(database=self.rotkehlchen.data.db)
 
