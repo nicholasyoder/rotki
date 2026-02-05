@@ -78,9 +78,9 @@ def get_event_direction(
 
     if for_balance_tracking and direction == EventDirection.NEUTRAL:
         if (event_type, event_subtype) == (HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_ASSET):  # noqa: E501
-            return EventDirection.IN
+            return EventDirection.IN if location in ALL_SUPPORTED_EXCHANGES else EventDirection.OUT
         if (event_type, event_subtype) == (HistoryEventType.WITHDRAWAL, HistoryEventSubType.REMOVE_ASSET):  # noqa: E501
-            return EventDirection.OUT
+            return EventDirection.OUT if location in ALL_SUPPORTED_EXCHANGES else EventDirection.IN
         if (event_type, event_subtype) == (HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_TO_PROTOCOL):  # noqa: E501
             return EventDirection.OUT
         if (event_type, event_subtype) == (HistoryEventType.WITHDRAWAL, HistoryEventSubType.WITHDRAW_FROM_PROTOCOL):  # noqa: E501

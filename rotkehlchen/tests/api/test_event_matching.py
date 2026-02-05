@@ -88,12 +88,14 @@ def test_match_asset_movements(rotkehlchen_api_server: 'APIServer') -> None:
     matched_event.event_type = HistoryEventType.DEPOSIT
     matched_event.event_subtype = HistoryEventSubType.DEPOSIT_ASSET
     matched_event.counterparty = 'kraken'
-    matched_event.notes = f'Deposit 0.1 ETH to {user_address} from Kraken 1'
+    matched_event.notes = f'Withdraw 0.1 ETH from {user_address} to Kraken 1'
     matched_event.extra_data = {'matched_asset_movement': {
         'group_identifier': asset_movement.group_identifier,
         'exchange': 'kraken',
         'exchange_name': 'Kraken 1',
     }}
+    matched_event.event_type = HistoryEventType.WITHDRAWAL
+    matched_event.event_subtype = HistoryEventSubType.REMOVE_ASSET
     assert events == [asset_movement, matched_event]
 
 
@@ -633,7 +635,7 @@ def test_get_history_events_with_matched_asset_movements(
     assert unrelated_event_entry['entry']['actual_group_identifier'] == evm_event_1.group_identifier  # noqa: E501
     # matched events are in a sublist so frontend can easily group them
     assert len(match1_sublist := result[1]) == 2
-    assert match1_sublist[0]['entry']['event_type'] == 'deposit'
+    assert match1_sublist[0]['entry']['event_type'] == 'withdrawal'
     assert match1_sublist[0]['entry']['group_identifier'] == evm_event_1.group_identifier
     assert match1_sublist[0]['entry']['actual_group_identifier'] == evm_event_1.group_identifier
     assert match1_sublist[1]['entry']['event_type'] == 'withdrawal'
@@ -651,11 +653,11 @@ def test_get_history_events_with_matched_asset_movements(
     assert len(result) == 1
     assert len(match2_sublist := result[0]) == 4
     assert all(x['entry']['group_identifier'] == movement1.group_identifier for x in match2_sublist)  # noqa: E501
-    assert match2_sublist[0]['entry']['event_type'] == 'deposit'
+    assert match2_sublist[0]['entry']['event_type'] == 'withdrawal'
     assert match2_sublist[0]['entry']['actual_group_identifier'] == movement2.group_identifier
     assert match2_sublist[1]['entry']['event_subtype'] == 'fee'
     assert match2_sublist[1]['entry']['actual_group_identifier'] == movement2.group_identifier
-    assert match2_sublist[2]['entry']['event_type'] == 'withdrawal'
+    assert match2_sublist[2]['entry']['event_type'] == 'deposit'
     assert match2_sublist[2]['entry']['actual_group_identifier'] == movement1.group_identifier
     assert match2_sublist[3]['entry']['event_subtype'] == 'fee'
     assert match2_sublist[3]['entry']['actual_group_identifier'] == movement1.group_identifier
