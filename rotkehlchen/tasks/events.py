@@ -622,19 +622,25 @@ def update_asset_movement_matched_event(
     if is_deposit:
         matched_event.event_type = HistoryEventType.WITHDRAWAL
         matched_event.event_subtype = HistoryEventSubType.REMOVE_ASSET
-        notes = 'Withdraw {amount} {asset} from {location_label} to {exchange}'
+        notes = 'Withdraw {amount} {asset} from {location_label}'
+        from_to_exchange = ' to {exchange}'
     else:
         matched_event.event_type = HistoryEventType.DEPOSIT
         matched_event.event_subtype = HistoryEventSubType.DEPOSIT_ASSET
-        notes = 'Deposit {amount} {asset} to {location_label} from {exchange}'
+        notes = 'Deposit {amount} {asset} to {location_label}'
+        from_to_exchange = ' from {exchange}'
 
     if should_edit_notes:
-        matched_event.notes = notes.format(
-            amount=matched_event.amount,
-            asset=matched_event.asset.resolve_to_asset_with_symbol().symbol,
-            location_label=matched_event.location_label,
-            exchange=asset_movement.location_label,
-        )
+        format_args = {
+            'amount': matched_event.amount,
+            'asset': matched_event.asset.resolve_to_asset_with_symbol().symbol,
+            'location_label': matched_event.location_label,
+        }
+        if asset_movement.location_label is not None:
+            format_args['exchange'] = asset_movement.location_label
+            notes += from_to_exchange
+
+        matched_event.notes = notes.format(**format_args)
 
     if matched_event.extra_data is None:
         matched_event.extra_data = {}
