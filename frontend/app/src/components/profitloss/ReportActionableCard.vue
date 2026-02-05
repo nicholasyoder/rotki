@@ -265,7 +265,7 @@ function closePinnedSidebar() {
               v-if="isPinned"
               size="20"
               class="text-white"
-              name="lu-pin-off"
+              name="lu-x"
             />
             <RuiIcon
               v-else

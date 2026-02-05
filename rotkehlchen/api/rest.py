@@ -2752,6 +2752,22 @@ class RestAPI:
 
         return api_response(_wrap_in_ok_result(details), status_code=HTTPStatus.OK)
 
+    def get_history_event_group_position(
+            self,
+            group_identifier: str,
+            filter_query: HistoryBaseEntryFilterQuery,
+    ) -> Response:
+        """Gets the 0-based group position of a history event group in the filtered sorted list."""
+        dbevents = DBHistoryEvents(self.rotkehlchen.data.db)
+        position = dbevents.get_history_event_group_position(
+            group_identifier=group_identifier,
+            filter_query=filter_query,
+        )
+        if position is None:
+            return api_response(wrap_in_fail_result('No event found'), status_code=HTTPStatus.NOT_FOUND)  # noqa: E501
+
+        return api_response(_wrap_in_ok_result({'position': position}), status_code=HTTPStatus.OK)
+
     @async_api_call()
     def add_transaction_by_reference(
             self,

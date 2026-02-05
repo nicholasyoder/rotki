@@ -32,7 +32,7 @@ const totalIssuesCount = computed<number>(() => get(unmatchedCount) + get(duplic
 const hasIssues = computed<boolean>(() => !get(autoMatchLoading) && get(totalIssuesCount) > 0);
 const hasOnlyUnmatchedMovements = computed<boolean>(() => get(unmatchedCount) > 0 && get(duplicatesCount) === 0);
 
-const debouncedProcessing = useRefWithDebounce(processing, 200);
+const debouncedProcessing = useRefWithDebounce(logicOr(processing, autoMatchLoading), 200);
 const issueButtonEnabled = computed<boolean>(() => !get(debouncedProcessing) && getStatus(Section.HISTORY) === Status.LOADED);
 const showWarningButton = logicAnd(issueButtonEnabled, mainPage, hasIssues);
 

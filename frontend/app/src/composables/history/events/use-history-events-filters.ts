@@ -5,6 +5,7 @@ import type { HistoryEventRequestPayload } from '@/modules/history/events/reques
 import type { Collection } from '@/types/collection';
 import type { HistoryEventRow } from '@/types/history/events/schemas';
 import { type Account, type HistoryEventEntryType, toSnakeCase, type Writeable } from '@rotki/common';
+import { startPromise } from '@shared/utils';
 import { isEqual } from 'es-toolkit';
 import { type Filters, type Matcher, useHistoryEventFilter } from '@/composables/filters/events';
 import { useHistoryEvents } from '@/composables/history/events';
@@ -39,6 +40,8 @@ interface HistoryEventsFiltersOptions {
   validators: Ref<number[] | undefined>;
 }
 
+export type HighlightType = 'warning' | 'success';
+
 interface UseHistoryEventsFiltersReturn {
   duplicateHandlingStatus: ComputedRef<DuplicateHandlingStatus | undefined>;
   locationLabels: Ref<string[]>;
@@ -48,6 +51,7 @@ interface UseHistoryEventsFiltersReturn {
   groupLoading: Ref<boolean>;
   groups: Ref<Collection<HistoryEventRow>>;
   highlightedIdentifiers: ComputedRef<string[] | undefined>;
+  highlightTypes: ComputedRef<Record<string, HighlightType>>;
   identifiers: ComputedRef<string[] | undefined>;
   includes: ComputedRef<{ evmEvents: boolean; onlineEvents: boolean }>;
   locationOverview: Ref<string | undefined>;
@@ -84,6 +88,7 @@ export function useHistoryEventsFilters(
   const locationOverview = ref(get(location));
 
   const route = useRoute();
+  const router = useRouter();
   const { fetchHistoryEvents } = useHistoryEvents();
 
   // Define these early since they're used in extraParams
@@ -185,15 +190,20 @@ export function useHistoryEventsFilters(
       tableId: TableId.HISTORY,
       transientKeys: ['txRefs'],
     })),
+    // Query params that should be preserved in the URL but not used for API requests.
     queryParamsOnly: computed(() => {
       const duplicateHandlingStatusValue = get(duplicateHandlingStatusFromQuery);
       const groupIdentifiersValue = get(groupIdentifiersFromQuery);
+      const { highlightedIdentifier, highlightedPotentialMatch, negativeBalanceEvent } = get(route).query;
 
       const stateMarkersValue = get(toggles, 'stateMarkers');
       return {
         duplicateHandlingStatus: duplicateHandlingStatusValue,
         groupIdentifiers: groupIdentifiersValue?.join(','),
+        highlightedIdentifier,
+        highlightedPotentialMatch,
         locationLabels: get(usedLocationLabels),
+        negativeBalanceEvent,
         ...(stateMarkersValue.length > 0 ? { stateMarkers: stateMarkersValue.join(',') } : {}),
       };
     }),
@@ -241,9 +251,31 @@ export function useHistoryEventsFilters(
   });
 
   const highlightedIdentifiers = computed<string[] | undefined>(() => {
-    const { highlightedIdentifier, negativeBalanceEvent } = get(route).query;
-    const identifier = highlightedIdentifier ?? negativeBalanceEvent;
-    return identifier ? [identifier as string] : undefined;
+    const { highlightedIdentifier, highlightedPotentialMatch, negativeBalanceEvent } = get(route).query;
+    const identifiers: string[] = [];
+
+    if (highlightedIdentifier)
+      identifiers.push(highlightedIdentifier.toString());
+    if (highlightedPotentialMatch)
+      identifiers.push(highlightedPotentialMatch.toString());
+    if (negativeBalanceEvent)
+      identifiers.push(negativeBalanceEvent.toString());
+
+    return identifiers.length > 0 ? identifiers : undefined;
+  });
+
+  const highlightTypes = computed<Record<string, HighlightType>>(() => {
+    const { highlightedIdentifier, highlightedPotentialMatch, negativeBalanceEvent } = get(route).query;
+    const types: Record<string, HighlightType> = {};
+
+    if (highlightedIdentifier)
+      types[highlightedIdentifier.toString()] = 'warning';
+    if (negativeBalanceEvent)
+      types[negativeBalanceEvent.toString()] = 'warning';
+    if (highlightedPotentialMatch)
+      types[highlightedPotentialMatch.toString()] = 'success';
+
+    return types;
   });
 
   const includes = computed<{ evmEvents: boolean; onlineEvents: boolean }>(() => {
@@ -266,6 +298,14 @@ export function useHistoryEventsFilters(
     if (!(filterChanged || accountsChanged))
       return;
 
+    // Clear highlight when non-pagination filters change
+    const { highlightedIdentifier, highlightedPotentialMatch, ...remainingQuery } = get(route).query;
+    if (highlightedIdentifier || highlightedPotentialMatch) {
+      startPromise(router.replace({
+        query: remainingQuery,
+      }));
+    }
+
     // Update locationOverview when filter location changes
     if (filterChanged)
       set(locationOverview, filters.location);
@@ -286,6 +326,7 @@ export function useHistoryEventsFilters(
     groupLoading,
     groups,
     highlightedIdentifiers,
+    highlightTypes,
     identifiers: identifiersFromQuery,
     includes,
     locationLabels,

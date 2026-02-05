@@ -1233,6 +1233,10 @@
       "unignore_selected": "Unignore Selected",
       "unignore_selected_confirm": "Are you sure you want to restore {count} selected asset movement(s) to the unmatched list?"
     },
+    "actions_pin": {
+      "pin_section": "Pin Section",
+      "unpin_section": "Unpin Section"
+    },
     "auto_match": {
       "error": "Failed to run automatic matching: {error}",
       "error_title": "Auto Match Failed",
@@ -1252,6 +1256,8 @@
       "find_match": "Find Match",
       "ignore": "Ignore",
       "ignore_tooltip": "Mark this asset movement as having no corresponding on-chain event.",
+      "ignored_description": "These asset movements have been marked as having no corresponding on-chain event. Restore them to retry matching.",
+      "info_column": "Info",
       "manual_action": "Manual Action",
       "matching_for": "Matching for:",
       "no_ignored": "No ignored asset movements.",
@@ -1266,6 +1272,7 @@
       "select": "Select",
       "select_match_title": "Select Matching Event",
       "selected": "Selected",
+      "show_in_events": "Show in history events",
       "time_range_hours": "Time range (hours)",
       "title": "Match Asset Movements"
     },

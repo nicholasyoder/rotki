@@ -1427,6 +1427,51 @@ class DBHistoryEvents:
                 )
         return assets
 
+    def get_history_event_group_position(
+            self,
+            group_identifier: str,
+            filter_query: HistoryBaseEntryFilterQuery,
+    ) -> int | None:
+        """Get the 0-based position of the given group in the filtered and sorted
+        list of groups (timestamp DESC, group_identifier as tiebreaker).
+
+        The filter_query is used to restrict which events are considered, matching
+        the same filtering applied when viewing history events.
+
+        Returns the position (0-based offset of the group among all distinct groups),
+        or None if the group does not exist in the filtered results.
+        """
+        with self.db.conn.read_ctx() as cursor:
+            # Build the full grouped query using the same logic as the main events query
+            # This correctly handles all filter types (EVM, Solana, etc.) with proper JOINs
+            query, query_bindings = self._create_history_events_query(
+                filter_query=filter_query,
+                entries_limit=None,
+                aggregate_by_group_ids=True,
+                include_order=False,
+            )
+
+            # Get the target group's max timestamp from the filtered groups
+            target_ts_result = cursor.execute(
+                f'SELECT MAX(timestamp) FROM ({query}) WHERE group_identifier = ?',
+                query_bindings + [group_identifier],
+            ).fetchone()
+            if target_ts_result is None or target_ts_result[0] is None:
+                return None
+
+            target_group_ts = target_ts_result[0]
+
+            # Count how many distinct groups in the filtered set sort before the target group
+            # in timestamp DESC order (with group_identifier as tiebreaker for equal timestamps)
+            return cursor.execute(
+                'SELECT COUNT(*) FROM ('
+                f'  SELECT group_identifier, MAX(timestamp) as group_ts FROM ({query})'
+                '  GROUP BY group_identifier'
+                '  HAVING group_ts > ? OR (group_ts = ? AND group_identifier < ?)'
+                ')',
+                query_bindings + [target_group_ts, target_group_ts, group_identifier],
+            ).fetchone()[0]
+
     def get_history_events_count(
             self,
             cursor: 'DBCursor',

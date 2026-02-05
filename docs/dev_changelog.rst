@@ -7,6 +7,17 @@ This changelog documents API changes, schema modifications, and other developer-
 Unreleased
 ==========
 
+Event Group Position Endpoint
+-----------------------------
+
+A new endpoint to get the 0-based position of a history event group in the filtered and sorted list of groups. This is useful for navigating to a specific event in paginated views.
+
+* **New Endpoint**: ``GET /api/(version)/history/events/position``
+
+  - Required ``group_identifier`` parameter specifying the group identifier to find the position of.
+  - Returns the 0-based position of the group in the filtered and sorted (timestamp DESC) list of groups.
+  - Returns null if the group is not found.
+
 History Events Filter State Markers Parameter
 ---------------------------------------------
 

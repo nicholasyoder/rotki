@@ -91,6 +91,7 @@ from rotkehlchen.api.v1.schemas import (
     Eth2ValidatorPutSchema,
     Eth2ValidatorsGetSchema,
     EventDetailsQuerySchema,
+    EventGroupPositionSchema,
     EventsOnlineQuerySchema,
     EvmAccountsPutSchema,
     ExchangeBalanceQuerySchema,
@@ -3093,6 +3094,18 @@ class EventDetailsResource(BaseMethodView):
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, identifier: int) -> Response:
         return self.rest_api.get_event_details(identifier=identifier)
+
+
+class EventGroupPositionResource(BaseMethodView):
+    post_schema = EventGroupPositionSchema()
+
+    @require_loggedin_user()
+    @use_kwargs(post_schema, location='json')
+    def post(self, group_identifier: str, filter_query: 'HistoryBaseEntryFilterQuery') -> Response:
+        return self.rest_api.get_history_event_group_position(
+            group_identifier=group_identifier,
+            filter_query=filter_query,
+        )
 
 
 class AllEvmChainsResource(BaseMethodView):

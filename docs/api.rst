@@ -12749,6 +12749,45 @@ Events Details
    :statuscode 500: Internal rotki error.
 
 
+Event Group Position
+=======================
+
+.. http:get:: /api/(version)/history/events/position
+
+   Doing a GET on this endpoint will return the 0-based position of a history event group in the filtered and sorted list of groups. This is useful for navigating to a specific event in paginated views.
+
+   **Example Request**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      GET /api/1/history/events/position HTTP/1.1
+      Host: localhost:5042
+      Content-Type: application/json;charset=UTF-8
+
+      {"group_identifier": "10x1234567890abcdef"}
+
+   :reqjson string group_identifier: The group identifier of the event group to find the position of.
+
+   **Example Response**:
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+          "result": 42,
+          "message": ""
+      }
+
+   :resjson int result: The 0-based position of the group in the filtered and sorted list of groups. Returns null if the group is not found.
+
+   :statuscode 200: The position was returned successfully.
+   :statuscode 400: Provided JSON is in some way malformed.
+   :statuscode 401: No user is currently logged in.
+   :statuscode 500: Internal rotki error.
+
+
 Get Binance Savings Interests History
 =======================================
 

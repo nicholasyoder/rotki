@@ -58,7 +58,7 @@ onBeforeMount(() => {
       :class="{
         'pl-[3.5rem]': isMini,
         'pl-[300px]': expanded,
-        'xl:pr-[500px]': showPinned,
+        '2xl:pr-[520px]': showPinned,
       }"
     >
       <main>

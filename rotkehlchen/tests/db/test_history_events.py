@@ -1020,3 +1020,150 @@ def test_modification_ts_updated_on_each_modification(database: 'DBHandler') -> 
         assert int(cursor.execute(
             'SELECT value FROM key_value_cache WHERE name=?', (modification_ts_key,),
         ).fetchone()[0]) >= modification_ts1
+
+
+def test_get_history_event_group_position(database: 'DBHandler') -> None:
+    """Test that get_history_event_group_position returns the correct 0-based position
+    of a group in the filtered and sorted (timestamp DESC) list of groups.
+    """
+    db = DBHistoryEvents(database)
+
+    # Create events with different timestamps and group identifiers.
+    # Groups sorted by timestamp DESC: GROUP5 (5000), GROUP4 (4000), GROUP3 (3000),
+    # GROUP2 (2000), GROUP1 (1000) at positions 0, 1, 2, 3, 4 respectively.
+    with database.user_write() as write_cursor:
+        db.add_history_events(
+            write_cursor=write_cursor,
+            history=[HistoryEvent(
+                group_identifier='GROUP1',
+                sequence_index=0,
+                timestamp=TimestampMS(1000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.TRADE,
+                event_subtype=HistoryEventSubType.SPEND,
+                asset=A_ETH,
+                amount=ONE,
+            ), HistoryEvent(
+                group_identifier='GROUP2',
+                sequence_index=0,
+                timestamp=TimestampMS(2000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.TRADE,
+                event_subtype=HistoryEventSubType.RECEIVE,
+                asset=A_BTC,
+                amount=FVal(2),
+            ), HistoryEvent(
+                group_identifier='GROUP3',
+                sequence_index=0,
+                timestamp=TimestampMS(3000),
+                location=Location.OPTIMISM,
+                event_type=HistoryEventType.DEPOSIT,
+                event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+                asset=A_ETH,
+                amount=FVal(3),
+            ), HistoryEvent(
+                group_identifier='GROUP4',
+                sequence_index=0,
+                timestamp=TimestampMS(4000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.WITHDRAWAL,
+                event_subtype=HistoryEventSubType.REMOVE_ASSET,
+                asset=A_USDC,
+                amount=FVal(100),
+            ), HistoryEvent(
+                group_identifier='GROUP5',
+                sequence_index=0,
+                timestamp=TimestampMS(5000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.TRADE,
+                event_subtype=HistoryEventSubType.SPEND,
+                asset=A_ETH,
+                amount=FVal(5),
+            )],
+        )
+
+    # Test positions with no filter (all events)
+    filter_query = HistoryEventFilterQuery.make()
+
+    # Most recent group (timestamp 5000) should be at position 0
+    assert db.get_history_event_group_position('GROUP5', filter_query) == 0
+    # Second most recent (timestamp 4000) should be at position 1
+    assert db.get_history_event_group_position('GROUP4', filter_query) == 1
+    # Middle group (timestamp 3000) should be at position 2
+    assert db.get_history_event_group_position('GROUP3', filter_query) == 2
+    # Earlier group (timestamp 2000) should be at position 3
+    assert db.get_history_event_group_position('GROUP2', filter_query) == 3
+    # Oldest group (timestamp 1000) should be at position 4
+    assert db.get_history_event_group_position('GROUP1', filter_query) == 4
+
+    # Test with a non-existent group
+    assert db.get_history_event_group_position('NONEXISTENT', filter_query) is None
+
+    # Test with location filter - only Ethereum events
+    # Groups: GROUP5, GROUP4, GROUP2, GROUP1 (GROUP3 is on Optimism)
+    # Positions: 0, 1, 2, 3
+    eth_filter = HistoryEventFilterQuery.make(location=Location.ETHEREUM)
+    assert db.get_history_event_group_position('GROUP5', eth_filter) == 0
+    assert db.get_history_event_group_position('GROUP4', eth_filter) == 1
+    assert db.get_history_event_group_position('GROUP2', eth_filter) == 2
+    assert db.get_history_event_group_position('GROUP1', eth_filter) == 3
+    # GROUP3 is not in Ethereum, so it should return None
+    assert db.get_history_event_group_position('GROUP3', eth_filter) is None
+
+    # Test with asset filter - only ETH events
+    # Groups: GROUP5, GROUP3, GROUP1 (only these have ETH)
+    # Positions: 0, 1, 2
+    eth_asset_filter = HistoryEventFilterQuery.make(assets=(A_ETH,))
+    assert db.get_history_event_group_position('GROUP5', eth_asset_filter) == 0
+    assert db.get_history_event_group_position('GROUP3', eth_asset_filter) == 1
+    assert db.get_history_event_group_position('GROUP1', eth_asset_filter) == 2
+    # GROUP2 has BTC, GROUP4 has USDC - should return None
+    assert db.get_history_event_group_position('GROUP2', eth_asset_filter) is None
+    assert db.get_history_event_group_position('GROUP4', eth_asset_filter) is None
+
+
+def test_get_history_event_group_position_with_same_timestamp(database: 'DBHandler') -> None:
+    """Test that groups with the same timestamp are ordered by group_identifier as tiebreaker."""
+    db = DBHistoryEvents(database)
+
+    # Create events with the same timestamp but different group identifiers.
+    # With same timestamp, groups are sorted by group_identifier alphabetically.
+    # Alphabetically: GROUP_A, GROUP_B, GROUP_C. Position counts groups before target,
+    # so GROUP_A=0, GROUP_B=1, GROUP_C=2.
+    with database.user_write() as write_cursor:
+        db.add_history_events(
+            write_cursor=write_cursor,
+            history=[HistoryEvent(
+                group_identifier='GROUP_B',
+                sequence_index=0,
+                timestamp=TimestampMS(1000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.TRADE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=ONE,
+            ), HistoryEvent(
+                group_identifier='GROUP_A',
+                sequence_index=0,
+                timestamp=TimestampMS(1000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.TRADE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=ONE,
+            ), HistoryEvent(
+                group_identifier='GROUP_C',
+                sequence_index=0,
+                timestamp=TimestampMS(1000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.TRADE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=ONE,
+            )],
+        )
+
+    filter_query = HistoryEventFilterQuery.make()
+    assert db.get_history_event_group_position('GROUP_A', filter_query) == 0
+    assert db.get_history_event_group_position('GROUP_B', filter_query) == 1
+    assert db.get_history_event_group_position('GROUP_C', filter_query) == 2

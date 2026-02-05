@@ -145,6 +145,11 @@ function onPotentialMatchMatched(): void {
   set(potentialMatchMovement, undefined);
   emit('movement-matched');
 }
+
+function onPotentialMatchPinned(): void {
+  set(potentialMatchMovement, undefined);
+  closeDialog();
+}
 defineExpose({
   show: managerShow,
   showPotentialMatches,
@@ -218,6 +223,7 @@ defineExpose({
       v-model="showPotentialMatchesDialog"
       :movement="potentialMatchMovement"
       @matched="onPotentialMatchMatched()"
+      @pinned="onPotentialMatchPinned()"
     />
   </div>
 </template>

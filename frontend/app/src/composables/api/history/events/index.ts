@@ -50,6 +50,7 @@ interface UseHistoryEventsApiReturn {
     forceDelete?: boolean,
   ) => Promise<boolean>;
   getEventDetails: (identifier: number) => Promise<HistoryEventDetail>;
+  getHistoryEventGroupPosition: (groupIdentifier: string, payload?: Partial<HistoryEventRequestPayload>) => Promise<number>;
   addTransactionHash: (payload: AddTransactionHashPayload) => Promise<boolean>;
   repullingTransactions: (payload: RepullingTransactionPayload) => Promise<PendingTask>;
   repullingExchangeEvents: (payload: RepullingExchangeEventsPayload) => Promise<PendingTask>;
@@ -149,6 +150,16 @@ export function useHistoryEventsApi(): UseHistoryEventsApiReturn {
       query: { identifier },
     });
     return HistoryEventDetail.parse(response);
+  };
+
+  const getHistoryEventGroupPosition = async (groupIdentifier: string, payload?: Partial<HistoryEventRequestPayload>): Promise<number> => {
+    const response = await api.post<{ position: number }>('/history/events/position', {
+      groupIdentifier,
+      ...omit(payload ?? {}, ['aggregateByGroupIds', 'limit', 'offset', 'orderByAttributes', 'ascending']),
+    }, {
+      filterEmptyProperties: true,
+    });
+    return response.position;
   };
 
   const addTransactionHash = async (payload: AddTransactionHashPayload): Promise<boolean> => api.put<boolean>(
@@ -299,6 +310,7 @@ export function useHistoryEventsApi(): UseHistoryEventsApiReturn {
     fetchHistoryEvents,
     fetchTransactionsTask,
     getEventDetails,
+    getHistoryEventGroupPosition,
     getHistoryEventCounterpartiesData,
     getTransactionStatusSummary,
     getTransactionTypeMappings,
