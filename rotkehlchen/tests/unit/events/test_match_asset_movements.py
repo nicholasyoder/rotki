@@ -477,6 +477,85 @@ def test_withdrawal_fee(
         assert _get_match_for_movement(cursor=cursor, movement_id=withdrawal_id) == receive_id
 
 
+def test_multiple_close_matches_clustered(database: 'DBHandler') -> None:
+    """Ensure clustered movements are matched to the closest amounts."""
+    events_db = DBHistoryEvents(database)
+    with database.user_write() as write_cursor:
+        database.set_settings(
+            write_cursor=write_cursor,
+            settings=ModifiableDBSettings(
+                asset_movement_amount_tolerance=FVal('0.01'),
+            ),
+        )
+
+    with database.conn.write_ctx() as write_cursor:
+        events_db.add_history_events(
+            write_cursor=write_cursor,
+            history=[(evm_event_1 := EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(1700000000000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.DEPOSIT,
+                event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+                asset=A_ETH,
+                amount=FVal('25.61'),
+                location_label=make_evm_address(),
+            )), (evm_event_2 := EvmEvent(
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(1700000000000 + 6 * 60 * 1000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.DEPOSIT,
+                event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+                asset=A_ETH,
+                amount=FVal('25.50'),
+                location_label=make_evm_address(),
+            )), (movement_1 := AssetMovement(
+                location=Location.POLONIEX,
+                event_type=HistoryEventType.DEPOSIT,
+                timestamp=TimestampMS(1700000000000 + 2 * 60 * 1000),
+                asset=A_ETH,
+                amount=FVal('25.59'),
+                unique_id='polo_deposit_1',
+                location_label='Poloniex 1',
+            )), (movement_2 := AssetMovement(
+                location=Location.POLONIEX,
+                event_type=HistoryEventType.DEPOSIT,
+                timestamp=TimestampMS(1700000000000 + 4 * 60 * 1000),
+                asset=A_ETH,
+                amount=FVal('25.45'),
+                unique_id='polo_deposit_2',
+                location_label='Poloniex 1',
+            ))],
+        )
+
+    match_asset_movements(database=database)
+    with database.conn.read_ctx() as cursor:
+        evm_event_1_id = cursor.execute(
+            'SELECT identifier FROM history_events WHERE group_identifier=?',
+            (evm_event_1.group_identifier,),
+        ).fetchone()[0]
+        evm_event_2_id = cursor.execute(
+            'SELECT identifier FROM history_events WHERE group_identifier=?',
+            (evm_event_2.group_identifier,),
+        ).fetchone()[0]
+        movement_1_id = cursor.execute(
+            'SELECT identifier FROM history_events WHERE group_identifier=?',
+            (movement_1.group_identifier,),
+        ).fetchone()[0]
+        movement_2_id = cursor.execute(
+            'SELECT identifier FROM history_events WHERE group_identifier=?',
+            (movement_2.group_identifier,),
+        ).fetchone()[0]
+
+        matched_1 = _get_match_for_movement(cursor=cursor, movement_id=movement_1_id)
+        matched_2 = _get_match_for_movement(cursor=cursor, movement_id=movement_2_id)
+
+    assert matched_1 == evm_event_1_id
+    assert matched_2 == evm_event_2_id
+
+
 def test_customized_deposit(database: 'DBHandler') -> None:
     """Test matching a customized deposit event with a gas event present.
 
