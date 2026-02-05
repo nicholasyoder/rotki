@@ -1348,8 +1348,8 @@ class EditHistoryEventSchema(CreateHistoryEventSchema):
         """
         with self.database.conn.read_ctx() as cursor:
             result = cursor.execute(
-                'SELECT h2.identifier, h2.sequence_index FROM history_events h1 '
-                'JOIN history_events h2 ON h2.group_identifier = h1.group_identifier AND '
+                'SELECT h2.identifier, h2.sequence_index FROM history_events_active h1 '
+                'JOIN history_events_active h2 ON h2.group_identifier = h1.group_identifier AND '
                 f'h2.sequence_index = h1.sequence_index + {sequence_index_offset} AND '
                 'h2.subtype = ? WHERE h1.identifier = ?',
                 (subtype.serialize(), data['identifier']),
@@ -4075,7 +4075,7 @@ class AccountingRuleIdSchema(Schema):
             found_ids: set[int] = set()
             for chunk, placeholders in get_query_chunks(event_ids):
                 result = cursor.execute(
-                    f'SELECT identifier FROM history_events WHERE identifier IN ({placeholders}) AND type = ? AND subtype = ?',  # noqa: E501
+                    f'SELECT identifier FROM history_events_active WHERE identifier IN ({placeholders}) AND type = ? AND subtype = ?',  # noqa: E501
                     (*chunk, event_type, event_subtype),
                 ).fetchall()
                 found_ids.update(row[0] for row in result)
@@ -4510,7 +4510,7 @@ class HistoricalPerAssetBalanceSchema(SnapshotTimestampQuerySchema, AsyncQueryAr
         if (location_label := data['location_label']) is not None:
             with self.db.conn.read_ctx() as cursor:
                 if cursor.execute(
-                    'SELECT COUNT(*) FROM history_events WHERE location_label = ?',
+                    'SELECT COUNT(*) FROM history_events_active WHERE location_label = ?',
                     (location_label,),
                 ).fetchone()[0] == 0:
                     raise ValidationError(

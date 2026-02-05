@@ -381,7 +381,7 @@ def _write_metrics_batch(
         if from_ts is not None:
             write_cursor.execute(
                 'DELETE FROM event_metrics WHERE event_identifier IN '
-                '(SELECT identifier FROM history_events WHERE timestamp >= ?)',
+                '(SELECT identifier FROM history_events WHERE timestamp >= ?)',  # TODO: use history_events_active once event restore is fully implemented  # noqa: E501
                 (from_ts,),
             )
         else:
@@ -482,7 +482,7 @@ def _maybe_add_profit_event(
 
     with database.conn.read_ctx() as cursor:
         if cursor.execute(
-            'SELECT COUNT(*) FROM history_events he '
+            'SELECT COUNT(*) FROM history_events he '  # TODO: use history_events_active once event restore is fully implemented  # noqa: E501
             'JOIN chain_events_info cei ON he.identifier = cei.identifier '
             'WHERE group_identifier=? AND type=? AND subtype=? '
             'AND location_label=? AND asset=? AND amount=? AND counterparty=?',
@@ -525,12 +525,12 @@ def _maybe_add_profit_event(
         # First increment the sequence indexes to ensure an unused index for the
         # new event. Can't adjust in a single query or it may try to set an index
         # to an existing index and cause unique constraint errors.
-        write_cursor.execute(  # Increment but make negative so it is unique
+        write_cursor.execute(  # Increment but make negative so it is unique  # TODO: use history_events_active once event restore is fully implemented  # noqa: E501
             'UPDATE history_events SET sequence_index = -(sequence_index + 1) '
             'WHERE group_identifier = ? AND sequence_index >= ?',
             (event.group_identifier, event.sequence_index),
         )
-        write_cursor.execute(  # Shift back to positive
+        write_cursor.execute(  # Shift back to positive  # TODO: use history_events_active once event restore is fully implemented  # noqa: E501
             'UPDATE history_events SET sequence_index = -sequence_index '
             'WHERE group_identifier = ? AND sequence_index < 0',
             (event.group_identifier,),

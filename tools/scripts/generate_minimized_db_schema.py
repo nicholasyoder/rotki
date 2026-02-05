@@ -15,6 +15,7 @@ from rotkehlchen.db.checks import db_script_normalizer
 from rotkehlchen.db.schema import (
     DB_CREATE_INDEXES as USER_DB_CREATE_INDEXES,
     DB_SCRIPT_CREATE_TABLES as USER_DB_CREATE_TABLES,
+    DB_SCRIPT_CREATE_VIEWS as USER_DB_CREATE_VIEWS,
 )
 from rotkehlchen.globaldb.schema import (
     DB_CREATE_INDEXES as GLOBAL_DB_CREATE_INDEXES,
@@ -43,6 +44,7 @@ db_name: Literal['user', 'global'] = args.db_name
 # this {"ens_mappings": "CREATETABLEIFNOTEXISTSens_mappings(addressTEXTNOTNULLPRIMARYKEY,ens_nameTEXTUNIQUE,last_updateINTEGERNOTNULL);"}  # noqa: E501
 db_script = USER_DB_CREATE_TABLES if db_name == 'user' else GLOBAL_DB_CREATE_TABLES
 index_script = USER_DB_CREATE_INDEXES if db_name == 'user' else GLOBAL_DB_CREATE_INDEXES
+view_script = USER_DB_CREATE_VIEWS if db_name == 'user' else ''
 regexp_result = re.findall(
     pattern=r'createtableifnotexists(.+?)\((.+?)\);',
     # Replacing new lines and white spaces since they may vary if by an accident code of a
@@ -86,6 +88,24 @@ for index_name, table_name, columns, is_unique, where_clause in index_regexp_res
     where_part = where_clause.lower().replace(' ', '') if len(where_clause) > 0 else where_clause
     index_definition = f'{prefix}{index_name}on{table_name}({columns}){where_part}'
     lines.append(f'    "{index_name}": "{index_definition}",')
+lines.append('}')
+
+# Parse views by extracting each CREATE VIEW statement
+view_regexp_result = []
+view_pattern = re.compile(
+    r'CREATE\s+VIEW\s+IF\s+NOT\s+EXISTS\s+(\S+)\s+AS\s+(.*)',
+    re.IGNORECASE | re.DOTALL,
+)
+for entry in view_script.strip().split(';'):
+    statement = entry.strip()
+    if statement and (_match := view_pattern.match(statement)):
+        view_name = _match.group(1).lower()
+        full_normalized = db_script_normalizer(statement)
+        view_regexp_result.append((view_name, full_normalized))
+
+lines.extend(('', f'MINIMIZED_{db_name.upper()}_DB_VIEWS = {{'))
+for view_name, view_definition in view_regexp_result:
+    lines.append(f'    "{view_name}": "{view_definition}",')
 lines.append('}')
 
 # Save to the file

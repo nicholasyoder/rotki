@@ -270,11 +270,89 @@ class DBHistoryEvents:
         # Call tracking ONCE for the entire batch with minimum timestamp
         # TODO (balances): add _mark_events_modified for min_timestamp if min_timestamp is not None
 
+    def save_history_event_backup(
+            self,
+            write_cursor: 'DBCursor',
+            identifier: int | None,
+    ) -> None:
+        """Create a backup copy of an event before modifying it so it can be restored to its
+        original state later. Use insert or ignore so we keep the earliest original version if
+        multiple edits happen.
+        """
+        if (new_id_result := write_cursor.execute(
+            'INSERT OR IGNORE INTO history_events (entry_type, group_identifier, sequence_index, '
+            '    timestamp, location, location_label, asset, amount, notes, type, subtype, '
+            '    extra_data, ignored, modified_identifier'
+            ') SELECT entry_type, group_identifier, sequence_index, '
+            '    timestamp, location, location_label, asset, amount, notes, type, subtype, '
+            '    extra_data, ignored, identifier '  # set modified_identifier to the original row's identifier  # noqa: E501
+            'FROM history_events WHERE identifier = ? RETURNING identifier',
+            (identifier,),
+        ).fetchone()) is None:
+            raise InputError(
+                f'Tried to create a backup of an event with id {identifier} but could not find it in the DB')  # noqa: E501
+
+        write_cursor.execute(
+            'INSERT OR IGNORE INTO chain_events_info (identifier, tx_ref, counterparty, address) '
+            'SELECT ?, tx_ref, counterparty, address '
+            'FROM chain_events_info WHERE identifier = ?',
+            ((new_id := new_id_result[0]), identifier),
+        )
+        write_cursor.execute(
+            'INSERT OR IGNORE INTO eth_staking_events_info (identifier, validator_index, is_exit_or_blocknumber) '  # noqa: E501
+            'SELECT ?, validator_index, is_exit_or_blocknumber '
+            'FROM eth_staking_events_info WHERE identifier = ?',
+            (new_id, identifier),
+        )
+
+    def maybe_restore_history_event_from_backup(
+            self,
+            write_cursor: 'DBCursor',
+            identifier: int,
+    ) -> bool:
+        """Attempt to restore an event from its backup copy. Returns False if no backup exists,
+        otherwise returns True."""
+        if (backup_id := write_cursor.execute(
+                'SELECT identifier FROM history_events WHERE modified_identifier = ?',
+                (identifier,),
+        ).fetchone()) is None:
+            return False
+
+        backup_id = backup_id[0]
+        write_cursor.execute(
+            'UPDATE history_events SET entry_type = b.entry_type, '
+            'group_identifier = b.group_identifier, sequence_index = b.sequence_index, '
+            'timestamp = b.timestamp, location = b.location, location_label = b.location_label, '
+            'asset = b.asset, amount = b.amount, notes = b.notes, type = b.type, '
+            'subtype = b.subtype, extra_data = b.extra_data, ignored = b.ignored '
+            'FROM history_events b WHERE history_events.identifier = ? AND b.identifier = ?',
+            (identifier, backup_id),
+        )
+        write_cursor.execute(
+            'UPDATE chain_events_info '
+            'SET tx_ref = b.tx_ref, counterparty = b.counterparty, address = b.address '
+            'FROM chain_events_info b WHERE chain_events_info.identifier = ? AND b.identifier = ?',
+            (identifier, backup_id),
+        )
+        write_cursor.execute(
+            'UPDATE eth_staking_events_info SET validator_index = b.validator_index, '
+            'is_exit_or_blocknumber = b.is_exit_or_blocknumber '
+            'FROM eth_staking_events_info b '
+            'WHERE eth_staking_events_info.identifier = ? AND b.identifier = ?',
+            (identifier, backup_id),
+        )
+        write_cursor.execute(  # Delete the backup event after restoration
+            'DELETE FROM history_events WHERE identifier = ?',
+            (backup_id,),
+        )
+        return True
+
     def edit_history_event(
             self,
             write_cursor: 'DBCursor',
             event: HistoryBaseEntry,
             mapping_state: HistoryMappingState = HistoryMappingState.CUSTOMIZED,
+            save_backup: bool = False,
     ) -> None:
         """
         Edit a history entry to the DB with information provided by the user.
@@ -291,6 +369,12 @@ class DBHistoryEvents:
             'FROM history_events WHERE identifier=?',
             (event.identifier,),
         ).fetchone()
+
+        if save_backup:
+            self.save_history_event_backup(
+                write_cursor=write_cursor,
+                identifier=event.identifier,
+            )
 
         for idx, (_, updatestr, bindings) in enumerate(event.serialize_for_db()):
             if idx == 0:  # base history event data
@@ -421,8 +505,8 @@ class DBHistoryEvents:
             if force_delete is False:
                 with self.db.conn.read_ctx() as cursor:
                     cursor.execute(
-                        'SELECT COUNT(*) == 1 FROM history_events WHERE group_identifier=(SELECT '
-                        'group_identifier FROM history_events WHERE identifier=? AND entry_type=?)',  # noqa: E501
+                        'SELECT COUNT(*) == 1 FROM history_events_active WHERE group_identifier=(SELECT '  # noqa: E501
+                        'group_identifier FROM history_events_active WHERE identifier=? AND entry_type=?)',  # noqa: E501
                         (identifier, HistoryBaseEntryType.EVM_EVENT.serialize_for_db()),
                     )
                     if bool(cursor.fetchone()[0]) is True:
@@ -496,7 +580,7 @@ class DBHistoryEvents:
                 f'AND C.tx_ref IN ({sub_query}) AND'
             )
 
-        base_query = f'SELECT H.identifier from history_events H {join_or_where} H.location = ?'
+        base_query = f'SELECT H.identifier from history_events_active H {join_or_where} H.location = ?'  # noqa: E501
         bindings: tuple = (location.serialize_for_db(),)
         filter_conditions = ''
         if events_to_keep_num != 0:
@@ -701,7 +785,7 @@ class DBHistoryEvents:
         else:
             suffix, limit = (
                 f'* FROM (SELECT {base_suffix}) WHERE group_identifier IN ('
-                'SELECT DISTINCT group_identifier FROM history_events '
+                'SELECT DISTINCT group_identifier FROM history_events_active '
                 'ORDER BY timestamp DESC, sequence_index ASC LIMIT ?)'  # only select the last LIMIT groups  # noqa: E501
             ), [entries_limit]
 
@@ -766,7 +850,7 @@ class DBHistoryEvents:
         return (
             chain_fields,
             staking_fields,
-            f'FROM history_events {chain_join}{staking_join}',
+            f'FROM history_events_active history_events {chain_join}{staking_join}',
         )
 
     @staticmethod
@@ -795,7 +879,7 @@ class DBHistoryEvents:
         else:
             suffix, limit = (
                 f'* FROM (SELECT {base_suffix}) WHERE group_identifier IN ('
-                'SELECT DISTINCT group_identifier FROM history_events '
+                'SELECT DISTINCT group_identifier FROM history_events_active '
                 'ORDER BY timestamp DESC, sequence_index ASC LIMIT ?)'
             ), [entries_limit]
 
@@ -1625,9 +1709,9 @@ class DBHistoryEvents:
         """
         # Only 1 type of hidden event for now
         cursor.execute(
-            'SELECT E.identifier FROM history_events E LEFT JOIN eth_staking_events_info S '
+            'SELECT E.identifier FROM history_events_active E LEFT JOIN eth_staking_events_info S '
             'ON E.identifier=S.identifier WHERE E.sequence_index=1 AND S.identifier IS NOT NULL '
-            'AND (SELECT COUNT(*) FROM history_events E2 WHERE '
+            'AND (SELECT COUNT(*) FROM history_events_active E2 WHERE '
             'E2.group_identifier=E.group_identifier) > 2',
         )
         return [x[0] for x in cursor]
@@ -1658,7 +1742,7 @@ class DBHistoryEvents:
         from_ts_ms, to_ts_ms = ts_sec_to_ms(from_ts), ts_sec_to_ms(to_ts)
         with self.db.conn.read_ctx() as cursor:
             cursor.execute(
-                'SELECT SUM(CAST(amount AS FLOAT)) FROM history_events JOIN chain_events_info '
+                'SELECT SUM(CAST(amount AS FLOAT)) FROM history_events_active history_events JOIN chain_events_info '  # noqa: E501
                 'ON history_events.identifier=chain_events_info.identifier WHERE '
                 "asset='ETH' AND type='spend' and subtype='fee' AND counterparty='gas' AND "
                 'timestamp >= ? AND timestamp <= ?',
@@ -1671,7 +1755,7 @@ class DBHistoryEvents:
 
             skip_spam_assets = "history_events.asset NOT IN (SELECT value FROM multisettings WHERE name = 'ignored_asset')"  # noqa: E501
             cursor.execute(
-                'SELECT location_label, SUM(CAST(amount AS FLOAT)) FROM history_events JOIN chain_events_info '  # noqa: E501
+                'SELECT location_label, SUM(CAST(amount AS FLOAT)) FROM history_events_active history_events JOIN chain_events_info '  # noqa: E501
                 'ON history_events.identifier=chain_events_info.identifier WHERE '
                 "asset='ETH' AND type='spend' and subtype='fee' AND counterparty='gas' AND "
                 'timestamp >= ? AND timestamp <= ? GROUP BY location_label',
@@ -1680,7 +1764,7 @@ class DBHistoryEvents:
             eth_on_gas_per_address = {row[0]: str(row[1]) for row in cursor}
             cursor.execute(
                 'SELECT chain_id, COUNT(DISTINCT group_identifier) as tx_count FROM chain_events_info '  # noqa: E501
-                'JOIN history_events ON chain_events_info.identifier = history_events.identifier '
+                'JOIN history_events_active history_events ON chain_events_info.identifier = history_events.identifier '  # noqa: E501
                 'JOIN evm_transactions ON evm_transactions.tx_hash = chain_events_info.tx_ref '
                 'WHERE history_events.timestamp >= ? AND history_events.timestamp <= ? AND '
                 f'{skip_spam_assets} GROUP BY chain_id',
@@ -1693,7 +1777,7 @@ class DBHistoryEvents:
 
             cursor.execute(
                 'SELECT COUNT(DISTINCT history_events.group_identifier) FROM chain_events_info '
-                'JOIN history_events ON chain_events_info.identifier = history_events.identifier '
+                'JOIN history_events_active history_events ON chain_events_info.identifier = history_events.identifier '  # noqa: E501
                 'WHERE history_events.location = ? AND history_events.timestamp >= ? AND history_events.timestamp <= ? '  # noqa: E501
                 f'AND {skip_spam_assets}',
                 (Location.SOLANA.serialize_for_db(), from_ts_ms, to_ts_ms),
@@ -1702,7 +1786,7 @@ class DBHistoryEvents:
                 transactions_per_chain[SupportedBlockchain.SOLANA.name] = solana_count
 
             cursor.execute(
-                'SELECT location, COUNT(DISTINCT group_identifier) FROM history_events '
+                'SELECT location, COUNT(DISTINCT group_identifier) FROM history_events_active history_events '  # noqa: E501
                 'WHERE location IN (?, ?) AND timestamp >= ? AND timestamp <= ? '
                 f'AND {skip_spam_assets} GROUP BY location',
                 (
@@ -1717,7 +1801,7 @@ class DBHistoryEvents:
                 transactions_per_chain[chain.name] = row[1]
 
             cursor.execute(
-                f'SELECT location, COUNT(DISTINCT group_identifier) AS unique_events FROM history_events '  # noqa: E501
+                f'SELECT location, COUNT(DISTINCT group_identifier) AS unique_events FROM history_events_active '  # noqa: E501
                 f'WHERE location IN ({",".join("?" * len(possible_trades_locations := ALL_SUPPORTED_EXCHANGES + (Location.EXTERNAL,)))}) AND timestamp BETWEEN ? AND ? GROUP BY location',  # noqa: E501
                 (*[i.serialize_for_db() for i in possible_trades_locations], from_ts_ms, to_ts_ms),
             )
@@ -1745,7 +1829,7 @@ class DBHistoryEvents:
             bindings = tuple(Location.from_chain(blockchain).serialize_for_db() for blockchain in CHAINS_WITH_TRANSACTIONS)  # noqa: E501
             cursor.execute(
                 "SELECT unixepoch(date(datetime(timestamp/1000, 'unixepoch'), 'localtime'), 'utc'), COUNT(DISTINCT group_identifier) as tx_count "  # noqa: E501
-                f'FROM history_events WHERE location IN ({placeholders}) '
+                f'FROM history_events_active WHERE location IN ({placeholders}) '
                 'AND timestamp >= ? AND timestamp <= ? AND asset NOT IN '
                 "(SELECT value FROM multisettings WHERE name = 'ignored_asset') "
                 "GROUP BY date(datetime(timestamp/1000, 'unixepoch'), 'localtime') ORDER BY "
@@ -1759,7 +1843,7 @@ class DBHistoryEvents:
 
             cursor.execute(
                 'SELECT counterparty, COUNT(DISTINCT tx_ref) AS unique_transaction_count '
-                'FROM chain_events_info JOIN history_events ON '
+                'FROM chain_events_info JOIN history_events_active history_events ON '
                 'chain_events_info.identifier = history_events.identifier '
                 "WHERE counterparty IS NOT NULL AND counterparty != 'gas' "
                 'AND timestamp BETWEEN ? AND ? '
@@ -1838,9 +1922,9 @@ class DBHistoryEvents:
                 'movement_events_join.group_identifier, match_events_join.group_identifier, '
                 'movement_events_join.entry_type, match_events_join.entry_type '
                 'FROM history_event_links '
-                'JOIN history_events movement_events_join ON '
+                'JOIN history_events_active movement_events_join ON '
                 'movement_events_join.identifier = history_event_links.left_event_id '
-                'JOIN history_events match_events_join ON '
+                'JOIN history_events_active match_events_join ON '
                 'match_events_join.identifier = history_event_links.right_event_id '
                 'WHERE history_event_links.link_type = ? AND ('
                 f'movement_events_join.group_identifier IN ({placeholders}) OR '
@@ -1871,7 +1955,7 @@ class DBHistoryEvents:
         group_counts: dict[str, int] = {}
         for chunk, placeholders in get_query_chunks(list(group_ids_to_count)):
             for row in cursor.execute(
-                f'SELECT group_identifier, COUNT(*) FROM history_events '
+                f'SELECT group_identifier, COUNT(*) FROM history_events_active '
                 f'WHERE group_identifier IN ({placeholders}) GROUP BY group_identifier',
                 tuple(chunk),
             ):

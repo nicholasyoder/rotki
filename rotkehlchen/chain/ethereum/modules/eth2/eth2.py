@@ -713,7 +713,7 @@ class Eth2(EthereumModule):
         pubkey_to_data: dict[Eth2PubKey, tuple[int, str]] = {}
         with self.database.conn.read_ctx() as cursor:
             cursor.execute(
-                'SELECT H.identifier, H.amount, H.extra_data from history_events H LEFT JOIN eth_staking_events_info S '  # noqa: E501
+                'SELECT H.identifier, H.amount, H.extra_data from history_events_active H LEFT JOIN eth_staking_events_info S '  # noqa: E501
                 'ON H.identifier=S.identifier WHERE S.validator_index=?',
                 (UNKNOWN_VALIDATOR_INDEX,),
             )

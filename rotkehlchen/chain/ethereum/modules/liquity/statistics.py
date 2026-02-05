@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 # transaction and this is why we use the IN operator as filter.
 QUERY_STAKING_EVENTS = """
 WHERE group_identifier IN
-(SELECT A.group_identifier FROM history_events AS A JOIN history_events AS B ON A.group_identifier = B.group_identifier
+(SELECT A.group_identifier FROM history_events_active AS A JOIN history_events_active AS B ON A.group_identifier = B.group_identifier
     JOIN chain_events_info AS C ON A.identifier=C.identifier WHERE C.counterparty=? AND A.asset=?
     AND B.asset=? AND B.subtype != ? AND B.type == ?
 ) AND type=? AND subtype=?
@@ -41,7 +41,7 @@ BINDINGS_STAKING_EVENTS = [
 # stability pool rewards
 QUERY_STABILITY_POOL_EVENTS = """
 WHERE group_identifier IN (
-    SELECT A.group_identifier FROM history_events AS A JOIN history_events AS B ON
+    SELECT A.group_identifier FROM history_events_active AS A JOIN history_events_active AS B ON
     A.group_identifier = B.group_identifier JOIN chain_events_info AS C ON A.identifier=C.identifier
     WHERE C.counterparty = 'liquity' AND B.asset=? AND B.subtype=?
 ) AND type=? AND subtype=?
@@ -53,7 +53,7 @@ BINDINGS_STABILITY_POOL_EVENTS = [
     HistoryEventSubType.REWARD.serialize(),
 ]
 QUERY_STABILITY_POOL_DEPOSITS = (
-    'SELECT amount, timestamp, asset FROM history_events JOIN chain_events_info ON '
+    'SELECT amount, timestamp, asset FROM history_events_active history_events JOIN chain_events_info ON '  # noqa: E501
     'history_events.identifier=chain_events_info.identifier WHERE counterparty=? '
     'AND asset=? AND type=? AND subtype=?'
 )

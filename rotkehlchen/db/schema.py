@@ -541,11 +541,12 @@ CREATE TABLE IF NOT EXISTS history_events (
     subtype TEXT NOT NULL,
     extra_data TEXT,
     ignored INTEGER NOT NULL DEFAULT 0,
+    modified_identifier INTEGER DEFAULT NULL,
     FOREIGN KEY(asset) REFERENCES assets(identifier) ON UPDATE CASCADE,
-    UNIQUE(group_identifier, sequence_index)
+    FOREIGN KEY(modified_identifier) REFERENCES history_events(identifier) ON DELETE CASCADE,
+    UNIQUE(group_identifier, sequence_index, modified_identifier)
 );
 """
-
 
 # Table that extends history_events table and stores chain-agnostic transaction metadata.
 DB_CREATE_CHAIN_EVENTS_INFO = """
@@ -930,6 +931,9 @@ CREATE TABLE IF NOT EXISTS event_metrics (
 # idx_history_events_type: Before: 12995ms, After: 7ms
 # idx_history_events_subtype: Before: 12937ms, After: 2ms
 # idx_history_events_ignored: Before: 14723ms, After: 5184ms
+#
+# The idx_history_events_null_modified index ensures that can only be one row with a NULL
+# modified_identifier (sqlite treats each NULL entry as a new value in the UNIQUE constraint).
 DB_CREATE_INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_history_events_entry_type ON history_events(entry_type);
 CREATE INDEX IF NOT EXISTS idx_history_events_timestamp ON history_events(timestamp);
@@ -939,6 +943,7 @@ CREATE INDEX IF NOT EXISTS idx_history_events_asset ON history_events(asset);
 CREATE INDEX IF NOT EXISTS idx_history_events_type ON history_events(type);
 CREATE INDEX IF NOT EXISTS idx_history_events_subtype ON history_events(subtype);
 CREATE INDEX IF NOT EXISTS idx_history_events_ignored ON history_events(ignored);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_history_events_null_modified ON history_events(group_identifier, sequence_index) WHERE modified_identifier IS NULL;
 CREATE INDEX IF NOT EXISTS idx_history_event_links_right ON history_event_links(right_event_id);
 CREATE INDEX IF NOT EXISTS idx_history_event_link_ignores_type ON history_event_link_ignores(link_type);
 CREATE UNIQUE INDEX IF NOT EXISTS unique_generic_accounting_rules ON accounting_rules(type, subtype, counterparty) WHERE is_event_specific = 0;
@@ -953,6 +958,10 @@ CREATE INDEX IF NOT EXISTS idx_event_metrics_metric_key ON event_metrics(metric_
 CREATE INDEX IF NOT EXISTS idx_event_metrics_metric_key_timestamp ON event_metrics(metric_key, timestamp);
 CREATE INDEX IF NOT EXISTS idx_event_metrics_metric_key_asset_sort_key ON event_metrics(metric_key, asset, sort_key);
 CREATE INDEX IF NOT EXISTS idx_event_metrics_asset ON event_metrics(asset);
+"""  # noqa: E501
+
+DB_SCRIPT_CREATE_VIEWS = """
+CREATE VIEW IF NOT EXISTS history_events_active AS SELECT * FROM history_events WHERE modified_identifier IS NULL;
 """  # noqa: E501
 
 DB_SCRIPT_CREATE_TABLES = f"""
@@ -1024,6 +1033,7 @@ BEGIN TRANSACTION;
 {DB_CREATE_LIDO_CSM_NODE_OPERATOR_METRICS}
 {DB_CREATE_HISTORICAL_BALANCE_CACHE}
 {DB_CREATE_INDEXES}
+{DB_SCRIPT_CREATE_VIEWS}
 COMMIT;
 PRAGMA foreign_keys=on;
 """

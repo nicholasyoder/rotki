@@ -2462,7 +2462,7 @@ class RestAPI:
                 'location': Location.deserialize_from_db(row[1]).serialize(),
             } for row in cursor.execute(
                 f'SELECT location_label, MIN(location) as location, COUNT(*) as frequency '
-                f'FROM history_events '
+                f'FROM history_events_active '
                 f'WHERE location_label IS NOT NULL '
                 f'AND (location_label IN (SELECT account FROM blockchain_accounts) '
                 f'OR location IN ({placeholders})) '
@@ -3599,7 +3599,7 @@ class RestAPI:
         if only_ignored:
             with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
                 movement_group_ids = [x[0] for x in cursor.execute(
-                    'SELECT DISTINCT history_events.group_identifier FROM history_events '
+                    'SELECT DISTINCT history_events.group_identifier FROM history_events_active history_events '  # noqa: E501
                     'JOIN history_event_link_ignores ON '
                     'history_events.identifier=history_event_link_ignores.event_id '
                     'WHERE history_event_link_ignores.link_type=? '
@@ -3714,6 +3714,12 @@ class RestAPI:
                         HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),
                     ),
                 )
+                events_db = DBHistoryEvents(self.rotkehlchen.data.db)
+                for id_to_restore in (matched_event_identifier, asset_movement_identifier):
+                    events_db.maybe_restore_history_event_from_backup(
+                        write_cursor=write_cursor,
+                        identifier=id_to_restore,
+                    )
 
         return api_response(OK_RESULT)
 

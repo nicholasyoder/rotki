@@ -177,12 +177,12 @@ def _load_customized_event_candidates(
         'he.subtype, he.extra_data, he.entry_type, '
         'cei.counterparty, cei.address, '
         'CASE WHEN hm.parent_identifier IS NULL THEN 0 ELSE 1 END AS customized '
-        'FROM history_events he '
+        'FROM history_events_active he '
         'LEFT JOIN chain_events_info cei ON he.identifier=cei.identifier '
         'LEFT JOIN history_events_mappings hm ON hm.parent_identifier=he.identifier '
         'AND hm.name=? AND hm.value=? '
         'WHERE EXISTS ('
-        'SELECT 1 FROM history_events he2 '
+        'SELECT 1 FROM history_events_active he2 '
         'JOIN history_events_mappings hm2 ON hm2.parent_identifier=he2.identifier '
         'AND hm2.name=? AND hm2.value=? '
         'WHERE he2.group_identifier=he.group_identifier '
@@ -470,7 +470,7 @@ def get_unmatched_asset_movements(
     fee_events: dict[str, AssetMovement] = {}
     with database.conn.read_ctx() as cursor:
         for entry in cursor.execute(
-                f'SELECT {HISTORY_BASE_ENTRY_FIELDS}, {CHAIN_EVENT_FIELDS} FROM history_events '
+                f'SELECT {HISTORY_BASE_ENTRY_FIELDS}, {CHAIN_EVENT_FIELDS} FROM history_events_active history_events '  # noqa: E501
                 'LEFT JOIN chain_events_info ON history_events.identifier=chain_events_info.identifier '  # noqa: E501
                 'LEFT JOIN history_event_links ON '
                 'history_events.identifier=history_event_links.left_event_id AND '
@@ -521,7 +521,7 @@ def _maybe_add_adjustment_event(
         amount_diff = abs(movement_amount_with_fee - matched_event.amount)
         has_correct_adjustment_event, events_to_delete = False, []
         for adjustment_id, adjustment_amount in cursor.execute(
-            'SELECT identifier, amount FROM history_events WHERE entry_type=? '
+            'SELECT identifier, amount FROM history_events_active WHERE entry_type=? '
             'AND group_identifier IN (?,?) AND asset=? AND type=? AND subtype IN (?,?)',
             (
                 HistoryBaseEntryType.HISTORY_EVENT.serialize_for_db(),
@@ -566,7 +566,7 @@ def _maybe_add_adjustment_event(
     # Get the next open sequence index for the adjustment event
     with events_db.db.conn.read_ctx() as cursor:
         next_sequence_index = cursor.execute(
-            'SELECT MAX(sequence_index) FROM history_events WHERE group_identifier = ?',
+            'SELECT MAX(sequence_index) FROM history_events_active WHERE group_identifier = ?',
             (asset_movement.group_identifier,),
         ).fetchone()[0] + 1
 
@@ -665,6 +665,7 @@ def update_asset_movement_matched_event(
             write_cursor=write_cursor,
             event=matched_event,
             mapping_state=HistoryMappingState.AUTO_MATCHED,
+            save_backup=True,
         )
         write_cursor.execute(
             'DELETE FROM history_event_link_ignores WHERE event_id=? AND link_type=?',

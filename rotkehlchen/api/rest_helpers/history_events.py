@@ -48,7 +48,7 @@ def edit_grouped_events_with_optional_fee(
         return
 
     existing_event_count = write_cursor.execute(
-        'SELECT COUNT(*) FROM history_events WHERE group_identifier=?',
+        'SELECT COUNT(*) FROM history_events_active WHERE group_identifier=?',
         (group_identifier,),
     ).fetchone()[0]
     no_fee_num, with_fee_num = 1, 2
@@ -113,7 +113,7 @@ def edit_grouped_swap_events(
 
     for event in new_events:
         if write_cursor.execute(  # Check if this event will hit a sequence_index that is already in use.  # noqa: E501
-            'SELECT COUNT(*) FROM history_events WHERE group_identifier=? AND sequence_index=?',
+            'SELECT COUNT(*) FROM history_events_active WHERE group_identifier=? AND sequence_index=?',  # noqa: E501
             (group_identifier, event.sequence_index),
         ).fetchone()[0] != 0:
             raise InputError(

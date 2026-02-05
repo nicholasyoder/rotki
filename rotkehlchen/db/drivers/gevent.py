@@ -16,7 +16,11 @@ import rsqlite
 from pysqlcipher3 import dbapi2 as sqlcipher
 
 from rotkehlchen.db.checks import sanity_check_impl
-from rotkehlchen.db.minimized_schema import MINIMIZED_USER_DB_INDEXES, MINIMIZED_USER_DB_SCHEMA
+from rotkehlchen.db.minimized_schema import (
+    MINIMIZED_USER_DB_INDEXES,
+    MINIMIZED_USER_DB_SCHEMA,
+    MINIMIZED_USER_DB_VIEWS,
+)
 from rotkehlchen.globaldb.minimized_schema import (
     MINIMIZED_GLOBAL_DB_INDEXES,
     MINIMIZED_GLOBAL_DB_SCHEMA,
@@ -279,12 +283,15 @@ class DBConnection:
         self._set_progress_handler()
         self.minimized_schema = None
         self.minimized_indexes = None
+        self.minimized_views = None
         if connection_type == DBConnectionType.USER:
             self.minimized_schema = MINIMIZED_USER_DB_SCHEMA
             self.minimized_indexes = MINIMIZED_USER_DB_INDEXES
+            self.minimized_views = MINIMIZED_USER_DB_VIEWS
         elif connection_type == DBConnectionType.GLOBAL:
             self.minimized_schema = MINIMIZED_GLOBAL_DB_SCHEMA
             self.minimized_indexes = MINIMIZED_GLOBAL_DB_INDEXES
+            self.minimized_views = {}
 
     def commit(self) -> None:
         with self.in_callback:
@@ -559,4 +566,5 @@ class DBConnection:
                 db_name=self.connection_type.name.lower(),
                 minimized_schema=self.minimized_schema,
                 minimized_indexes=self.minimized_indexes,
+                minimized_views=self.minimized_views,
             )

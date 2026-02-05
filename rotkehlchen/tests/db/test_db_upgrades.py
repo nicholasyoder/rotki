@@ -43,7 +43,7 @@ from rotkehlchen.db.upgrade_manager import (
 )
 from rotkehlchen.db.upgrades.v37_v38 import DEFAULT_POLYGON_NODES_AT_V38
 from rotkehlchen.db.upgrades.v39_v40 import PREFIX
-from rotkehlchen.db.utils import table_exists
+from rotkehlchen.db.utils import table_exists, view_exists
 from rotkehlchen.errors.api import RotkehlchenPermissionError
 from rotkehlchen.errors.misc import DBUpgradeError
 from rotkehlchen.exchanges.coinbase import CB_EVENTS_PREFIX
@@ -3332,6 +3332,7 @@ def test_latest_upgrade_correctness(user_data_dir):
         db_name=db.conn.connection_type.name.lower(),
         minimized_schema=db.conn.minimized_schema,
         minimized_indexes=db.conn.minimized_indexes,
+        minimized_views=db.conn.minimized_views,
     )
     result = cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
     tables_after_upgrade = {x[0] for x in result}
@@ -3366,7 +3367,9 @@ def test_latest_upgrade_correctness(user_data_dir):
         'history_event_link_ignores',
     }
     new_views = views_after_upgrade - views_before
-    assert new_views == set()
+    assert new_views == {
+        'history_events_active',
+    }
     db.logout()
 
 
@@ -3796,6 +3799,7 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
         assert not table_exists(cursor=cursor, name='lido_csm_node_operators')
         assert not table_exists(cursor=cursor, name='lido_csm_node_operator_metrics')
         assert not table_exists(cursor=cursor, name='solana_ata_address_mappings')
+        assert not view_exists(cursor=cursor, name='history_events_active')
         assert cursor.execute(
             "SELECT COUNT(*) FROM location WHERE location = 'x'",
         ).fetchone()[0] == 0
@@ -3845,10 +3849,11 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
         assert cursor.execute('SELECT identifier, group_identifier, sequence_index, asset FROM history_events WHERE identifier <= 9 ORDER BY identifier').fetchall() == result  # noqa: E501
         assert cursor.execute(  # Verify the unique constraint was updated
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='history_events'",
-        ).fetchone()[0].find('UNIQUE(group_identifier, sequence_index)') != -1
+        ).fetchone()[0].find('UNIQUE(group_identifier, sequence_index, modified_identifier)') != -1
         assert table_exists(cursor=cursor, name='lido_csm_node_operators')
         assert table_exists(cursor=cursor, name='lido_csm_node_operator_metrics')
         assert table_exists(cursor=cursor, name='solana_ata_address_mappings')
+        assert view_exists(cursor=cursor, name='history_events_active')
         assert cursor.execute(
             "SELECT COUNT(*) FROM location WHERE location = 'x' AND seq = 56",
         ).fetchone()[0] == 1
@@ -3892,5 +3897,9 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
             (11, 'TEST_EVENT_4', 1, 'USD', '200.00', 'trade', 'receive'),
             kraken_deposit,
         ])
+        # Check that all existing events have a null modified identifier
+        assert cursor.execute(
+            'SELECT COUNT(*) FROM history_events WHERE modified_identifier IS NOT NULL',
+        ).fetchone()[0] == 0
 
     db.logout()

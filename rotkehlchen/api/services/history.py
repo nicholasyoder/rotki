@@ -331,7 +331,7 @@ class HistoryService:
             entries_with_limit = events_result_info.entries_with_limit
             entries_total = self.rotkehlchen.data.db.get_entries_count(
                 cursor=cursor,
-                entries_table='history_events',
+                entries_table='history_events_active',
                 group_by='group_identifier' if aggregate_by_group_ids else None,
             )
             event_mapping_states = dbevents.get_event_mapping_states(

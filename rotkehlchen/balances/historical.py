@@ -336,7 +336,7 @@ class HistoricalBalancesManager:
                 where_clause = f'({where_clause}) AND he.timestamp >= {stale_value}'
 
             exclusions = ' OR '.join(['(he.type = ? AND he.subtype = ?)'] * len(self._neutral_balance_tracking_pairs))  # noqa: E501
-            return cursor.execute(
+            return cursor.execute(  # TODO: use history_events_active once event restore is fully implemented  # noqa: E501
                 f"""SELECT 1 FROM history_events he
                 WHERE {where_clause} AND he.ignored = 0 AND NOT ({exclusions})
                 AND NOT EXISTS (SELECT 1 FROM event_metrics em WHERE em.event_identifier = he.identifier) LIMIT 1

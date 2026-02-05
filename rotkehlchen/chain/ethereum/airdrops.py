@@ -395,7 +395,7 @@ def calculate_claimed_airdrops(
             half_range = airdrop_info.tolerance.tolerance / 2
 
             for address, db_extra_data, in cursor.execute(
-                'SELECT location_label, extra_data FROM history_events '
+                'SELECT location_label, extra_data FROM history_events_active '
                 'WHERE(type=? AND subtype=? AND location_label=? '
                 'AND asset=? AND CAST(amount AS REAL) BETWEEN ? AND ?);',
                 (

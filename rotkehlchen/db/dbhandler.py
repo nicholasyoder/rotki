@@ -2412,7 +2412,7 @@ class DBHandler:
                 'entries_notes',
                 'user_notes',
                 'assets',
-                'history_events',
+                'history_events_active',
                 'accounting_rules',
                 'unresolved_remote_conflicts',
                 'calendar',
@@ -3613,7 +3613,7 @@ class DBHandler:
             cursor.execute(
                 'SELECT location FROM margin_positions UNION '
                 'SELECT location FROM user_credentials UNION '
-                'SELECT location FROM history_events',
+                'SELECT location FROM history_events_active',
             )
             return {Location.deserialize_from_db(loc[0]) for loc in cursor}
 

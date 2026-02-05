@@ -42,8 +42,8 @@ def upgrade_v50_to_v51(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
         INSERT OR IGNORE INTO location(location, seq) VALUES ('x', 56);
         """)
 
-    @progress_step(description='Rename event_identifier column to group_identifier in history_events table.')  # noqa: E501
-    def _rename_event_identifier_to_group_identifier(write_cursor: 'DBCursor') -> None:
+    @progress_step(description='Adjust history events table schema.')
+    def _adjust_history_events_table_schema(write_cursor: 'DBCursor') -> None:
         """Rename event_identifier column to group_identifier in history_events table."""
         write_cursor.switch_foreign_keys('OFF')
         update_table_schema(
@@ -63,12 +63,22 @@ def upgrade_v50_to_v51(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
             subtype TEXT NOT NULL,
             extra_data TEXT,
             ignored INTEGER NOT NULL DEFAULT 0,
+            modified_identifier INTEGER DEFAULT NULL,
             FOREIGN KEY(asset) REFERENCES assets(identifier) ON UPDATE CASCADE,
-            UNIQUE(group_identifier, sequence_index)""",
-            insert_columns='identifier, entry_type, event_identifier, sequence_index, timestamp, location, location_label, asset, amount, notes, type, subtype, extra_data, ignored',  # noqa: E501
-            insert_order='(identifier, entry_type, group_identifier, sequence_index, timestamp, location, location_label, asset, amount, notes, type, subtype, extra_data, ignored)',  # noqa: E501
+            FOREIGN KEY(modified_identifier) REFERENCES history_events(identifier) ON DELETE CASCADE,
+            UNIQUE(group_identifier, sequence_index, modified_identifier)""",  # noqa: E501
+            insert_columns='identifier, entry_type, event_identifier, sequence_index, timestamp, location, location_label, asset, amount, notes, type, subtype, extra_data, ignored, NULL',  # noqa: E501
+            insert_order='(identifier, entry_type, group_identifier, sequence_index, timestamp, location, location_label, asset, amount, notes, type, subtype, extra_data, ignored, modified_identifier)',  # noqa: E501
         )
         write_cursor.switch_foreign_keys('ON')
+        write_cursor.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_history_events_null_modified
+        ON history_events (group_identifier, sequence_index) WHERE modified_identifier IS NULL;
+        """)
+        write_cursor.execute("""
+        CREATE VIEW IF NOT EXISTS history_events_active
+        AS SELECT * FROM history_events WHERE modified_identifier IS NULL;
+        """)
 
     @progress_step(description='Create new tables.')
     def _add_new_tables(write_cursor: 'DBCursor') -> None:

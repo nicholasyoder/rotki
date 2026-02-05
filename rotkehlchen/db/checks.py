@@ -41,10 +41,11 @@ def sanity_check_impl(
         db_name: str,
         minimized_schema: dict[str, str],
         minimized_indexes: dict[str, str],
+        minimized_views: dict[str, str] | None = None,
 ) -> None:
     """The implementation of the DB sanity check. Out of DBConnection to keep things cleaner"""
-    # Fetch all tables and indexes from the database
-    db_objects: dict[str, dict[str, tuple[str, str]]] = {'table': {}, 'index': {}}
+    # Fetch all tables, indexes and views from the database
+    db_objects: dict[str, dict[str, tuple[str, str]]] = {'table': {}, 'index': {}, 'view': {}}
     # Fetch tables
     cursor.execute("SELECT name, sql FROM sqlite_master WHERE type='table'")
     for (name, raw_script) in cursor:
@@ -60,9 +61,15 @@ def sanity_check_impl(
         normalized_script = db_script_normalizer(raw_script).replace('createindexifnotexists', 'createindex').replace('createuniqueindexifnotexists', 'createuniqueindex')  # noqa: E501
         db_objects['index'][name] = (normalized_script, raw_script)
 
-    # Check for extra structures such as views
+    # Fetch views
+    cursor.execute("SELECT name, sql FROM sqlite_master WHERE type='view'")
+    for (name, raw_script) in cursor:
+        normalized_script = db_script_normalizer(raw_script).replace('createviewifnotexists', 'createview')  # noqa: E501
+        db_objects['view'][name] = (normalized_script, raw_script)
+
+    # Check for extra structures (excluding tables, indexes, and views)
     extra_db_structures = cursor.execute(
-        "SELECT type, name, sql FROM sqlite_master WHERE type NOT IN ('table', 'index')",
+        "SELECT type, name, sql FROM sqlite_master WHERE type NOT IN ('table', 'index', 'view')",
     ).fetchall()
 
     # Prepare all error and warning messages
@@ -74,13 +81,19 @@ def sanity_check_impl(
         logger.critical(f'Unexpected structures in {db_name} database: {extra_db_structures}')
         errors.append(f'There are unexpected structures in your {db_name} database.')
 
-    # Check tables and indexes
-    for obj_type, minimized_data in [('table', minimized_schema), ('index', minimized_indexes)]:
+    # Check tables, indexes, and views
+    checks: list[tuple[str, dict[str, str]]] = [
+        ('table', minimized_schema),
+        ('index', minimized_indexes),
+    ]
+    if minimized_views is not None:
+        checks.append(('view', minimized_views))
+    for obj_type, minimized_data in checks:
         db_data = db_objects[obj_type]
         missing = minimized_data.keys() - db_data.keys()
         if missing:
             msg = f'{obj_type.capitalize()}s {missing} are missing from your {db_name} database.'
-            if obj_type == 'table':
+            if obj_type in ('table', 'view'):
                 errors.append(msg)
             else:  # indexes
                 warnings.append(msg + ' Consider recreating them for better performance.')
@@ -91,7 +104,7 @@ def sanity_check_impl(
             msg = f'Your {db_name} database has the following unexpected {obj_type}s: {extra}.'
             if obj_type == 'table':
                 info_msgs.append(msg + ' Feel free to delete them.')
-            else:  # indexes
+            else:  # indexes/views
                 info_msgs.append(msg + ' These are not harmful but are not required.')
             logger.info(msg)
             for extra_obj in extra:
@@ -106,8 +119,13 @@ def sanity_check_impl(
                     # For tables, compare the properties part
                     if obj_data[0] != expected.lower():
                         differing[obj_name] = (obj_data, expected)
-                else:  # For indexes, normalize both sides by removing "ifnotexists"
+                elif obj_type == 'index':
+                    # For indexes, normalize both sides by removing "ifnotexists"
                     expected_normalized = expected.replace('createindexifnotexists', 'createindex').replace('createuniqueindexifnotexists', 'createuniqueindex')  # noqa: E501
+                    if obj_data[0] != expected_normalized:
+                        differing[obj_name] = (obj_data, expected)
+                else:  # views
+                    expected_normalized = expected.replace('createviewifnotexists', 'createview')
                     if obj_data[0] != expected_normalized:
                         differing[obj_name] = (obj_data, expected)
 
@@ -116,9 +134,9 @@ def sanity_check_impl(
             for obj_name, ((normalized_or_props, raw_script), expected) in differing.items():
                 log_msg += f'\n- For {obj_type} {obj_name} expected {expected} but found {normalized_or_props}. {obj_type.capitalize()} raw script is: {raw_script}'  # noqa: E501
 
-            if obj_type == 'table':
+            if obj_type in ('table', 'view'):
                 logger.critical(log_msg)
-                errors.append(f'Structure of some tables in your {db_name} database differ from the expected.')  # noqa: E501
+                errors.append(f'Structure of some {obj_type}s in your {db_name} database differ from the expected.')  # noqa: E501
             else:  # indexes
                 logger.warning(log_msg)
                 warnings.append(f'Structure of some indexes in your {db_name} database differ from the expected.')  # noqa: E501

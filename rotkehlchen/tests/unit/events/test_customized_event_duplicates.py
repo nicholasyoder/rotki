@@ -92,7 +92,7 @@ def test_find_customized_event_duplicate_groups_filters_group_ids_in_sql(
     matching_statements = [
         (statement, bindings)
         for statement, bindings in executed
-        if 'FROM history_events he' in statement
+        if 'FROM history_events_active he' in statement
     ]
     assert matching_statements
     assert any(

@@ -311,23 +311,40 @@ def combine_asset_balances(balances: list[SingleDBAssetBalance]) -> list[SingleD
     return new_balances
 
 
-def table_exists(cursor: 'DBCursor', name: str, schema: str | None = None) -> bool:
+def _table_or_view_exists(
+        cursor: 'DBCursor',
+        name: str,
+        table_or_view: Literal['table', 'view'],
+        schema: str | None = None,
+) -> bool:
     exists: bool = cursor.execute(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", (name,),
+        'SELECT COUNT(*) FROM sqlite_master WHERE type=? AND name=?',
+        (table_or_view, name),
     ).fetchone()[0] == 1
     if exists and schema is not None:
-        cursor.execute("SELECT sql from sqlite_master WHERE type='table' AND name=?", (name,))
+        cursor.execute(
+            'SELECT sql from sqlite_master WHERE type=? AND name=?',
+            (table_or_view, name),
+        )
         returned_schema = cursor.fetchone()[0].lower()
         returned_properties = re.findall(
-            pattern=r'createtable.*?\((.+)\)',
+            pattern=rf'create{table_or_view}.*?\((.+)\)',
             string=db_script_normalizer(returned_schema),
         )[0]
         given_properties = re.findall(
-            pattern=r'createtable.*?\((.+)\)',
+            pattern=rf'create{table_or_view}.*?\((.+)\)',
             string=db_script_normalizer(schema.lower()),
         )[0]
         return returned_properties == given_properties
     return exists
+
+
+def table_exists(cursor: 'DBCursor', name: str, schema: str | None = None) -> bool:
+    return _table_or_view_exists(cursor=cursor, name=name, table_or_view='table', schema=schema)
+
+
+def view_exists(cursor: 'DBCursor', name: str, schema: str | None = None) -> bool:
+    return _table_or_view_exists(cursor=cursor, name=name, table_or_view='view', schema=schema)
 
 
 DBTupleType = Literal[

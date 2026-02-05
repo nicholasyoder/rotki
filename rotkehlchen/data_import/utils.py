@@ -222,7 +222,7 @@ def detect_duplicate_event(
     importer.flush_all(write_cursor)  # flush so that the DB check later can work and not miss unwritten events  # noqa: E501
     with importer.db.conn.read_ctx() as read_cursor:
         read_cursor.execute(
-            'SELECT COUNT(*) FROM history_events WHERE '
+            'SELECT COUNT(*) FROM history_events_active WHERE '
             'substr(group_identifier, 1, ?) = ? '
             'AND asset=? AND amount=? AND timestamp=? AND location=? '
             'AND type=? AND subtype=?',

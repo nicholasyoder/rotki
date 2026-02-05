@@ -84,7 +84,7 @@ class DBEth2:
         for all validators that have been consolidated.
         """
         cursor.execute(
-            'SELECT e.extra_data FROM history_events AS e LEFT JOIN chain_events_info ON chain_events_info.identifier=e.identifier '  # noqa: E501
+            'SELECT e.extra_data FROM history_events_active AS e LEFT JOIN chain_events_info ON chain_events_info.identifier=e.identifier '  # noqa: E501
             'WHERE chain_events_info.counterparty = ? AND e.type = ? AND e.subtype = ? ',
             (CPT_ETH2, HistoryEventType.INFORMATIONAL.serialize(), HistoryEventSubType.CONSOLIDATE.serialize()),  # noqa: E501
         )
@@ -178,7 +178,7 @@ class DBEth2:
     ) -> None:
         """If the validator has withdrawal events, find last one and mark as exit if after withdrawable ts"""  # noqa: E501
         write_cursor.execute(
-            'SELECT HE.identifier, HE.timestamp, HE.amount FROM history_events HE LEFT JOIN '
+            'SELECT HE.identifier, HE.timestamp, HE.amount FROM history_events_active HE LEFT JOIN '  # noqa: E501
             'eth_staking_events_info SE ON SE.identifier = HE.identifier '
             'WHERE SE.validator_index=? AND HE.entry_type=? ORDER BY HE.timestamp DESC LIMIT 1',
             (index, HistoryBaseEntryType.ETH_WITHDRAWAL_EVENT.value),
@@ -856,7 +856,7 @@ class DBEth2:
         with self.db.user_write() as write_cursor:
             for changes_entry in changes:
                 result = write_cursor.execute(
-                    'SELECT COUNT(*) FROM history_events HE LEFT JOIN chain_events_info CE ON '
+                    'SELECT COUNT(*) FROM history_events_active HE LEFT JOIN chain_events_info CE ON '  # noqa: E501
                     'HE.identifier = CE.identifier WHERE HE.group_identifier=? AND CE.tx_ref=?',
                     (changes_entry[0], changes_entry[7]),
                 ).fetchone()[0]
@@ -869,7 +869,7 @@ class DBEth2:
                     write_cursor.execute(
                         'UPDATE history_events '
                         'SET group_identifier=?, sequence_index=('
-                        'SELECT MAX(sequence_index) FROM history_events E2 WHERE E2.group_identifier=?)+1, '  # noqa: E501
+                        'SELECT MAX(sequence_index) FROM history_events_active E2 WHERE E2.group_identifier=?)+1, '  # noqa: E501
                         'notes=?, type=?, subtype=?, extra_data=? WHERE identifier=?',
                         changes_entry[:-1],
                     )

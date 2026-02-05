@@ -175,7 +175,7 @@ def test_unlink_matched_asset_movements(rotkehlchen_api_server: 'APIServer') -> 
     with rotki.data.db.conn.write_ctx() as write_cursor:
         dbevents.add_history_events(
             write_cursor=write_cursor,
-            history=[(movement1 := AssetMovement(
+            history=(original_events := [(movement1 := AssetMovement(
                 identifier=1,
                 location=Location.KRAKEN,
                 event_type=HistoryEventType.WITHDRAWAL,
@@ -217,10 +217,22 @@ def test_unlink_matched_asset_movements(rotkehlchen_api_server: 'APIServer') -> 
                 asset=A_ETH,
                 amount=FVal('0.1'),
                 unique_id='4',
-            ))],
+            ))]),
         )
 
     match_asset_movements(database=rotki.data.db)
+
+    # Check that we have backups of the three matched events (movement3_match,
+    # and both movement1 and movement2 since they are the matches for eachother).
+    with rotki.data.db.conn.read_ctx() as cursor:
+        assert cursor.execute(
+            'SELECT COUNT(*) FROM history_events WHERE modified_identifier IS NOT NULL',
+        ).fetchone()[0] == 3
+        # Check that using a normal filter query the event backups are not included
+        assert len(dbevents.get_history_events_internal(
+            cursor=cursor,
+            filter_query=HistoryEventFilterQuery.make(),
+        )) == len(original_events)
 
     for method, key, value, expected_links, expected_ignored in [
         (  # First mark movement4 as having no match.
@@ -255,6 +267,18 @@ def test_unlink_matched_asset_movements(rotkehlchen_api_server: 'APIServer') -> 
                 'SELECT event_id FROM history_event_link_ignores WHERE link_type=?',
                 (HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),),
             ).fetchall()) == {(identifier,) for identifier in expected_ignored}
+
+    # Check that all modified events have been restored to their original state
+    with rotki.data.db.conn.read_ctx() as cursor:
+        assert dbevents.get_history_events_internal(
+            cursor=cursor,
+            filter_query=HistoryEventFilterQuery.make(
+                order_by_rules=[('history_events_identifier', True)],
+            ),
+        ) == original_events
+        assert cursor.execute(
+            'SELECT COUNT(*) FROM history_events WHERE modified_identifier IS NOT NULL',
+        ).fetchone()[0] == 0
 
 
 def test_get_unmatched_asset_movements(rotkehlchen_api_server: 'APIServer') -> None:

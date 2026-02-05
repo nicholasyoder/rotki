@@ -57,11 +57,11 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-ALL_EVENTS_DATA_JOIN: Final = """FROM history_events
+ALL_EVENTS_DATA_JOIN: Final = """FROM history_events_active history_events
 LEFT JOIN chain_events_info ON history_events.identifier=chain_events_info.identifier
 LEFT JOIN eth_staking_events_info ON history_events.identifier=eth_staking_events_info.identifier """  # noqa: E501
-EVENTS_WITH_COUNTERPARTY_JOIN: Final = 'FROM history_events INNER JOIN chain_events_info ON history_events.identifier=chain_events_info.identifier '  # noqa: E501
-ETH_STAKING_EVENT_JOIN: Final = 'FROM history_events INNER JOIN eth_staking_events_info ON history_events.identifier=eth_staking_events_info.identifier '  # noqa: E501
+EVENTS_WITH_COUNTERPARTY_JOIN: Final = 'FROM history_events_active history_events INNER JOIN chain_events_info ON history_events.identifier=chain_events_info.identifier '  # noqa: E501
+ETH_STAKING_EVENT_JOIN: Final = 'FROM history_events_active history_events INNER JOIN eth_staking_events_info ON history_events.identifier=eth_staking_events_info.identifier '  # noqa: E501
 ETH_DEPOSIT_EVENT_JOIN = ALL_EVENTS_DATA_JOIN
 
 
@@ -939,7 +939,7 @@ class HistoryEventFilterQuery(HistoryBaseEntryFilterQuery):
 
     @staticmethod
     def get_join_query() -> str:
-        return 'FROM history_events '
+        return 'FROM history_events_active history_events '
 
     @staticmethod
     def get_columns() -> str:

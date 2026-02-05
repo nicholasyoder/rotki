@@ -246,7 +246,7 @@ class Bitstamp(ExchangeInterface, SignatureGeneratorMixin):
         """
         with self.db.conn.read_ctx() as cursor:
             query_result = cursor.execute(
-                'SELECT extra_data FROM history_events WHERE location=? AND timestamp <= ? AND entry_type=? ORDER BY timestamp DESC LIMIT 1',  # noqa: E501
+                'SELECT extra_data FROM history_events_active WHERE location=? AND timestamp <= ? AND entry_type=? ORDER BY timestamp DESC LIMIT 1',  # noqa: E501
                 (Location.BITSTAMP.serialize_for_db(), ts_sec_to_ms(start_ts), entry_type.serialize_for_db()),  # noqa: E501
             ).fetchone()
             if (
@@ -343,7 +343,7 @@ class Bitstamp(ExchangeInterface, SignatureGeneratorMixin):
         with self.db.user_write() as write_cursor:
             for idx, crypto_movement in enumerate(crypto_asset_movements):
                 write_cursor.execute(
-                    'SELECT * from history_events WHERE location=? AND type=? AND subtype=? AND timestamp=? AND asset=?',  # noqa: E501
+                    'SELECT * from history_events_active WHERE location=? AND type=? AND subtype=? AND timestamp=? AND asset=?',  # noqa: E501
                     (serialized_location, crypto_movement.event_type.serialize(), crypto_movement.event_subtype.serialize(), crypto_movement.timestamp, crypto_movement.asset.identifier),  # noqa: E501
                 )
                 if (result := write_cursor.fetchone()) is not None:

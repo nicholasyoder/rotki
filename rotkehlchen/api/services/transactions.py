@@ -693,7 +693,7 @@ class TransactionsService:
     ) -> dict[str, Any]:
         with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
             cursor.execute(
-                'SELECT COUNT(*) FROM history_events JOIN chain_events_info ON '
+                'SELECT COUNT(*) FROM history_events_active history_events JOIN chain_events_info ON '  # noqa: E501
                 'history_events.identifier=chain_events_info.identifier WHERE '
                 'location_label=? AND address=?',
                 (from_address, to_address),
