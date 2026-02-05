@@ -260,6 +260,7 @@ jobs:
             while IFS=: read -r linenum content; do
               # Skip known noisy errors
               [[ "$content" == *"Failed to add the location asset mapping of"* ]] && continue
+              [[ "$content" == *"Got non success response status when querying SmolDapp"* ]] && continue
               short_content=$(sanitize "${content:0:250}")
               echo "::error file=$filename,line=$linenum::$short_content"
             done < <(grep -n -E " ERROR " "$logfile" 2>/dev/null | head -n 20 || true)
