@@ -120,6 +120,8 @@ class EnsCommonDecoder(EvmDecoderInterface, CustomizableDateMixin, ABC):
 
     def _decode_new_resolver(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode event where address is set for an ENS name."""
+        if not self.base.is_tracked(context.transaction.from_address):
+            return DEFAULT_EVM_DECODING_OUTPUT
         ens_name = self._get_name_to_show(node=context.tx_log.topics[1], context=context)
         suffix = ens_name if ens_name is not None else 'an ENS name'
 
@@ -183,6 +185,8 @@ class EnsCommonDecoder(EvmDecoderInterface, CustomizableDateMixin, ABC):
 
     def _decode_ens_public_resolver_content_hash(self, context: DecoderContext) -> EvmDecodingOutput:  # noqa: E501
         """Decode an event that modifies a content hash for the public ENS resolver"""
+        if not self.base.is_tracked(context.transaction.from_address):
+            return DEFAULT_EVM_DECODING_OUTPUT
         node = context.tx_log.topics[1]  # node is a hash of the name used by ens internals
         contract = self.node_inquirer.contracts.contract_by_address(address=context.tx_log.address)
         if contract is None:
@@ -275,6 +279,9 @@ class EnsCommonDecoder(EvmDecoderInterface, CustomizableDateMixin, ABC):
             )
         except DeserializationError as e:
             log.error(f'Failed to decode {self.display_name} set-text event in {context.transaction} due to {e!s}')  # noqa: E501
+            return DEFAULT_EVM_DECODING_OUTPUT
+
+        if not self.base.is_tracked(context.transaction.from_address):
             return DEFAULT_EVM_DECODING_OUTPUT
 
         changed_key = decoded_data[0]

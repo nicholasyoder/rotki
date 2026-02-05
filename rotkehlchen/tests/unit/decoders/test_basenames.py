@@ -10,7 +10,11 @@ from rotkehlchen.chain.base.modules.basenames.constants import (
     CPT_BASENAMES,
 )
 from rotkehlchen.chain.decoding.constants import CPT_GAS
-from rotkehlchen.chain.evm.types import string_to_evm_address
+from rotkehlchen.chain.evm.types import (
+    EvmIndexer,
+    SerializableChainIndexerOrder,
+    string_to_evm_address,
+)
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.constants.misc import ONE, ZERO
 from rotkehlchen.fval import FVal
@@ -19,7 +23,7 @@ from rotkehlchen.history.events.structures.evm_swap import EvmSwapEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.tests.unit.test_types import LEGACY_TESTS_INDEXER_ORDER
 from rotkehlchen.tests.utils.ethereum import get_decoded_events_of_transaction
-from rotkehlchen.types import Location, Timestamp, TimestampMS, deserialize_evm_tx_hash
+from rotkehlchen.types import ChainID, Location, Timestamp, TimestampMS, deserialize_evm_tx_hash
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.base.node_inquirer import BaseInquirer
@@ -460,5 +464,40 @@ def test_basenames_new_owner(
             notes='Set Basenames address for an ENS name',
             counterparty=CPT_BASENAMES,
             address=BASENAMES_REGISTRY,
+        ),
+    ]
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', [{
+    'evm_indexers_order': SerializableChainIndexerOrder(
+        order={
+            ChainID.BASE: [EvmIndexer.ROUTESCAN],
+        },
+    ),
+}])
+@pytest.mark.parametrize('base_accounts', [['0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12']])
+def test_basenames_ignore_untracked_events(
+        base_inquirer: 'BaseInquirer',
+        base_accounts: list['ChecksumEvmAddress'],
+) -> None:
+    """Regression test for https://github.com/rotki/rotki/issues/11551"""
+    tx_hash = deserialize_evm_tx_hash('0x2cb9dcf83b3fd1bbbec4cd5f8d0b688bfc3f6aadd99081f28eaccafcd26c4243')  # noqa: E501
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=base_inquirer, tx_hash=tx_hash)
+    timestamp, user_address = TimestampMS(1770188169000), base_accounts[0]
+    assert events == [
+        EvmEvent(
+            tx_ref=tx_hash,
+            sequence_index=812,
+            timestamp=timestamp,
+            location=Location.BASE,
+            event_type=HistoryEventType.RECEIVE,
+            event_subtype=HistoryEventSubType.NONE,
+            asset=Asset('eip155:8453/erc20:0x448d3db0bbA9C593A1796c9F9FC956D59827fB07'),
+            amount=FVal(1000),
+            location_label=user_address,
+            notes=f'Receive 1000 1% from 0xD152f549545093347A162Dce210e7293f1452150 to {user_address}',  # noqa: E501
+            counterparty=None,
+            address=string_to_evm_address('0xD152f549545093347A162Dce210e7293f1452150'),
         ),
     ]
