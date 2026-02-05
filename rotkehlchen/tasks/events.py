@@ -730,6 +730,15 @@ def should_exclude_possible_match(
     - Event identifier is in the list of already matched ids.
     - Gas events
     """
+    if (
+        asset_movement.location in {Location.COINBASE, Location.COINBASEPRO} and
+        asset_movement.notes is not None and
+        asset_movement.notes.startswith('Transfer funds') and
+        asset_movement.notes.endswith('CoinbasePro') and
+        event.location not in {Location.COINBASE, Location.COINBASEPRO}
+    ):
+        return True  # Coinbase/CoinbasePro transfer should only match between those exchanges
+
     if event.location == asset_movement.location:
         return True  # only allow exchange-to-exchange between different exchanges
 

@@ -1314,6 +1314,64 @@ def test_match_coinbasepro_coinbase_transfer(database: 'DBHandler') -> None:
     _match_and_check(database=database, expected_matches=[(1, 2), (2, 1), (3, 4), (4, 3)])
 
 
+def test_coinbasepro_transfer_with_onchain_event(database: 'DBHandler') -> None:
+    """Ensure CoinbasePro transfer notes restrict matches to Coinbase/CoinbasePro."""
+    with database.conn.write_ctx() as write_cursor:
+        DBHistoryEvents(database).add_history_events(
+            write_cursor=write_cursor,
+            history=[EvmEvent(
+                identifier=(match_id := 1),
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(1700012000000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.SPEND,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=ONE,
+                location_label=make_evm_address(),
+            ), AssetMovement(
+                identifier=(movement_id := 2),
+                location=Location.COINBASEPRO,
+                event_type=HistoryEventType.DEPOSIT,
+                timestamp=TimestampMS(1700012005000),
+                asset=A_ETH,
+                amount=ONE,
+                unique_id='cbpro_deposit_1',
+                location_label='CoinbasePro 1',
+            ), AssetMovement(
+                identifier=(movement_id_2 := 3),
+                location=Location.COINBASEPRO,
+                event_type=HistoryEventType.WITHDRAWAL,
+                timestamp=TimestampMS(1700013000000),
+                asset=A_ETH,
+                amount=ONE,
+                unique_id='cbpro_withdrawal_1',
+                location_label='CoinbasePro 1',
+                notes='Transfer funds to CoinbasePro',
+            ), AssetMovement(
+                identifier=(match_id_2 := 4),
+                location=Location.COINBASE,
+                event_type=HistoryEventType.DEPOSIT,
+                timestamp=TimestampMS(1700013001000),
+                asset=A_ETH,
+                amount=ONE,
+                unique_id='cb_deposit_1',
+                location_label='Coinbase 1',
+                notes='Transfer funds from CoinbasePro',
+            )],
+        )
+
+    _match_and_check(
+        database=database,
+        expected_matches=[
+            (movement_id, match_id),
+            (movement_id_2, match_id_2),
+            (match_id_2, movement_id_2),
+        ],
+    )
+
+
 def test_deposit_to_anon(database: 'DBHandler') -> None:
     """Regression test for wrong pairing when a deposit is followed by a withdrawal.
 
