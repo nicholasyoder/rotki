@@ -229,7 +229,7 @@ watch(backgroundLoading, async (isLoading, wasLoading) => {
 
 // Refresh when events are modified (e.g., from pinned sidebar matching)
 watch(eventsModificationCounter, async (current, previous) => {
-  if (current > previous)
+  if (props.mainPage && current > previous)
     await actions.fetch.dataAndLocations();
 });
 

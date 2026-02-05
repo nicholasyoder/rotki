@@ -1,42 +1,53 @@
 <script setup lang="ts">
-import type { UnmatchedAssetMovement } from '@/composables/history/events/use-unmatched-asset-movements';
 import AssetMovementMatchingSettingsMenu from '@/components/history/events/AssetMovementMatchingSettingsMenu.vue';
 import UnmatchedMovementsList from '@/components/history/events/UnmatchedMovementsList.vue';
-
-const selectedUnmatched = defineModel<string[]>('selectedUnmatched', { required: true });
-
-const selectedIgnored = defineModel<string[]>('selectedIgnored', { required: true });
+import { useAssetMovementActions } from '@/composables/history/events/use-asset-movement-actions';
+import { type UnmatchedAssetMovement, useUnmatchedAssetMovements } from '@/composables/history/events/use-unmatched-asset-movements';
 
 const props = defineProps<{
-  unmatchedMovements: UnmatchedAssetMovement[];
-  ignoredMovements: UnmatchedAssetMovement[];
-  fiatMovements: UnmatchedAssetMovement[];
   highlightedGroupIdentifier?: string;
-  loading?: boolean;
-  ignoredLoading?: boolean;
-  ignoreLoading?: boolean;
-  autoMatchLoading?: boolean;
   isPinned?: boolean;
+  onActionComplete?: () => Promise<void>;
 }>();
 
 const emit = defineEmits<{
   'close': [];
-  'confirm-ignore-all-fiat': [];
-  'confirm-ignore-selected': [];
-  'confirm-unignore-selected': [];
-  'ignore': [movement: UnmatchedAssetMovement];
   'pin': [];
-  'restore': [movement: UnmatchedAssetMovement];
   'select': [movement: UnmatchedAssetMovement];
   'show-in-events': [movement: UnmatchedAssetMovement];
-  'trigger-auto-match': [];
 }>();
 
 const { t } = useI18n({ useScope: 'global' });
 
 const activeTab = ref<number>(0);
 
+const {
+  autoMatchLoading,
+  ignoredLoading,
+  ignoredMovements,
+  loading,
+  unmatchedMovements,
+  refreshUnmatchedAssetMovements,
+  triggerAssetMovementAutoMatching,
+} = useUnmatchedAssetMovements();
+
+const {
+  confirmIgnoreAllFiat,
+  confirmIgnoreSelected,
+  confirmUnignoreSelected,
+  fiatMovements,
+  ignoreLoading,
+  ignoreMovement,
+  restoreMovement,
+  selectedIgnored,
+  selectedUnmatched,
+} = useAssetMovementActions({ onActionComplete: props.onActionComplete });
+
 const buttonSize = computed<'sm' | undefined>(() => props.isPinned ? 'sm' : undefined);
+
+onBeforeMount(async () => {
+  await refreshUnmatchedAssetMovements();
+});
 </script>
 
 <template>
@@ -81,7 +92,7 @@ const buttonSize = computed<'sm' | undefined>(() => props.isPinned ? 'sm' : unde
         :ignore-loading="ignoreLoading"
         :is-pinned="isPinned"
         :loading="loading"
-        @ignore="emit('ignore', $event)"
+        @ignore="ignoreMovement($event)"
         @pin="emit('pin')"
         @select="emit('select', $event)"
         @show-in-events="emit('show-in-events', $event)"
@@ -97,7 +108,7 @@ const buttonSize = computed<'sm' | undefined>(() => props.isPinned ? 'sm' : unde
         :is-pinned="isPinned"
         show-restore
         @pin="emit('pin')"
-        @restore="emit('restore', $event)"
+        @restore="restoreMovement($event)"
         @show-in-events="emit('show-in-events', $event)"
       />
     </RuiTabItem>
@@ -119,7 +130,7 @@ const buttonSize = computed<'sm' | undefined>(() => props.isPinned ? 'sm' : unde
         :class="{ 'h-[30px]': isPinned }"
         :disabled="selectedUnmatched.length === 0 || ignoreLoading"
         :loading="ignoreLoading"
-        @click="emit('confirm-ignore-selected')"
+        @click="confirmIgnoreSelected()"
       >
         {{ t('asset_movement_matching.actions.ignore_selected') }}
         <RuiChip
@@ -144,7 +155,7 @@ const buttonSize = computed<'sm' | undefined>(() => props.isPinned ? 'sm' : unde
             :class="{ 'h-[30px]': isPinned }"
             :disabled="fiatMovements.length === 0 || ignoreLoading"
             :loading="ignoreLoading"
-            @click="emit('confirm-ignore-all-fiat')"
+            @click="confirmIgnoreAllFiat()"
           >
             {{ t('asset_movement_matching.actions.ignore_fiat') }}
           </RuiButton>
@@ -168,7 +179,7 @@ const buttonSize = computed<'sm' | undefined>(() => props.isPinned ? 'sm' : unde
               :class="isPinned ? 'h-[30px] !px-3' : 'h-9'"
               :disabled="unmatchedMovements.length === 0 || autoMatchLoading"
               :loading="autoMatchLoading"
-              @click="emit('trigger-auto-match')"
+              @click="triggerAssetMovementAutoMatching()"
             >
               {{ t('asset_movement_matching.actions.auto_match') }}
             </RuiButton>
@@ -192,7 +203,7 @@ const buttonSize = computed<'sm' | undefined>(() => props.isPinned ? 'sm' : unde
         :size="buttonSize"
         :disabled="selectedIgnored.length === 0 || ignoreLoading"
         :loading="ignoreLoading"
-        @click="emit('confirm-unignore-selected')"
+        @click="confirmUnignoreSelected()"
       >
         {{ t('asset_movement_matching.actions.unignore_selected') }}
         <RuiChip

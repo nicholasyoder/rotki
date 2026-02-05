@@ -6,6 +6,7 @@ import DateDisplay from '@/components/display/DateDisplay.vue';
 import BadgeDisplay from '@/components/history/BadgeDisplay.vue';
 import HistoryEventAsset from '@/components/history/events/HistoryEventAsset.vue';
 import LocationDisplay from '@/components/history/LocationDisplay.vue';
+import { type ColumnClassConfig, usePinnedColumnClass } from '@/composables/history/events/use-pinned-column-class';
 import { getEventEntryFromCollection } from '@/utils/history/events';
 
 interface UnmatchedMovementRow {
@@ -39,39 +40,52 @@ const emit = defineEmits<{
 
 const { t } = useI18n({ useScope: 'global' });
 
-const pinnedColumnClass = computed<{ class: string; cellClass: string } | object>(() =>
-  props.isPinned ? { cellClass: '!px-2 !text-xs', class: '!px-2' } : {},
-);
+const pinnedColumnClass = usePinnedColumnClass(toRef(props, 'isPinned'));
 
-const columns = computed<DataTableColumn<UnmatchedMovementRow>[]>(() => [
-  {
-    key: 'timestamp',
-    label: !props.isPinned ? t('common.datetime') : t('asset_movement_matching.dialog.info_column'),
-    ...get(pinnedColumnClass),
-  },
-  ...(!props.isPinned
-    ? [{
-      key: 'eventType',
-      label: t('common.type'),
-      ...get(pinnedColumnClass),
-    }, {
-      align: props.isPinned ? 'start' : 'center',
-      key: 'location',
-      label: t('common.exchange'),
-      ...get(pinnedColumnClass),
-    }] satisfies DataTableColumn<UnmatchedMovementRow>[]
-    : []),
-  {
-    key: 'asset',
-    label: t('common.asset'),
-    ...(props.isPinned ? { cellClass: '!pl-1 !pr-0', class: '!pl-1 !pr-0' } : {}),
-  },
-  {
-    key: 'actions',
-    label: t('asset_movement_matching.dialog.manual_action'),
-    ...get(pinnedColumnClass),
-  },
-]);
+function createColumns(isPinned: boolean, baseClass: ColumnClassConfig): DataTableColumn<UnmatchedMovementRow>[] {
+  const columns: DataTableColumn<UnmatchedMovementRow>[] = [
+    {
+      key: 'timestamp',
+      label: isPinned
+        ? t('asset_movement_matching.dialog.info_column')
+        : t('common.datetime'),
+      ...baseClass,
+    },
+  ];
+
+  if (!isPinned) {
+    columns.push(
+      {
+        key: 'eventType',
+        label: t('common.type'),
+        ...baseClass,
+      },
+      {
+        align: 'center',
+        key: 'location',
+        label: t('common.exchange'),
+        ...baseClass,
+      },
+    );
+  }
+
+  columns.push(
+    {
+      key: 'asset',
+      label: t('common.asset'),
+      ...(isPinned ? { cellClass: '!pl-1 !pr-0', class: '!pl-1 !pr-0' } : {}),
+    },
+    {
+      key: 'actions',
+      label: t('asset_movement_matching.dialog.manual_action'),
+      ...baseClass,
+    },
+  );
+
+  return columns;
+}
+
+const columns = computed<DataTableColumn<UnmatchedMovementRow>[]>(() => createColumns(props.isPinned ?? false, get(pinnedColumnClass)));
 
 const rows = computed<UnmatchedMovementRow[]>(() =>
   props.movements.map((movement) => {

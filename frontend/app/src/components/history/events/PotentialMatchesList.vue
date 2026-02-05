@@ -13,6 +13,7 @@ import LocationDisplay from '@/components/history/LocationDisplay.vue';
 import LocationIcon from '@/components/history/LocationIcon.vue';
 import AmountInput from '@/components/inputs/AmountInput.vue';
 import { useHistoryEventMappings } from '@/composables/history/events/mapping';
+import { type ColumnClassConfig, usePinnedColumnClass } from '@/composables/history/events/use-pinned-column-class';
 import HashLink from '@/modules/common/links/HashLink.vue';
 import { getEventEntryFromCollection } from '@/utils/history/events';
 
@@ -44,48 +45,50 @@ const { getHistoryEventSubTypeName, getHistoryEventTypeName } = useHistoryEventM
 
 const [DefineRowActions, ReuseRowActions] = createReusableTemplate<{ row: PotentialMatchRow }>();
 
-const pinnedColumnClass = computed<{ class: string; cellClass: string } | object>(() =>
-  props.isPinned ? { cellClass: '!px-2 !text-xs', class: '!px-2' } : {},
-);
+const pinnedColumnClass = usePinnedColumnClass(toRef(props, 'isPinned'));
 
-const columns = computed<DataTableColumn<PotentialMatchRow>[]>(() => {
-  const pinned = get(pinnedColumnClass);
-  const pinnedClass = 'class' in pinned ? pinned.class : '';
-
-  return [
+function createColumns(isPinned: boolean, baseClass: ColumnClassConfig): DataTableColumn<PotentialMatchRow>[] {
+  const columns: DataTableColumn<PotentialMatchRow>[] = [
     {
       key: 'timestamp',
-      label: !props.isPinned ? t('common.datetime') : t('asset_movement_matching.dialog.info_column'),
-      ...pinned,
+      label: isPinned
+        ? t('asset_movement_matching.dialog.info_column')
+        : t('common.datetime'),
+      ...baseClass,
     },
-    ...(!props.isPinned
-      ? [{
-        class: `whitespace-pre-line min-w-32 ${pinnedClass}`.trim(),
-        key: 'eventTypeAndSubtype',
-        label: `${t('transactions.events.form.event_type.label')} -\n${t('transactions.events.form.event_subtype.label')}`,
-        cellClass: 'cellClass' in pinned ? pinned.cellClass : '',
-      }] satisfies DataTableColumn<PotentialMatchRow>[]
-      : []),
+  ];
+
+  if (!isPinned) {
+    columns.push({
+      key: 'eventTypeAndSubtype',
+      label: `${t('transactions.events.form.event_type.label')} -\n${t('transactions.events.form.event_subtype.label')}`,
+      class: `whitespace-pre-line min-w-32 ${baseClass.class ?? ''}`.trim(),
+      cellClass: baseClass.cellClass ?? '',
+    });
+  }
+
+  columns.push(
     {
-      class: `whitespace-pre-line min-w-32 ${pinnedClass}`.trim(),
       key: 'txRef',
       label: `${t('common.tx_hash')} -\n${t('common.account')}`,
-      cellClass: 'cellClass' in pinned ? pinned.cellClass : '',
+      class: `whitespace-pre-line min-w-32 ${baseClass.class ?? ''}`.trim(),
+      cellClass: baseClass.cellClass ?? '',
     },
     {
       key: 'asset',
       label: t('common.asset'),
-      ...(props.isPinned ? { cellClass: '!pl-1 !pr-0', class: '!pl-1 !pr-0' } : {}),
+      ...(isPinned ? { cellClass: '!pl-1 !pr-0', class: '!pl-1 !pr-0' } : {}),
     },
-    ...(!props.isPinned
-      ? [{
-        key: 'actions',
-        label: '',
-        ...pinned,
-      }] satisfies DataTableColumn<PotentialMatchRow>[]
-      : []),
-  ];
-});
+  );
+
+  if (!isPinned) {
+    columns.push({ key: 'actions', label: '', ...baseClass });
+  }
+
+  return columns;
+}
+
+const columns = computed<DataTableColumn<PotentialMatchRow>[]>(() => createColumns(props.isPinned ?? false, get(pinnedColumnClass)));
 
 function isSelected(row: PotentialMatchRow): boolean {
   return get(selectedMatchId) === row.entry.identifier;

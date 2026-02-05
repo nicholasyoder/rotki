@@ -5,7 +5,6 @@ import { startPromise } from '@shared/utils';
 import MatchAssetMovementsContent from '@/components/history/events/MatchAssetMovementsContent.vue';
 import PotentialMatchesContent from '@/components/history/events/PotentialMatchesContent.vue';
 import { useHistoryEventsApi } from '@/composables/api/history/events';
-import { useAssetMovementActions } from '@/composables/history/events/use-asset-movement-actions';
 import {
   type UnmatchedAssetMovement,
   useUnmatchedAssetMovements,
@@ -37,13 +36,8 @@ const { pinned, showPinned } = storeToRefs(useAreaVisibilityStore());
 const itemsPerPage = useItemsPerPage();
 
 const {
-  autoMatchLoading,
-  ignoredLoading,
   ignoredMovements,
-  loading,
   unmatchedMovements,
-  refreshUnmatchedAssetMovements,
-  triggerAssetMovementAutoMatching,
 } = useUnmatchedAssetMovements();
 
 async function clearHighlight(): Promise<void> {
@@ -54,18 +48,6 @@ async function clearHighlight(): Promise<void> {
     await router.replace({ query: remainingQuery });
   }
 }
-
-const {
-  confirmIgnoreAllFiat,
-  confirmIgnoreSelected,
-  confirmUnignoreSelected,
-  fiatMovements,
-  ignoreLoading,
-  ignoreMovement,
-  restoreMovement,
-  selectedIgnored,
-  selectedUnmatched,
-} = useAssetMovementActions({ onActionComplete: clearHighlight });
 
 function getCurrentLimit(): number {
   const routeLimit = Number(get(router.currentRoute).query.limit);
@@ -254,10 +236,6 @@ watch(() => props.highlightedGroupIdentifier, (newHighlight, oldHighlight) => {
   navigateToHighlightedMovement(newHighlight);
 });
 
-onBeforeMount(async () => {
-  await refreshUnmatchedAssetMovements();
-});
-
 onUnmounted(() => {
   startPromise(clearHighlight());
 });
@@ -313,26 +291,12 @@ onUnmounted(() => {
 
     <div class="flex-1 overflow-hidden flex flex-col relative">
       <MatchAssetMovementsContent
-        v-model:selected-unmatched="selectedUnmatched"
-        v-model:selected-ignored="selectedIgnored"
-        :unmatched-movements="unmatchedMovements"
-        :ignored-movements="ignoredMovements"
-        :fiat-movements="fiatMovements"
         :highlighted-group-identifier="activeGroupIdentifier"
-        :loading="loading"
-        :ignored-loading="ignoredLoading"
-        :ignore-loading="ignoreLoading"
-        :auto-match-loading="autoMatchLoading"
+        :on-action-complete="clearHighlight"
         is-pinned
-        @confirm-ignore-all-fiat="confirmIgnoreAllFiat()"
-        @confirm-ignore-selected="confirmIgnoreSelected()"
-        @confirm-unignore-selected="confirmUnignoreSelected()"
-        @ignore="ignoreMovement($event)"
         @pin="unpin()"
-        @restore="restoreMovement($event)"
         @select="selectMovement($event)"
         @show-in-events="showInHistoryEvents($event)"
-        @trigger-auto-match="triggerAssetMovementAutoMatching()"
       />
 
       <!-- Overlay backdrop -->

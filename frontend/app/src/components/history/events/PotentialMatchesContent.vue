@@ -46,10 +46,6 @@ function getDefaultTolerancePercentage(): string {
   return bigNumberify(get(assetMovementAmountTolerance)).multipliedBy(100).toString();
 }
 
-function percentageToDecimal(percentage: string): string {
-  return bigNumberify(percentage).dividedBy(100).toString();
-}
-
 const searchLoading = ref<boolean>(false);
 const matchingLoading = ref<boolean>(false);
 const potentialMatches = ref<PotentialMatchRow[]>([]);
@@ -57,6 +53,11 @@ const selectedMatchId = ref<number>();
 const searchTimeRange = ref<string>(getDefaultHourRange().toString());
 const onlyExpectedAssets = ref<boolean>(true);
 const tolerancePercentage = ref<string>(getDefaultTolerancePercentage());
+
+function percentageToDecimal(percentage: string): string {
+  return bigNumberify(percentage).dividedBy(100).toString();
+}
+const buttonSize = computed<'sm' | undefined>(() => props.isPinned ? 'sm' : undefined);
 
 function transformToMatchRow(row: HistoryEventCollectionRow, isCloseMatch: boolean): PotentialMatchRow {
   const { entry, ...meta } = getEventEntryFromCollection(row);
@@ -145,16 +146,14 @@ function close(): void {
   emit('close');
 }
 
-watch(() => props.movement, async () => {
+watchImmediate(() => props.movement, async () => {
   set(potentialMatches, []);
   set(selectedMatchId, undefined);
   set(searchTimeRange, getDefaultHourRange().toString());
   set(onlyExpectedAssets, true);
   set(tolerancePercentage, getDefaultTolerancePercentage());
   await searchPotentialMatches();
-}, { immediate: true });
-
-const buttonSize = computed<'sm' | undefined>(() => props.isPinned ? 'sm' : undefined);
+});
 </script>
 
 <template>
