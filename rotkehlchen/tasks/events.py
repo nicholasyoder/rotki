@@ -665,6 +665,7 @@ def update_asset_movement_matched_event(
             write_cursor=write_cursor,
             event=matched_event,
             mapping_state=HistoryMappingState.AUTO_MATCHED,
+            save_backup=True,
         )
         write_cursor.execute(
             'DELETE FROM history_event_link_ignores WHERE event_id=? AND link_type=?',

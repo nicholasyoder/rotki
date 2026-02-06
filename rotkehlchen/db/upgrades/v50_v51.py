@@ -328,4 +328,25 @@ def upgrade_v50_to_v51(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
             ),
         )
 
+    @progress_step(description='Create tables for backups of history events.')
+    def _create_history_events_backup_tables(write_cursor: 'DBCursor') -> None:
+        """Create history_events_backup and chain_events_info_backup tables for storing
+        backup copies of history events.
+        """
+        for table, replacements in (
+            ('history_events', {'history_events': 'history_events_backup'}),
+            ('chain_events_info', {
+                'chain_events_info': 'chain_events_info_backup',
+                'history_events': 'history_events_backup',
+            }),
+        ):
+            table_sql = write_cursor.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                (table,),
+            ).fetchone()[0]
+            for old, new in replacements.items():
+                table_sql = table_sql.replace(old, new)
+
+            write_cursor.execute(table_sql)
+
     perform_userdb_upgrade_steps(db=db, progress_handler=progress_handler, should_vacuum=True)

@@ -270,11 +270,55 @@ class DBHistoryEvents:
         # Call tracking ONCE for the entire batch with minimum timestamp
         # TODO (balances): add _mark_events_modified for min_timestamp if min_timestamp is not None
 
+    @staticmethod
+    def save_history_event_backup(
+            write_cursor: 'DBCursor',
+            identifier: int | None,
+    ) -> None:
+        """Create a backup copy of an event before modifying it so it can be restored to its
+        original state later. Use insert or ignore so we keep the earliest original version if
+        multiple edits happen.
+        """
+        if write_cursor.execute(
+            'INSERT OR IGNORE INTO history_events_backup '
+            'SELECT * FROM history_events WHERE identifier=?',
+            (identifier,),
+        ).rowcount == 0:
+            return  # A backup already exists for this event
+
+        write_cursor.execute(
+            'INSERT INTO chain_events_info_backup '
+            'SELECT * FROM chain_events_info WHERE identifier=?',
+            (identifier,),
+        )
+
+    @staticmethod
+    def maybe_restore_history_event_from_backup(
+            write_cursor: 'DBCursor',
+            identifier: int,
+    ) -> None:
+        """Restore a history event to its original backed-up state.
+        If no backup exists, this function does nothing.
+        """
+        for table in ('history_events', 'chain_events_info'):
+            write_cursor.execute(
+                f'INSERT OR REPLACE INTO {table} '
+                f'SELECT * FROM {table}_backup WHERE identifier=?',
+                (identifier,),
+            )
+
+        # Delete backup entry (will also delete backup chain info due to foreign key constraint)
+        write_cursor.execute(
+            'DELETE FROM history_events_backup WHERE identifier=?',
+            (identifier,),
+        )
+
     def edit_history_event(
             self,
             write_cursor: 'DBCursor',
             event: HistoryBaseEntry,
             mapping_state: HistoryMappingState = HistoryMappingState.CUSTOMIZED,
+            save_backup: bool = False,
     ) -> None:
         """
         Edit a history entry to the DB with information provided by the user.
@@ -291,6 +335,9 @@ class DBHistoryEvents:
             'FROM history_events WHERE identifier=?',
             (event.identifier,),
         ).fetchone()
+
+        if save_backup:
+            self.save_history_event_backup(write_cursor=write_cursor, identifier=event.identifier)
 
         for idx, (_, updatestr, bindings) in enumerate(event.serialize_for_db()):
             if idx == 0:  # base history event data

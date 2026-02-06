@@ -75,9 +75,11 @@ from rotkehlchen.constants.misc import (
 from rotkehlchen.data_import.manager import DataImportSource
 from rotkehlchen.db.calendar import CalendarEntry, CalendarFilterQuery, ReminderEntry
 from rotkehlchen.db.constants import (
+    HISTORY_MAPPING_KEY_STATE,
     LINKABLE_ACCOUNTING_PROPERTIES,
     LINKABLE_ACCOUNTING_SETTINGS_NAME,
     HistoryEventLinkType,
+    HistoryMappingState,
 )
 from rotkehlchen.db.eth2 import DBEth2
 from rotkehlchen.db.filtering import (
@@ -3714,6 +3716,36 @@ class RestAPI:
                         HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),
                     ),
                 )
+                # Remove any adjustment event that was added during matching
+                write_cursor.execute(
+                    'DELETE FROM history_events WHERE type=? AND group_identifier IN '
+                    '(SELECT group_identifier FROM history_events WHERE identifier IN (?, ?))'
+                    'AND identifier IN (SELECT parent_identifier FROM history_events_mappings '
+                    'WHERE name=? AND value=?)',
+                    (
+                        HistoryEventType.EXCHANGE_ADJUSTMENT.serialize(),
+                        asset_movement_identifier,
+                        matched_event_identifier,
+                        HISTORY_MAPPING_KEY_STATE,
+                        HistoryMappingState.AUTO_MATCHED.serialize_for_db(),
+                    ),
+                )
+                for id_to_restore in (matched_event_identifier, asset_movement_identifier):
+                    # Restore event from the backup created before matching
+                    DBHistoryEvents.maybe_restore_history_event_from_backup(
+                        write_cursor=write_cursor,
+                        identifier=id_to_restore,
+                    )
+                    # Remove the auto-matched event state
+                    write_cursor.execute(
+                        'DELETE FROM history_events_mappings '
+                        'WHERE parent_identifier=? AND name=? AND value=?',
+                        (
+                            id_to_restore,
+                            HISTORY_MAPPING_KEY_STATE,
+                            HistoryMappingState.AUTO_MATCHED.serialize_for_db(),
+                        ),
+                    )
 
         return api_response(OK_RESULT)
 
