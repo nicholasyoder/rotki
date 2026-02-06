@@ -15,7 +15,7 @@ from packaging.version import Version
 
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.ethereum.utils import generate_address_via_create2
-from rotkehlchen.constants.assets import A_USDC
+from rotkehlchen.constants.assets import A_USDC, A_WBTC
 from rotkehlchen.constants.resolver import identifier_to_evm_address, identifier_to_evm_chain
 from rotkehlchen.errors.serialization import ConversionError
 from rotkehlchen.externalapis.github import Github
@@ -55,6 +55,16 @@ def test_process_result():
     }
 
     # Without process result should throw an error but with it no
+    with pytest.raises(TypeError):
+        json.dumps(d)
+
+    json.dumps(process_result(d))
+
+
+def test_process_result_handles_evmtoken():
+    """Check that process result properly handles evm tokens."""
+    d = {'somekey': A_WBTC.resolve_to_evm_token()}
+
     with pytest.raises(TypeError):
         json.dumps(d)
 

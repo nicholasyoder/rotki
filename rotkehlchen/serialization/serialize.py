@@ -9,7 +9,7 @@ from web3.datastructures import AttributeDict
 from rotkehlchen.accounting.mixins.event import AccountingEventType
 from rotkehlchen.accounting.structures.balance import AssetBalance, Balance, BalanceType
 from rotkehlchen.api.websockets.typedefs import WSMessageType
-from rotkehlchen.assets.asset import Asset, Nft
+from rotkehlchen.assets.asset import Asset
 from rotkehlchen.balances.manual import ManuallyTrackedBalanceWithValue
 from rotkehlchen.chain.accounts import BlockchainAccountData, SingleBlockchainAccountData
 from rotkehlchen.chain.bitcoin.xpub import XpubData
@@ -77,8 +77,6 @@ def _process_dict(entry: dict) -> dict:
 # Map types to their handler functions
 HANDLERS: dict[type, Callable[[Any], Any]] = {
     HexBytes: lambda x: x.to_0x_hex(),
-    Asset: lambda x: x.identifier,
-    Nft: lambda x: x.identifier,
     ChainID: lambda x: x.to_name(),
     LocationData: lambda entry: {
         'time': entry.time,
@@ -161,8 +159,13 @@ HANDLERS.update(dict.fromkeys((
 
 
 def _process_entry(entry: Any) -> str | (list[Any] | (dict[str, Any] | Any)):
+    """Process an entry for the api. First checks for a handler for the entry's type, then uses
+    isinstance for things with a common base class. Otherwise, returns the entry itself.
+    """
     if (handler := HANDLERS.get(type(entry))) is not None:
         return handler(entry)
+    if isinstance(entry, Asset):
+        return entry.identifier
 
     # else
     return entry
