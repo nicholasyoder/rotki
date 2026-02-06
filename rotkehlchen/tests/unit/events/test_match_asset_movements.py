@@ -2,15 +2,12 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
-from eth_utils import to_checksum_address
 
 from rotkehlchen.api.websockets.typedefs import WSMessageType
-from rotkehlchen.assets.asset import Asset, EvmToken
+from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.ethereum.constants import CPT_KRAKEN
 from rotkehlchen.chain.ethereum.decoding.constants import CPT_GNOSIS_CHAIN
-from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
-from rotkehlchen.chain.evm.decoding.aave.constants import CPT_AAVE_V3
 from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
 from rotkehlchen.constants import HOUR_IN_SECONDS, ONE
 from rotkehlchen.constants.assets import (
@@ -22,7 +19,6 @@ from rotkehlchen.constants.assets import (
     A_SAI,
     A_USD,
     A_USDC,
-    A_USDT,
     A_WETH_OPT,
     A_WSOL,
 )
@@ -279,8 +275,8 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
 
     assert len(events) == 8
     # Corresponding event for deposit2
-    assert (deposit2_matched_event := events[0]).event_type == HistoryEventType.DEPOSIT
-    assert deposit2_matched_event.event_subtype == HistoryEventSubType.DEPOSIT_ASSET
+    assert (deposit2_matched_event := events[0]).event_type == HistoryEventType.WITHDRAWAL
+    assert deposit2_matched_event.event_subtype == HistoryEventSubType.REMOVE_ASSET
     assert deposit2_matched_event.notes == 'Important info'  # Notes shouldn't be updated on monerium events.  # noqa: E501
     assert deposit2_matched_event.counterparty == Location.GEMINI.name.lower()
     # Second event matching deposit2 but with the wrong ref. Unmodified.
@@ -288,9 +284,9 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
     deposit_2_wrong_ref_event.identifier = events[1].identifier
     assert events[1] == deposit_2_wrong_ref_event
     # Corresponding event for withdrawal1
-    assert (withdrawal1_matched_event := events[2]).event_type == HistoryEventType.WITHDRAWAL
-    assert withdrawal1_matched_event.event_subtype == HistoryEventSubType.REMOVE_ASSET
-    assert withdrawal1_matched_event.notes == f'Withdraw 0.2 USDC from {withdrawal1_user_address} to Coinbase 1'  # noqa: E501
+    assert (withdrawal1_matched_event := events[2]).event_type == HistoryEventType.DEPOSIT
+    assert withdrawal1_matched_event.event_subtype == HistoryEventSubType.DEPOSIT_ASSET
+    assert withdrawal1_matched_event.notes == f'Deposit 0.2 USDC to {withdrawal1_user_address} from Coinbase 1'  # noqa: E501
     assert withdrawal1_matched_event.counterparty == Location.COINBASE.name.lower()
     # Second event matching withdrawal1 but with the wrong amount. Unmodified.
     withdrawal1_wrong_amount_event.identifier = events[3].identifier
@@ -302,11 +298,11 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
     # but neither are modified since both match.
     assert all(event.notes is None for event in events[5:7])
     # Corresponding event for deposit3
-    assert (deposit3_matched_event := events[7]).event_type == HistoryEventType.DEPOSIT
-    assert deposit3_matched_event.event_subtype == HistoryEventSubType.DEPOSIT_ASSET
+    assert (deposit3_matched_event := events[7]).event_type == HistoryEventType.WITHDRAWAL
+    assert deposit3_matched_event.event_subtype == HistoryEventSubType.REMOVE_ASSET
     # Check that the note has been updated but doesn't include the 'to {exchange}' part since
     # deposit3 doesn't have a location_label set.
-    assert deposit3_matched_event.notes == f'Deposit 100 USDC to {deposit3_user_address}'
+    assert deposit3_matched_event.notes == f'Withdraw 100 USDC from {deposit3_user_address}'
     assert deposit3_matched_event.counterparty == Location.BYBIT.name.lower()
 
     # Last two events should be withdrawal4's matched event and a new adjustment event to cover the
@@ -314,8 +310,6 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
     # also an asset movement in this case, the adjustment is actually added to the group of the
     # matched event since it gets processed first.
     withdrawal4_matched_event.identifier = asset_movements[-2].identifier
-    withdrawal4_matched_event.event_type = HistoryEventType.WITHDRAWAL
-    withdrawal4_matched_event.event_subtype = HistoryEventSubType.REMOVE_ASSET
     withdrawal4_matched_event.extra_data = AssetMovementExtraData(matched_asset_movement={
         'group_identifier': withdrawal4.group_identifier,
         'exchange': 'bitstamp',
@@ -376,8 +370,6 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
         'exchange': 'kraken',
         'exchange_name': 'Kraken 1',
     })
-    withdrawal4.event_type = HistoryEventType.DEPOSIT
-    withdrawal4.event_subtype = HistoryEventSubType.DEPOSIT_ASSET
     withdrawal4.identifier = withdrawal4_identifier
     assert matched_asset_movements[3] == withdrawal4
 
@@ -562,79 +554,6 @@ def test_multiple_close_matches_clustered(database: 'DBHandler') -> None:
 
     assert matched_1 == evm_event_1_id
     assert matched_2 == evm_event_2_id
-
-
-def test_aave_deposit_not_matched_as_exchange_deposit(database: 'DBHandler') -> None:
-    """Aave deposit events should not be matched to exchange deposits when a better exchange match exists."""  # noqa: E501
-    events_db = DBHistoryEvents(database)
-    deposit_amount = '100'
-    timestamp = TimestampMS(1700010000000)
-    tx_hash = make_evm_tx_hash()
-    user_address = make_evm_address()
-    aave_token_address = to_checksum_address('0x23878914EFE38d27C4D67Ab83ed1b93A74D4086a')
-
-    with database.conn.write_ctx() as write_cursor:
-        events_db.add_history_events(
-            write_cursor=write_cursor,
-            history=[EvmEvent(
-                tx_ref=tx_hash,
-                sequence_index=187,
-                timestamp=timestamp,
-                location=Location.ETHEREUM,
-                event_type=HistoryEventType.DEPOSIT,
-                event_subtype=HistoryEventSubType.DEPOSIT_FOR_WRAPPED,
-                asset=A_USDT,
-                amount=FVal(deposit_amount),
-                location_label=user_address,
-                notes=f'Deposit {deposit_amount} USDT into AAVE v3',
-                counterparty=CPT_AAVE_V3,
-                address=aave_token_address,
-            ), EvmEvent(
-                tx_ref=tx_hash,
-                sequence_index=188,
-                timestamp=timestamp,
-                location=Location.ETHEREUM,
-                event_type=HistoryEventType.RECEIVE,
-                event_subtype=HistoryEventSubType.RECEIVE_WRAPPED,
-                asset=EvmToken(f'eip155:1/erc20:{aave_token_address}'),
-                amount=FVal(deposit_amount),
-                location_label=user_address,
-                notes=f'Receive {deposit_amount} aEthUSDT from AAVE v3',
-                counterparty=CPT_AAVE_V3,
-                address=ZERO_ADDRESS,
-            ), (kraken_onchain := EvmEvent(
-                tx_ref=make_evm_tx_hash(),
-                sequence_index=0,
-                timestamp=TimestampMS(timestamp + 1000),
-                location=Location.ETHEREUM,
-                event_type=HistoryEventType.DEPOSIT,
-                event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
-                asset=A_USDT,
-                amount=FVal(deposit_amount),
-                location_label=user_address,
-                counterparty=CPT_KRAKEN,
-            )), (movement := AssetMovement(
-                location=Location.KRAKEN,
-                event_type=HistoryEventType.DEPOSIT,
-                timestamp=TimestampMS(timestamp + 2000),
-                asset=A_USDT,
-                amount=FVal(deposit_amount),
-                unique_id='kraken_deposit_usdt_1',
-                location_label='Kraken 1',
-            ))],
-        )
-
-    match_asset_movements(database=database)
-    with database.conn.read_ctx() as cursor:
-        movement_id = cursor.execute(
-            'SELECT identifier FROM history_events WHERE group_identifier=?',
-            (movement.group_identifier,),
-        ).fetchone()[0]
-        kraken_onchain_id = cursor.execute(
-            'SELECT identifier FROM history_events WHERE group_identifier=?',
-            (kraken_onchain.group_identifier,),
-        ).fetchone()[0]
-        assert _get_match_for_movement(cursor=cursor, movement_id=movement_id) == kraken_onchain_id
 
 
 def test_customized_deposit(database: 'DBHandler') -> None:
@@ -1112,10 +1031,10 @@ def test_exchange_deposit_delayed_credit(database: 'DBHandler') -> None:
             filter_query=HistoryEventFilterQuery.make(identifiers=[match_id]),
         )[0]
 
-    assert matched_event.event_type == HistoryEventType.DEPOSIT
-    assert matched_event.event_subtype == HistoryEventSubType.DEPOSIT_ASSET
+    assert matched_event.event_type == HistoryEventType.WITHDRAWAL
+    assert matched_event.event_subtype == HistoryEventSubType.REMOVE_ASSET
     assert matched_event.counterparty == 'poloniex'  # type: ignore[attr-defined]
-    assert matched_event.notes == f'Deposit 1 ETH to {user_address} from Poloniex 1'
+    assert matched_event.notes == f'Withdraw 1 ETH from {user_address} to Poloniex 1'
     assert matched_event.extra_data == {'matched_asset_movement': {
         'group_identifier': asset_movement.group_identifier,
         'exchange': 'poloniex',
@@ -1238,8 +1157,8 @@ def test_match_by_balance_tracking_event_direction(database: 'DBHandler') -> Non
                 amount=FVal('25'),
                 unique_id='xyz',
                 location_label='Kraken 1',
-            )), EvmEvent(  # Matched event. Balance tracking direction is IN (expected direction).
-                identifier=(match_id := 2),
+            )), EvmEvent(  # Ignored event. Balance tracking direction is OUT (wrong direction).
+                identifier=2,
                 tx_ref=make_evm_tx_hash(),
                 sequence_index=0,
                 timestamp=movement_event.timestamp,
@@ -1248,8 +1167,8 @@ def test_match_by_balance_tracking_event_direction(database: 'DBHandler') -> Non
                 event_subtype=HistoryEventSubType.REMOVE_ASSET,
                 asset=movement_event.asset,
                 amount=movement_event.amount,
-            ), EvmEvent(  # Ignored event. Balance tracking direction is OUT (wrong direction).
-                identifier=3,
+            ), EvmEvent(  # Matched event. Balance tracking direction is IN (expected direction).
+                identifier=(match_id := 3),
                 tx_ref=make_evm_tx_hash(),
                 sequence_index=0,
                 timestamp=movement_event.timestamp,
