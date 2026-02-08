@@ -483,11 +483,12 @@ def test_resolve_accounting_treatment_prefers_event_specific_rule(database: DBHa
     )
 
     with database.conn.read_ctx() as cursor:
-        cache_identifier, accounting_treatment = _resolve_accounting_treatment(
+        cache_identifier, accounting_outcome, accounting_treatment = _resolve_accounting_treatment(
             cursor=cursor,
             event=stored_event,
         )
 
+    assert accounting_outcome is EventAccountingRuleStatus.HAS_RULE
     assert cache_identifier == stored_event.get_accounting_rule_key()
     assert accounting_treatment is None
 
@@ -536,11 +537,12 @@ def test_resolve_accounting_treatment_prefers_counterparty_specific(database: DB
     )
 
     with database.conn.read_ctx() as cursor:
-        cache_identifier, accounting_treatment = _resolve_accounting_treatment(
+        cache_identifier, accounting_outcome, accounting_treatment = _resolve_accounting_treatment(
             cursor=cursor,
             event=stored_event,
         )
 
+    assert accounting_outcome is EventAccountingRuleStatus.HAS_RULE
     assert cache_identifier == stored_event.get_type_identifier()
     assert accounting_treatment == TxAccountingTreatment.SWAP
 
