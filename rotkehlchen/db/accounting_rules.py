@@ -527,41 +527,11 @@ def _events_to_consume(
     if counterparty == CPT_GAS:  # avoid checking the case of gas in evm events
         return ids_processed
 
-    # query for accounting rule. First check event-specific, then type-based rules
-    event_type = event.event_type.serialize()
-    event_subtype = event.event_subtype.serialize()
-    cache_identifier = event.get_type_identifier()  # default to type-based identifier
-    if (raw_treatment := cursor.execute(  # try event-specific rule first
-        'SELECT accounting_treatment FROM accounting_rules '
-        'JOIN accounting_rule_events ON accounting_rules.identifier = rule_id '
-        'WHERE event_id=?',
-        (event.identifier,),
-    ).fetchone()) is not None:
-        cache_identifier = event.get_accounting_rule_key()
-    else:  # if no event-specific rule found, try type-based rules
-        queries = [(  # 2. Type-based rule with counterparty
-            (
-                'SELECT accounting_treatment FROM accounting_rules '
-                'WHERE type=? AND subtype=? AND counterparty=? AND is_event_specific=0'
-            ),
-            (event_type, event_subtype, NO_ACCOUNTING_COUNTERPARTY if counterparty is None else counterparty),  # noqa: E501
-        )]
-
-        if counterparty is not None:
-            queries.append((  # 3. Type-based rule without counterparty
-                (
-                    'SELECT accounting_treatment FROM accounting_rules '
-                    'WHERE type=? AND subtype=? AND counterparty=? AND is_event_specific=0'
-                ),
-                (event_type, event_subtype, NO_ACCOUNTING_COUNTERPARTY),
-            ))
-
-        for query, params in queries:
-            if (raw_treatment := cursor.execute(query, params).fetchone()) is not None:
-                break
-
-    if raw_treatment is not None and raw_treatment[0] is not None:
-        accounting_treatment = TxAccountingTreatment.deserialize_from_db(raw_treatment[0])
+    cache_identifier, accounting_treatment = _resolve_accounting_treatment(
+        cursor=cursor,
+        event=event,
+    )
+    if accounting_treatment is not None:
         if accounting_treatment == TxAccountingTreatment.SWAP:
             _, peeked_event = events_iterator.peek((None, None))
             if peeked_event is None or peeked_event.group_identifier != event.group_identifier:
@@ -609,6 +579,58 @@ def _events_to_consume(
         ids_processed.append((next_event.identifier, cache_identifier))  # type: ignore
 
     return ids_processed
+
+
+def _resolve_accounting_treatment(
+        cursor: 'DBCursor',
+        event: HistoryBaseEntry,
+) -> tuple[int, TxAccountingTreatment | None]:
+    """Resolve accounting treatment for an event and return its cache identifier.
+
+    Rule precedence is:
+    1. Event-specific rule
+    2. Type/subtype with exact counterparty
+    3. Type/subtype with no counterparty
+    """
+    counterparty = getattr(event, 'counterparty', None)
+    event_type = event.event_type.serialize()
+    event_subtype = event.event_subtype.serialize()
+    cache_identifier = event.get_type_identifier()
+
+    # 1. Event-specific rule
+    raw_treatment = cursor.execute(
+        'SELECT accounting_treatment FROM accounting_rules '
+        'JOIN accounting_rule_events ON accounting_rules.identifier = rule_id '
+        'WHERE event_id=?',
+        (event.identifier,),
+    ).fetchone()
+    if raw_treatment is not None:
+        cache_identifier = event.get_accounting_rule_key()
+    else:
+        # 2. Type-based rule with counterparty
+        query_params: list[tuple[str, str, Any]] = []
+        if counterparty is None:
+            query_params.append((event_type, event_subtype, NO_ACCOUNTING_COUNTERPARTY))
+        else:
+            query_params.extend([
+                (event_type, event_subtype, counterparty),
+                # 3. Type-based rule without counterparty
+                (event_type, event_subtype, NO_ACCOUNTING_COUNTERPARTY),
+            ])
+
+        for params in query_params:
+            raw_treatment = cursor.execute(
+                'SELECT accounting_treatment FROM accounting_rules '
+                'WHERE type=? AND subtype=? AND counterparty=? AND is_event_specific=0',
+                params,
+            ).fetchone()
+            if raw_treatment is not None:
+                break
+
+    if raw_treatment is None or raw_treatment[0] is None:
+        return cache_identifier, None
+
+    return cache_identifier, TxAccountingTreatment.deserialize_from_db(raw_treatment[0])
 
 
 def query_missing_accounting_rules(
