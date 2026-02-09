@@ -337,6 +337,9 @@ class EvmTokens(ABC):  # noqa: B024
         May raise:
         - RemoteError if there is a problem with a query to an external service such as Etherscan.
         """
+        if len(tokens_to_check) == 0:
+            return detected_tokens
+
         historical_balance_manager = HistoricalBalancesManager(self.db)
         erc721_contract = EvmContract(
             address=ZERO_ADDRESS,
