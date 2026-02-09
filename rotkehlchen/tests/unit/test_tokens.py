@@ -18,7 +18,7 @@ from rotkehlchen.constants.assets import A_CRV, A_DAI, A_ETH, A_OMG, A_WETH
 from rotkehlchen.constants.resolver import evm_address_to_identifier
 from rotkehlchen.db.constants import EVM_ACCOUNTS_DETAILS_TOKENS
 from rotkehlchen.db.history_events import DBHistoryEvents
-from rotkehlchen.errors.misc import InputError
+from rotkehlchen.errors.misc import InputError, RequestTooLargeError
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.history.events.structures.base import HistoryEvent
@@ -218,6 +218,56 @@ def test_generate_chunks():
         ],
     ]
     assert generated_chunks == expected_chunks
+
+
+def test_get_token_balances_propagates_request_too_large(tokens: EthereumTokens) -> None:
+    detection_data = EvmTokenDetectionData(
+        identifier='eip155:1/erc20:0x0000000000000000000000000000000000000001',
+        address=string_to_evm_address('0x0000000000000000000000000000000000000001'),
+        decimals=18,
+    )
+    with patch(
+        'rotkehlchen.chain.evm.contracts.EvmContract.call',
+        side_effect=RequestTooLargeError('out of gas'),
+    ), pytest.raises(RequestTooLargeError):
+        tokens.get_token_balances(
+            address=make_evm_address(),
+            tokens=[detection_data],
+            call_order=[],
+        )
+
+
+def test_query_chunks_retries_with_smaller_chunks(tokens: EthereumTokens) -> None:
+    token_data = [
+        EvmTokenDetectionData(
+            identifier=f'eip155:1/erc20:0x{i:040x}',
+            address=string_to_evm_address(f'0x{i:040x}'),
+            decimals=18,
+        ) for i in range(1, 6)
+    ]
+    queried_chunk_sizes: list[int] = []
+
+    def mocked_get_token_balances(
+            address: ChecksumEvmAddress,
+            tokens: list[EvmTokenDetectionData],
+            call_order: list[Any],
+    ) -> dict[Asset, FVal]:
+        queried_chunk_sizes.append(len(tokens))
+        if len(tokens) > 2:
+            raise RequestTooLargeError('chunk too big')
+
+        return {}
+
+    with patch.object(tokens, 'get_token_balances', side_effect=mocked_get_token_balances):
+        result = tokens._query_chunks(
+            address=make_evm_address(),
+            tokens=token_data,
+            chunk_size=4,
+            call_order=[],
+        )
+
+    assert result == {}
+    assert queried_chunk_sizes == [4, 2, 2, 1]
 
 
 def test_last_queried_ts(tokens, freezer):
