@@ -15,7 +15,7 @@ from rotkehlchen.chain.evm.types import WeightedNode, asset_id_is_evm_token
 from rotkehlchen.chain.structures import EvmTokenDetectionData
 from rotkehlchen.constants import ONE, ZERO
 from rotkehlchen.constants.resolver import tokenid_to_collectible_id
-from rotkehlchen.errors.misc import NotFoundError, RemoteError
+from rotkehlchen.errors.misc import NotFoundError, RemoteError, RequestTooLargeError
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.handler import GlobalDBHandler
@@ -186,6 +186,9 @@ class EvmTokens(ABC):  # noqa: B024
                 arguments=[address, [x.address for x in tokens]],
                 call_order=call_order,
             )
+        except RequestTooLargeError:
+            # Let callers reduce chunk size and retry.
+            raise
         except RemoteError as e:
             log.error(
                 f'{self.evm_inquirer.chain_name} tokensBalance call failed for address {address}.'
@@ -272,13 +275,35 @@ class EvmTokens(ABC):  # noqa: B024
         Uses Asset objects directly instead of EvmToken to minimize database queries.
         """
         total_token_balances: dict[Asset, FVal] = defaultdict(FVal)
-        chunks = get_chunks(tokens, n=chunk_size)
-        for chunk in chunks:
-            new_token_balances = self.get_token_balances(
-                address=address,
-                tokens=chunk,
-                call_order=call_order,
-            )
+        chunks_to_process = list(get_chunks(tokens, n=chunk_size))
+        while len(chunks_to_process) > 0:
+            chunk = chunks_to_process.pop(0)
+            try:
+                new_token_balances = self.get_token_balances(
+                    address=address,
+                    tokens=chunk,
+                    call_order=call_order,
+                )
+            except RequestTooLargeError:
+                if len(chunk) == 1:
+                    log.error(
+                        f'{self.evm_inquirer.chain_name} tokensBalance call failed '
+                        f'for address {address}. Could not query a single token '
+                        f'{chunk[0].address} due to request size limits.',
+                    )
+                    continue
+
+                smaller_chunk_size = max(1, len(chunk) // 2)
+                log.warning(
+                    f'{self.evm_inquirer.chain_name} tokensBalance chunk too large '
+                    f'for address {address}. Retrying by splitting {len(chunk)} '
+                    f'tokens into chunks of {smaller_chunk_size}.',
+                )
+                chunks_to_process = (
+                    list(get_chunks(chunk, n=smaller_chunk_size)) + chunks_to_process
+                )
+                continue
+
             total_token_balances = combine_dicts(total_token_balances, new_token_balances)
         return total_token_balances
 
@@ -337,6 +362,9 @@ class EvmTokens(ABC):  # noqa: B024
         May raise:
         - RemoteError if there is a problem with a query to an external service such as Etherscan.
         """
+        if len(tokens_to_check) == 0:
+            return detected_tokens
+
         historical_balance_manager = HistoricalBalancesManager(self.db)
         erc721_contract = EvmContract(
             address=ZERO_ADDRESS,
