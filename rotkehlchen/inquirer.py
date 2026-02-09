@@ -15,6 +15,9 @@ from typing import (
     overload,
 )
 
+from eth_abi import decode as decode_abi
+from eth_utils import function_signature_to_4byte_selector
+
 from rotkehlchen.assets.asset import Asset, AssetWithOracles, EvmToken, FiatAsset, UnderlyingToken
 from rotkehlchen.assets.utils import (
     TokenEncounterInfo,
@@ -1022,33 +1025,30 @@ class Inquirer:
                 return None
             prices.append(price)
 
-        # Query total supply of the LP token
-        contract = EvmContract(
-            address=lp_token.evm_address,
-            abi=evm_manager.node_inquirer.contracts.abi('ERC20_TOKEN'),
-            deployed_block=0,
-        )
-        total_supply = contract.call(
-            node_inquirer=evm_manager.node_inquirer,
-            method_name='totalSupply',
-        )
-        if total_supply == 0:  # pool is empty
-            return ZERO_PRICE  # avoid division by zero below and skip unneeded network calls.
-
-        # Query balances for each token in the pool
-        contract = EvmContract(
+        # Query total supply of the LP token and balances for each token in the pool
+        pool_contract = EvmContract(
             address=pool_address,
             abi=evm_manager.node_inquirer.contracts.abi('CURVE_POOL'),
             deployed_block=0,
         )
-        calls = [
-            (pool_address, contract.encode(method_name='balances', arguments=[i]))
-            for i in range(len(tokens))
-        ]
-        output = evm_manager.node_inquirer.multicall_2(
+        if len(output := list(evm_manager.node_inquirer.multicall_2(
             require_success=False,
-            calls=calls,
-        )
+            calls=[
+                (
+                    lp_token.evm_address,
+                    '0x' + function_signature_to_4byte_selector('totalSupply()').hex(),
+                ),
+                *[
+                    (pool_address, pool_contract.encode(method_name='balances', arguments=[i]))
+                    for i in range(len(tokens))
+                ],
+            ],
+        ))) == 0:
+            log.debug(
+                'Failed to query contract methods while finding curve pool price '
+                'due to empty result from onchain.',
+            )
+            return None
 
         # Check that the output has the correct structure
         if not all(len(call_result) == 2 for call_result in output):
@@ -1061,10 +1061,22 @@ class Inquirer:
         if not all(contract_output[0] for contract_output in output):
             log.debug(f'Failed to query contract methods while finding curve price. {output}')
             return None
-        # Deserialize information obtained in the multicall execution
+
+        # Decode the total supply
+        if not _check_curve_contract_call(raw_total_supply := decode_abi(
+            types=['uint256'],
+            data=output.pop(0)[1],  # output len() will be > 0 since its checked above.
+        )):
+            log.debug(f'Failed to decode total supply while finding curve pool price. {output}')
+            return None
+
+        if (total_supply := raw_total_supply[0]) == 0:
+            return ZERO_PRICE  # avoid division by zero below
+
+        # Decode the token amounts
         data = []
         for i, token in enumerate(tokens):
-            amount_decoded = contract.decode(output[i][1], 'balances', arguments=[i])
+            amount_decoded = pool_contract.decode(output[i][1], 'balances', arguments=[i])
             if not _check_curve_contract_call(amount_decoded):
                 log.debug(f'Failed to decode balances {i} while finding curve price. {output}')
                 return None
