@@ -182,6 +182,8 @@ TABLES_AT_INIT = [
     'solana_ata_address_mappings',
     'history_event_links',
     'history_event_link_ignores',
+    'history_events_backup',
+    'chain_events_info_backup',
 ]
 
 

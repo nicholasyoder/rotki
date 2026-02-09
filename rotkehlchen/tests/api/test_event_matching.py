@@ -7,7 +7,11 @@ import requests
 from rotkehlchen.api.v1.types import TaskName
 from rotkehlchen.constants import HOUR_IN_SECONDS
 from rotkehlchen.constants.assets import A_BTC, A_ETH, A_WETH
-from rotkehlchen.db.constants import HistoryEventLinkType
+from rotkehlchen.db.constants import (
+    HISTORY_MAPPING_KEY_STATE,
+    HistoryEventLinkType,
+    HistoryMappingState,
+)
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.fval import FVal
@@ -175,7 +179,7 @@ def test_unlink_matched_asset_movements(rotkehlchen_api_server: 'APIServer') -> 
     with rotki.data.db.conn.write_ctx() as write_cursor:
         dbevents.add_history_events(
             write_cursor=write_cursor,
-            history=[(movement1 := AssetMovement(
+            history=(original_events := [(movement1 := AssetMovement(
                 identifier=1,
                 location=Location.KRAKEN,
                 event_type=HistoryEventType.WITHDRAWAL,
@@ -189,7 +193,7 @@ def test_unlink_matched_asset_movements(rotkehlchen_api_server: 'APIServer') -> 
                 event_type=HistoryEventType.DEPOSIT,
                 timestamp=movement1.timestamp,
                 asset=movement1.asset,
-                amount=movement1.amount,
+                amount=movement1.amount + FVal('0.0001'),  # different amount - will make an adjustment event.  # noqa: E501
                 unique_id='2',
             )), (movement3 := AssetMovement(
                 identifier=3,
@@ -199,14 +203,14 @@ def test_unlink_matched_asset_movements(rotkehlchen_api_server: 'APIServer') -> 
                 asset=A_ETH,
                 amount=FVal('0.5'),
                 unique_id='3',
-            )), (movement3_match := HistoryEvent(
+            )), (movement3_match := EvmEvent(
                 identifier=4,
-                group_identifier='xyz',
+                tx_ref=make_evm_tx_hash(),
                 sequence_index=0,
                 timestamp=movement3.timestamp,
                 event_type=HistoryEventType.RECEIVE,
                 event_subtype=HistoryEventSubType.NONE,
-                location=Location.EXTERNAL,
+                location=Location.ETHEREUM,
                 asset=movement3.asset,
                 amount=movement3.amount,
             )), (movement4 := AssetMovement(
@@ -217,10 +221,31 @@ def test_unlink_matched_asset_movements(rotkehlchen_api_server: 'APIServer') -> 
                 asset=A_ETH,
                 amount=FVal('0.1'),
                 unique_id='4',
-            ))],
+            ))]),
         )
 
     match_asset_movements(database=rotki.data.db)
+
+    with rotki.data.db.conn.read_ctx() as cursor:
+        # Check that we have backups of the three matched events (movement3_match,
+        # and both movement1 and movement2 since they are the matches for eachother).
+        assert cursor.execute('SELECT group_identifier FROM history_events_backup').fetchall() == [
+            (movement2.group_identifier,),
+            (movement3_match.group_identifier,),
+            (movement1.group_identifier,),
+        ]
+        # Check that we have an exchange adjustment event.
+        assert len(dbevents.get_history_events_internal(
+            cursor=cursor,
+            filter_query=HistoryEventFilterQuery.make(
+                event_types=[HistoryEventType.EXCHANGE_ADJUSTMENT],
+            ),
+        )) == 1
+        # Check that the auto-matched mapping states have been set.
+        assert cursor.execute(
+            'SELECT COUNT(*) FROM history_events_mappings WHERE name=? AND value=?',
+            (HISTORY_MAPPING_KEY_STATE, HistoryMappingState.AUTO_MATCHED.serialize_for_db()),
+        ).fetchone()[0] == 4  # 3 matched events + 1 adjustment event
 
     for method, key, value, expected_links, expected_ignored in [
         (  # First mark movement4 as having no match.
@@ -255,6 +280,23 @@ def test_unlink_matched_asset_movements(rotkehlchen_api_server: 'APIServer') -> 
                 'SELECT event_id FROM history_event_link_ignores WHERE link_type=?',
                 (HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),),
             ).fetchall()) == {(identifier,) for identifier in expected_ignored}
+
+    with rotki.data.db.conn.read_ctx() as cursor:
+        # Check that all modified events have been restored to their original state and the
+        # adjustment event has been removed.
+        assert dbevents.get_history_events_internal(
+            cursor=cursor,
+            filter_query=HistoryEventFilterQuery.make(
+                order_by_rules=[('history_events_identifier', True)],
+            ),
+        ) == original_events
+        # Check that no events remain in the backup table
+        assert cursor.execute('SELECT COUNT(*) FROM history_events_backup').fetchone()[0] == 0
+        # Check that the auto-matched mapping states have been removed.
+        assert cursor.execute(
+            'SELECT COUNT(*) FROM history_events_mappings WHERE name=? AND value=?',
+            (HISTORY_MAPPING_KEY_STATE, HistoryMappingState.AUTO_MATCHED.serialize_for_db()),
+        ).fetchone()[0] == 0
 
 
 def test_get_unmatched_asset_movements(rotkehlchen_api_server: 'APIServer') -> None:

@@ -546,7 +546,6 @@ CREATE TABLE IF NOT EXISTS history_events (
 );
 """
 
-
 # Table that extends history_events table and stores chain-agnostic transaction metadata.
 DB_CREATE_CHAIN_EVENTS_INFO = """
 CREATE TABLE IF NOT EXISTS chain_events_info (
@@ -582,6 +581,12 @@ CREATE TABLE IF NOT EXISTS history_events_mappings (
 );
 """  # noqa: E501
 
+# Duplicate tables for storing backup copies of history events before editing them so they can be
+# restored to their original state later. Used in asset movement matching.
+DB_CREATE_HISTORY_EVENTS_BACKUP = DB_CREATE_HISTORY_EVENTS.replace('history_events', 'history_events_backup')  # noqa: E501
+DB_CREATE_CHAIN_EVENTS_INFO_BACKUP = DB_CREATE_CHAIN_EVENTS_INFO.replace(
+    'chain_events_info', 'chain_events_info_backup',
+).replace('history_events', 'history_events_backup')
 
 # usd_price is a column of the table because we sort by price in the fiat currency and that price
 # needs to be calculated from last_price and the price of last_price_asset. If we don't sort using
@@ -995,6 +1000,8 @@ BEGIN TRANSACTION;
 {DB_CREATE_CHAIN_EVENTS_INFO}
 {DB_CREATE_ETH_STAKING_EVENTS_INFO}
 {DB_CREATE_HISTORY_EVENTS_MAPPINGS}
+{DB_CREATE_HISTORY_EVENTS_BACKUP}
+{DB_CREATE_CHAIN_EVENTS_INFO_BACKUP}
 {DB_CREATE_IGNORED_ACTIONS}
 {DB_CREATE_NFTS}
 {DB_CREATE_ENS_MAPPINGS}
