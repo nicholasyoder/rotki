@@ -10,9 +10,14 @@ from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HistoryMappingSt
 from rotkehlchen.db.drivers.gevent import DBCursor
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.fval import FVal
+from rotkehlchen.history.events.structures.base import get_event_direction
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.evm_swap import EvmSwapEvent
-from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
+from rotkehlchen.history.events.structures.types import (
+    EventDirection,
+    HistoryEventSubType,
+    HistoryEventType,
+)
 from rotkehlchen.serialization.deserialize import deserialize_evm_address
 from rotkehlchen.tasks.events import find_customized_event_duplicate_groups
 from rotkehlchen.tests.utils.factories import make_evm_tx_hash
@@ -20,6 +25,41 @@ from rotkehlchen.types import Location, TimestampMS
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
+
+
+def test_direction_for_movement_matching_special_cases() -> None:
+    assert get_event_direction(
+        event_type=HistoryEventType.DEPOSIT,
+        event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+        for_balance_tracking=True,
+    ) == EventDirection.IN
+    assert get_event_direction(
+        event_type=HistoryEventType.WITHDRAWAL,
+        event_subtype=HistoryEventSubType.REMOVE_ASSET,
+        for_balance_tracking=True,
+    ) == EventDirection.OUT
+
+    assert get_event_direction(
+        event_type=HistoryEventType.DEPOSIT,
+        event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+        for_movement_matching=True,
+    ) == EventDirection.OUT
+    assert get_event_direction(
+        event_type=HistoryEventType.WITHDRAWAL,
+        event_subtype=HistoryEventSubType.REMOVE_ASSET,
+        for_movement_matching=True,
+    ) == EventDirection.IN
+
+    assert get_event_direction(
+        event_type=HistoryEventType.DEPOSIT,
+        event_subtype=HistoryEventSubType.DEPOSIT_TO_PROTOCOL,
+        for_movement_matching=True,
+    ) == EventDirection.OUT
+    assert get_event_direction(
+        event_type=HistoryEventType.WITHDRAWAL,
+        event_subtype=HistoryEventSubType.WITHDRAW_FROM_PROTOCOL,
+        for_movement_matching=True,
+    ) == EventDirection.IN
 
 
 def _insert_duplicate_group(

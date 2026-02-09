@@ -48,16 +48,23 @@ def get_event_direction(
         event_subtype: HistoryEventSubType,
         location: Location | None = None,
         for_balance_tracking: bool = False,
+        for_movement_matching: bool = False,
 ) -> EventDirection | None:
     """
     Get direction based on type, subtype.
 
     If the combination of type/subtype is invalid return `None`.
 
-    If for_balance_tracking is True, certain NEUTRAL events that affect
-    location-specific balances will return IN or OUT instead:
+    If for_balance_tracking or for_movement_matching is True, certain NEUTRAL events that
+    affect location-specific balances/matching return IN or OUT instead.
+
+    for_balance_tracking special cases:
     - DEPOSIT/DEPOSIT_ASSET -> IN
     - WITHDRAWAL/REMOVE_ASSET -> OUT
+
+    for_movement_matching uses the same special-casing except:
+    - DEPOSIT/DEPOSIT_ASSET -> OUT
+    - WITHDRAWAL/REMOVE_ASSET -> IN
     """
     if event_type == HistoryEventType.INFORMATIONAL:
         return EventDirection.NEUTRAL
@@ -76,11 +83,11 @@ def get_event_direction(
     else:
         direction = category_mapping[DEFAULT].direction
 
-    if for_balance_tracking and direction == EventDirection.NEUTRAL:
+    if (for_balance_tracking or for_movement_matching) and direction == EventDirection.NEUTRAL:
         if (event_type, event_subtype) == (HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_ASSET):  # noqa: E501
-            return EventDirection.IN
+            return EventDirection.OUT if for_movement_matching else EventDirection.IN
         if (event_type, event_subtype) == (HistoryEventType.WITHDRAWAL, HistoryEventSubType.REMOVE_ASSET):  # noqa: E501
-            return EventDirection.OUT
+            return EventDirection.IN if for_movement_matching else EventDirection.OUT
         if (event_type, event_subtype) == (HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_TO_PROTOCOL):  # noqa: E501
             return EventDirection.OUT
         if (event_type, event_subtype) == (HistoryEventType.WITHDRAWAL, HistoryEventSubType.WITHDRAW_FROM_PROTOCOL):  # noqa: E501
@@ -407,12 +414,17 @@ class HistoryBaseEntry(AccountingEventMixin, ABC, Generic[ExtraDataType]):
 
         return result
 
-    def maybe_get_direction(self, for_balance_tracking: bool = False) -> EventDirection | None:
+    def maybe_get_direction(
+            self,
+            for_balance_tracking: bool = False,
+            for_movement_matching: bool = False,
+    ) -> EventDirection | None:
         return get_event_direction(
             event_type=self.event_type,
             event_subtype=self.event_subtype,
             location=self.location,
             for_balance_tracking=for_balance_tracking,
+            for_movement_matching=for_movement_matching,
         )
 
     @classmethod

@@ -123,7 +123,7 @@ class CustomizedEventCandidate:
                 event_type=HistoryEventType.deserialize(self.event_type),
                 event_subtype=HistoryEventSubType.deserialize(self.event_subtype),
                 location=Location.deserialize_from_db(self.location),
-                for_balance_tracking=True,
+                for_movement_matching=True,
             )
         except DeserializationError:
             return None
