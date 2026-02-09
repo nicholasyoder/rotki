@@ -259,6 +259,7 @@ class EvmTransactions(ABC):  # noqa: B024
         """
         period_as_blocks = self.evm_inquirer.maybe_timestamp_to_block_range(period)
         queried_hashes: list[EVMTxHash] | None = [] if return_queried_hashes else None
+        queried_from_ts = Timestamp(period.from_value)
         for new_transactions in self.evm_inquirer.get_transactions(
                 account=address,
                 action='txlist',
@@ -289,12 +290,15 @@ class EvmTransactions(ABC):  # noqa: B024
 
                 if period.range_type == 'timestamps':
                     assert location_string, 'should always be given for timestamps'
+                    queried_to_ts = Timestamp(max(queried_from_ts, new_transactions[-1].timestamp))
+                    log.debug(f'{self.evm_inquirer.chain_name} transactions for {address} -> update range {queried_from_ts} - {queried_to_ts}')  # noqa: E501
                     if update_ranges:  # update last queried time for the address
                         self.dbranges.update_used_query_range(
                             write_cursor=write_cursor,
                             location_string=location_string,
-                            queried_ranges=[(period.from_value, new_transactions[-1].timestamp)],  # type: ignore
+                            queried_ranges=[(queried_from_ts, queried_to_ts)],
                         )
+                    queried_from_ts = queried_to_ts
 
             self.msg_aggregator.add_message(
                 message_type=WSMessageType.TRANSACTION_STATUS,
@@ -421,6 +425,7 @@ class EvmTransactions(ABC):  # noqa: B024
 
         parent_tx_timestamps: dict[EVMTxHash, Timestamp] = {}
         queried_hashes: list[EVMTxHash] | None = [] if return_queried_hashes else None
+        queried_from_ts = Timestamp(period_or_hash.from_value) if isinstance(period_or_hash, TimestampOrBlockRange) and period_or_hash.range_type == 'timestamps' else None  # noqa: E501
         for new_internal_txs in self.evm_inquirer.get_transactions(
                 account=address,
                 period_or_hash=query_period_or_hash,
@@ -474,13 +479,15 @@ class EvmTransactions(ABC):  # noqa: B024
 
                 if isinstance(period_or_hash, TimestampOrBlockRange) and period_or_hash.range_type == 'timestamps':  # noqa: E501
                     assert location_string, 'should always be given for timestamps'
-                    log.debug(f'Internal {self.evm_inquirer.chain_name} transactions for {address} -> update range {period_or_hash.from_value} - {timestamp}')  # noqa: E501
+                    assert queried_from_ts is not None, 'queried_from_ts should be set for timestamp ranges'  # noqa: E501
+                    queried_to_ts = Timestamp(max(queried_from_ts, timestamp))
+                    log.debug(f'Internal {self.evm_inquirer.chain_name} transactions for {address} -> update range {queried_from_ts} - {queried_to_ts}')  # noqa: E501
                     if update_ranges:  # update last queried time for address
                         with self.database.conn.write_ctx() as write_cursor:
                             self.dbranges.update_used_query_range(
                                 write_cursor=write_cursor,
                                 location_string=location_string,
-                                queried_ranges=[(period_or_hash.from_value, timestamp)],  # type: ignore
+                                queried_ranges=[(queried_from_ts, queried_to_ts)],
                             )
 
                     self.msg_aggregator.add_message(
@@ -493,6 +500,7 @@ class EvmTransactions(ABC):  # noqa: B024
                             'status': str(TransactionStatusStep.QUERYING_INTERNAL_TRANSACTIONS),
                         },
                     )
+                    queried_from_ts = queried_to_ts
         return queried_hashes
 
     def _get_internal_transactions_for_ranges(
@@ -655,6 +663,7 @@ class EvmTransactions(ABC):  # noqa: B024
 
         log.debug(f'Querying erc20 transfers of {address} from {period.from_value} to {period.to_value} in {self.evm_inquirer.chain_name}')  # noqa: E501
         queried_hashes: list[EVMTxHash] | None = [] if return_queried_hashes else None
+        queried_from_ts = Timestamp(period.from_value)
         for erc20_tx_hashes in self.evm_inquirer.get_token_transaction_hashes(
             account=address,
             from_block=from_block,
@@ -680,13 +689,14 @@ class EvmTransactions(ABC):  # noqa: B024
                     existing_hashes.add(tx.tx_hash)
 
                 if period.range_type == 'timestamps':
-                    log.debug(f'{self.evm_inquirer.chain_name} ERC20 Transfers for {address} -> update range {period.from_value} - {tx.timestamp}')  # noqa: E501
+                    queried_to_ts = Timestamp(max(queried_from_ts, tx.timestamp))
+                    log.debug(f'{self.evm_inquirer.chain_name} ERC20 Transfers for {address} -> update range {queried_from_ts} - {queried_to_ts}')  # noqa: E501
                     if update_ranges:  # update last queried time for the address
                         with self.database.user_write() as write_cursor:
                             self.dbranges.update_used_query_range(
                                 write_cursor=write_cursor,
                                 location_string=location_string,
-                                queried_ranges=[(Timestamp(period.from_value), tx.timestamp)],
+                                queried_ranges=[(queried_from_ts, queried_to_ts)],
                             )
 
                     self.msg_aggregator.add_message(
@@ -699,6 +709,7 @@ class EvmTransactions(ABC):  # noqa: B024
                             'status': str(TransactionStatusStep.QUERYING_EVM_TOKENS_TRANSACTIONS),
                         },
                     )
+                    queried_from_ts = queried_to_ts
         return queried_hashes
 
     def address_has_been_spammed(self, address: ChecksumEvmAddress) -> bool:
