@@ -29,6 +29,7 @@ from rotkehlchen.history.events.structures.eth2 import EthStakingEvent
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
+from rotkehlchen.utils.misc import get_chunks
 
 if TYPE_CHECKING:
     from rotkehlchen.accounting.accountant import Accountant
@@ -517,6 +518,8 @@ def _events_to_consume(
         next_events: Sequence[HistoryBaseEntry],
         event: HistoryBaseEntry,
         pot: 'AccountingPot',
+        event_specific_treatments: dict[int, str | None] | None = None,
+        generic_treatments: dict[tuple[str, str, str], str | None] | None = None,
 ) -> list[tuple[int, int]]:
     """
     Returns a list of event identifiers processed after checking possible accounting
@@ -527,41 +530,13 @@ def _events_to_consume(
     if counterparty == CPT_GAS:  # avoid checking the case of gas in evm events
         return ids_processed
 
-    # query for accounting rule. First check event-specific, then type-based rules
-    event_type = event.event_type.serialize()
-    event_subtype = event.event_subtype.serialize()
-    cache_identifier = event.get_type_identifier()  # default to type-based identifier
-    if (raw_treatment := cursor.execute(  # try event-specific rule first
-        'SELECT accounting_treatment FROM accounting_rules '
-        'JOIN accounting_rule_events ON accounting_rules.identifier = rule_id '
-        'WHERE event_id=?',
-        (event.identifier,),
-    ).fetchone()) is not None:
-        cache_identifier = event.get_accounting_rule_key()
-    else:  # if no event-specific rule found, try type-based rules
-        queries = [(  # 2. Type-based rule with counterparty
-            (
-                'SELECT accounting_treatment FROM accounting_rules '
-                'WHERE type=? AND subtype=? AND counterparty=? AND is_event_specific=0'
-            ),
-            (event_type, event_subtype, NO_ACCOUNTING_COUNTERPARTY if counterparty is None else counterparty),  # noqa: E501
-        )]
-
-        if counterparty is not None:
-            queries.append((  # 3. Type-based rule without counterparty
-                (
-                    'SELECT accounting_treatment FROM accounting_rules '
-                    'WHERE type=? AND subtype=? AND counterparty=? AND is_event_specific=0'
-                ),
-                (event_type, event_subtype, NO_ACCOUNTING_COUNTERPARTY),
-            ))
-
-        for query, params in queries:
-            if (raw_treatment := cursor.execute(query, params).fetchone()) is not None:
-                break
-
-    if raw_treatment is not None and raw_treatment[0] is not None:
-        accounting_treatment = TxAccountingTreatment.deserialize_from_db(raw_treatment[0])
+    cache_identifier, _, accounting_treatment = _resolve_accounting_treatment(
+        cursor=cursor,
+        event=event,
+        event_specific_treatments=event_specific_treatments,
+        generic_treatments=generic_treatments,
+    )
+    if accounting_treatment is not None:
         if accounting_treatment == TxAccountingTreatment.SWAP:
             _, peeked_event = events_iterator.peek((None, None))
             if peeked_event is None or peeked_event.group_identifier != event.group_identifier:
@@ -611,6 +586,131 @@ def _events_to_consume(
     return ids_processed
 
 
+def _resolve_accounting_treatment(
+        cursor: 'DBCursor',
+        event: HistoryBaseEntry,
+        event_specific_treatments: dict[int, str | None] | None = None,
+        generic_treatments: dict[tuple[str, str, str], str | None] | None = None,
+) -> tuple[int, EventAccountingRuleStatus, TxAccountingTreatment | None]:
+    """Resolve accounting treatment for an event and return its cache identifier.
+
+    Rule precedence is:
+    1. Event-specific rule
+    2. Type/subtype with exact counterparty
+    3. Type/subtype with no counterparty
+    """
+    counterparty = getattr(event, 'counterparty', None)
+    event_type = event.event_type.serialize()
+    event_subtype = event.event_subtype.serialize()
+    cache_identifier = event.get_type_identifier()
+    accounting_outcome = EventAccountingRuleStatus.NOT_PROCESSED
+    missing = object()  # Differentiate between key exists but value is None and missing
+
+    if event_specific_treatments is not None and generic_treatments is not None:
+        prefetched_treatment: object | str | None = missing
+        if event.identifier is not None and (
+                prefetched_treatment := event_specific_treatments.get(event.identifier, missing)
+        ) is not missing:
+            cache_identifier = event.get_accounting_rule_key()
+            accounting_outcome = EventAccountingRuleStatus.HAS_RULE
+        else:
+            if counterparty is not None:
+                counterparty_key = (event_type, event_subtype, counterparty)
+                prefetched_treatment = generic_treatments.get(counterparty_key, missing)
+                if prefetched_treatment is not missing:
+                    accounting_outcome = EventAccountingRuleStatus.HAS_RULE
+            if accounting_outcome is EventAccountingRuleStatus.NOT_PROCESSED:
+                no_counterparty_key = (
+                    event_type,
+                    event_subtype,
+                    NO_ACCOUNTING_COUNTERPARTY,
+                )
+                prefetched_treatment = generic_treatments.get(no_counterparty_key, missing)
+                if prefetched_treatment is not missing:
+                    accounting_outcome = EventAccountingRuleStatus.HAS_RULE
+
+        if prefetched_treatment is missing or prefetched_treatment is None:
+            return cache_identifier, accounting_outcome, None
+
+        assert isinstance(prefetched_treatment, str)
+        return (
+            cache_identifier,
+            accounting_outcome,
+            TxAccountingTreatment.deserialize_from_db(prefetched_treatment),
+        )
+
+    # 1. Event-specific rule
+    if (raw_treatment_row := cursor.execute(
+        'SELECT accounting_treatment FROM accounting_rules '
+        'JOIN accounting_rule_events ON accounting_rules.identifier = rule_id '
+        'WHERE event_id=?',
+        (event.identifier,),
+    ).fetchone()) is not None:
+        cache_identifier = event.get_accounting_rule_key()
+        accounting_outcome = EventAccountingRuleStatus.HAS_RULE
+    else:
+        # 2. Type-based rule with counterparty
+        query_params: list[tuple[str, str, Any]] = []
+        if counterparty is None:
+            query_params.append((event_type, event_subtype, NO_ACCOUNTING_COUNTERPARTY))
+        else:
+            query_params.extend([
+                (event_type, event_subtype, counterparty),
+                # 3. Type-based rule without counterparty
+                (event_type, event_subtype, NO_ACCOUNTING_COUNTERPARTY),
+            ])
+
+        for params in query_params:
+            if (raw_treatment_row := cursor.execute(
+                'SELECT accounting_treatment FROM accounting_rules '
+                'WHERE type=? AND subtype=? AND counterparty=? AND is_event_specific=0',
+                params,
+            ).fetchone()) is not None:
+                accounting_outcome = EventAccountingRuleStatus.HAS_RULE
+                break
+
+    if raw_treatment_row is None or raw_treatment_row[0] is None:
+        return cache_identifier, accounting_outcome, None
+
+    return (
+        cache_identifier,
+        accounting_outcome,
+        TxAccountingTreatment.deserialize_from_db(raw_treatment_row[0]),
+    )
+
+
+def _prefetch_accounting_treatments(
+        cursor: 'DBCursor',
+        related_events: Sequence[HistoryBaseEntry],
+) -> tuple[dict[int, str | None], dict[tuple[str, str, str], str | None]]:
+    """Prefetch event-specific and generic accounting treatments for rule resolution."""
+    event_specific_treatments: dict[int, str | None] = {}
+    generic_treatments: dict[tuple[str, str, str], str | None] = {}
+    event_ids = [event.identifier for event in related_events if event.identifier is not None]
+    for chunk, placeholders in get_query_chunks(event_ids):
+        event_specific_treatments.update(dict(cursor.execute(
+            'SELECT event_id, accounting_treatment FROM accounting_rule_events '
+            'JOIN accounting_rules ON accounting_rules.identifier = rule_id '
+            f'WHERE event_id IN ({placeholders})',
+            chunk,
+        )))
+
+    event_type_subtype_pairs = {
+        (event.event_type.serialize(), event.event_subtype.serialize()) for event in related_events
+    }
+    for pair_chunk in get_chunks(list(event_type_subtype_pairs), n=200):
+        placeholders = ', '.join(['(?, ?)'] * len(pair_chunk))
+        bindings = [item for pair in pair_chunk for item in pair]
+        for event_type, event_subtype, counterparty, accounting_treatment in cursor.execute(
+            'SELECT type, subtype, counterparty, accounting_treatment FROM accounting_rules '
+            f'WHERE is_event_specific=0 AND (type, subtype) IN ({placeholders})',
+            bindings,
+        ):
+            generic_treatments[event_type, event_subtype, counterparty] = accounting_treatment
+
+    return event_specific_treatments, generic_treatments
+
+
 def query_missing_accounting_rules(
         db: 'DBHandler',
         accountant: 'Accountant',
@@ -634,30 +734,20 @@ def query_missing_accounting_rules(
             ),
         )
 
-    query = """
-    SELECT COUNT(DISTINCT accounting_rules.identifier)
-    FROM accounting_rules
-    LEFT JOIN accounting_rule_events ON accounting_rules.identifier = accounting_rule_events.rule_id
-    WHERE event_id = ? OR (type = ? AND subtype = ? AND (counterparty = ? OR counterparty = ?) AND is_event_specific=0)
-    """  # noqa: E501
-    bindings = [
-        (
-            event.identifier,  # event-specific rule
-            event.event_type.serialize(),
-            event.event_subtype.serialize(),
-            NO_ACCOUNTING_COUNTERPARTY if (counterparty := getattr(event, 'counterparty', None)) is None else counterparty,  # noqa: E501
-            NO_ACCOUNTING_COUNTERPARTY,  # account for rules based only on type/subtype
-        ) for event in related_events
-    ]
-
     callbacks = evm_accounting_aggregator.get_accounting_callbacks()
-    bindings_and_events_iterator = peekable(zip(bindings, related_events, strict=True))
     with db.conn.read_ctx() as cursor:
+        event_specific_treatments, generic_treatments = _prefetch_accounting_treatments(
+            cursor=cursor,
+            related_events=related_events,
+        )
+        bindings_and_events_iterator = peekable(
+            zip([()] * len(related_events), related_events, strict=True),
+        )
         # index to keep the current event in the list of related events. It is used in the
         # callbacks since we need to process events but we don't want to consume the current
         # iterator
         current_event_index = 0
-        for event_binding, event in bindings_and_events_iterator:
+        for _, event in bindings_and_events_iterator:
             if accountant.processable_events_cache.get(event.identifier) is not None:  # type: ignore
                 current_event_index += 1
                 continue
@@ -674,10 +764,14 @@ def query_missing_accounting_rules(
                 continue
 
             # check the rule in the database
-            row = cursor.execute(query, event_binding).fetchone()
-            accounting_outcome = EventAccountingRuleStatus.NOT_PROCESSED if row[0] == 0 else EventAccountingRuleStatus.HAS_RULE  # noqa: E501
+            cache_identifier, accounting_outcome, _ = _resolve_accounting_treatment(
+                cursor=cursor,
+                event=event,
+                event_specific_treatments=event_specific_treatments,
+                generic_treatments=generic_treatments,
+            )
             accountant.processable_events_cache.add(event.identifier, accounting_outcome)  # type: ignore
-            accountant.processable_events_cache_signatures.get(event.get_type_identifier()).append(event.identifier)  # type: ignore
+            accountant.processable_events_cache_signatures.get(cache_identifier).append(event.identifier)  # type: ignore
             accountant.processable_events_cache_signatures.get(event.identifier).append(event.identifier)  # type: ignore
 
             # the current event in addition to have an accounting rule could have a callback that
@@ -689,6 +783,8 @@ def query_missing_accounting_rules(
                 next_events=related_events[current_event_index + 1:],
                 event=event,
                 pot=accounting_pot,
+                event_specific_treatments=event_specific_treatments,
+                generic_treatments=generic_treatments,
             )
             if len(new_missing_accounting_rule) != 0:
                 current_event_index += len(new_missing_accounting_rule)

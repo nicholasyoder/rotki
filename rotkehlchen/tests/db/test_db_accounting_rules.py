@@ -7,7 +7,11 @@ from rotkehlchen.chain.evm.accounting.structures import BaseEventSettings, TxAcc
 from rotkehlchen.chain.evm.decoding.cowswap.constants import CPT_COWSWAP
 from rotkehlchen.constants.assets import A_CUSDC, A_ETH, A_USDC
 from rotkehlchen.constants.misc import ONE
-from rotkehlchen.db.accounting_rules import DBAccountingRules, query_missing_accounting_rules
+from rotkehlchen.db.accounting_rules import (
+    DBAccountingRules,
+    _resolve_accounting_treatment,
+    query_missing_accounting_rules,
+)
 from rotkehlchen.db.constants import NO_ACCOUNTING_COUNTERPARTY
 from rotkehlchen.db.dbhandler import DBHandler
 from rotkehlchen.db.filtering import AccountingRulesFilterQuery
@@ -432,6 +436,115 @@ def test_correct_accounting_treatment_is_selected(
         events=events,
         accountant=accountant,
     ) == [EventAccountingRuleStatus.HAS_RULE, EventAccountingRuleStatus.PROCESSED]
+
+
+def test_resolve_accounting_treatment_prefers_event_specific_rule(database: DBHandler) -> None:
+    """Ensure event-specific rule takes precedence over generic one for treatment and cache key."""
+    db = DBAccountingRules(database)
+    tx_hash = make_evm_tx_hash()
+    event = EvmEvent(
+        tx_ref=tx_hash,
+        sequence_index=0,
+        timestamp=TimestampMS(16433333000),
+        location=Location.ETHEREUM,
+        asset=A_USDC,
+        amount=ONE,
+        event_type=HistoryEventType.TRADE,
+        event_subtype=HistoryEventSubType.SPEND,
+        counterparty=CPT_COWSWAP,
+        notes='my notes',
+    )
+    stored_event = store_and_retrieve_events([event], database)[0]
+
+    db.add_accounting_rule(
+        event_type=HistoryEventType.TRADE,
+        event_subtype=HistoryEventSubType.SPEND,
+        counterparty=CPT_COWSWAP,
+        rule=BaseEventSettings(
+            taxable=True,
+            count_entire_amount_spend=True,
+            count_cost_basis_pnl=True,
+            accounting_treatment=TxAccountingTreatment.SWAP,
+        ),
+        links={},
+    )
+    db.add_accounting_rule(
+        event_type=HistoryEventType.TRADE,
+        event_subtype=HistoryEventSubType.SPEND,
+        counterparty=CPT_COWSWAP,
+        rule=BaseEventSettings(
+            taxable=True,
+            count_entire_amount_spend=True,
+            count_cost_basis_pnl=True,
+            accounting_treatment=None,
+        ),
+        links={},
+        event_ids=[stored_event.identifier],  # type: ignore[list-item]  # identifier is set after DB storage
+    )
+
+    with database.conn.read_ctx() as cursor:
+        cache_identifier, accounting_outcome, accounting_treatment = _resolve_accounting_treatment(
+            cursor=cursor,
+            event=stored_event,
+        )
+
+    assert accounting_outcome is EventAccountingRuleStatus.HAS_RULE
+    assert cache_identifier == stored_event.get_accounting_rule_key()
+    assert accounting_treatment is None
+
+
+def test_resolve_accounting_treatment_prefers_counterparty_specific(database: DBHandler) -> None:
+    """Ensure counterparty-specific generic rule takes precedence over no-counterparty rule."""
+    db = DBAccountingRules(database)
+    tx_hash = make_evm_tx_hash()
+    event = EvmEvent(
+        tx_ref=tx_hash,
+        sequence_index=0,
+        timestamp=TimestampMS(16433333000),
+        location=Location.ETHEREUM,
+        asset=A_USDC,
+        amount=ONE,
+        event_type=HistoryEventType.DEPOSIT,
+        event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+        counterparty=CPT_COMPOUND,
+        notes='my notes',
+    )
+    stored_event = store_and_retrieve_events([event], database)[0]
+
+    db.add_accounting_rule(
+        event_type=HistoryEventType.DEPOSIT,
+        event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+        counterparty=NO_ACCOUNTING_COUNTERPARTY,
+        rule=BaseEventSettings(
+            taxable=True,
+            count_entire_amount_spend=True,
+            count_cost_basis_pnl=True,
+            accounting_treatment=None,
+        ),
+        links={},
+    )
+    db.add_accounting_rule(
+        event_type=HistoryEventType.DEPOSIT,
+        event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+        counterparty=CPT_COMPOUND,
+        rule=BaseEventSettings(
+            taxable=True,
+            count_entire_amount_spend=True,
+            count_cost_basis_pnl=True,
+            accounting_treatment=TxAccountingTreatment.SWAP,
+        ),
+        links={},
+    )
+
+    with database.conn.read_ctx() as cursor:
+        cache_identifier, accounting_outcome, accounting_treatment = _resolve_accounting_treatment(
+            cursor=cursor,
+            event=stored_event,
+        )
+
+    assert accounting_outcome is EventAccountingRuleStatus.HAS_RULE
+    assert cache_identifier == stored_event.get_type_identifier()
+    assert accounting_treatment == TxAccountingTreatment.SWAP
 
 
 def test_event_specific_rule_adds_to_existing_rule(database: DBHandler) -> None:
