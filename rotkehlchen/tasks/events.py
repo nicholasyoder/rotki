@@ -990,7 +990,14 @@ def _find_close_matches(
         tx_ref_matches: list[HistoryBaseEntry] = []
         counterparty_matches: list[HistoryBaseEntry] = []
         event_type_matches: list[HistoryBaseEntry] = []
-        tx_ref = asset_movement.extra_data.get('transaction_id') if asset_movement.extra_data is not None else None  # noqa: E501
+        tx_ref = None if asset_movement.extra_data is None else asset_movement.extra_data.get('transaction_id')  # noqa: E501
+        if tx_ref is not None and not tx_ref.startswith('0x'):
+            movement_address = (
+                None if asset_movement.extra_data is None else asset_movement.extra_data.get('address')  # noqa: E501
+            )
+            if movement_address is not None and movement_address.startswith('0x'):
+                tx_ref = f'0x{tx_ref}'
+
         for match in close_matches:
             # Maybe match by exact asset match (matched events can have any asset in the collection)  # noqa: E501
             if match.asset == asset_movement.asset:

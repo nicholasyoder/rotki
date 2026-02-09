@@ -1183,6 +1183,56 @@ def test_match_by_balance_tracking_event_direction(database: 'DBHandler') -> Non
     _match_and_check(database=database, expected_matches=[(movement_id, match_id)])
 
 
+def test_match_by_transaction_id_without_0x_prefix(database: 'DBHandler') -> None:
+    """Match by tx hash when movement transaction_id is missing the 0x prefix."""
+    tx_hash = make_evm_tx_hash()
+    tx_hash_str = str(tx_hash)
+    amount = FVal('110')
+    ts = TimestampMS(1700000000000)
+    with database.conn.write_ctx() as write_cursor:
+        DBHistoryEvents(database).add_history_events(
+            write_cursor=write_cursor,
+            history=[AssetMovement(
+                identifier=(movement_id := 1),
+                location=Location.COINBASEPRO,
+                event_type=HistoryEventType.WITHDRAWAL,
+                timestamp=ts,
+                asset=A_USDC,
+                amount=amount,
+                unique_id='coinbasepro_withdrawal_1',
+                extra_data=AssetMovementExtraData(
+                    transaction_id=tx_hash_str[2:],
+                    address=make_evm_address(),
+                ),
+                location_label='Coinbase Pro 1',
+            ), EvmEvent(  # Matched by tx hash
+                identifier=(match_id := 2),
+                tx_ref=tx_hash,
+                sequence_index=0,
+                timestamp=TimestampMS(ts + 12000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_USDC,
+                amount=amount,
+                location_label=make_evm_address(),
+            ), EvmEvent(  # Same amount, wrong tx hash
+                identifier=3,
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(ts + 18000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_USDC,
+                amount=amount,
+                location_label=make_evm_address(),
+            )],
+        )
+
+    _match_and_check(database=database, expected_matches=[(movement_id, match_id)])
+
+
 def test_match_coinbasepro_coinbase_transfer(database: 'DBHandler') -> None:
     """Test that we properly match transfers between coinbasepro and coinbase.
     Regression test for matching exchange to exchange movements even if the asset is
