@@ -3747,12 +3747,12 @@ class RestAPI:
                         HistoryMappingState.AUTO_MATCHED.serialize_for_db(),
                     ),
                 )
+                # Restore events from the backup created before matching
+                DBHistoryEvents.maybe_restore_history_events_from_backup(
+                    write_cursor=write_cursor,
+                    identifiers=[matched_event_identifier, asset_movement_identifier],
+                )
                 for id_to_restore in (matched_event_identifier, asset_movement_identifier):
-                    # Restore event from the backup created before matching
-                    DBHistoryEvents.maybe_restore_history_event_from_backup(
-                        write_cursor=write_cursor,
-                        identifier=id_to_restore,
-                    )
                     # Remove the auto-matched event state
                     write_cursor.execute(
                         'DELETE FROM history_events_mappings '

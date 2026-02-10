@@ -1326,7 +1326,11 @@ class DBHandler:
 
     def purge_exchange_data(self, write_cursor: 'DBCursor', location: Location) -> None:
         self.delete_used_query_range_for_exchange(write_cursor=write_cursor, location=location)
-        DBHistoryEvents(database=self).delete_events_and_track(
+        (events_db := DBHistoryEvents(database=self)).restore_matched_events_before_purge(
+            write_cursor=write_cursor,
+            location=location,
+        )
+        events_db.delete_events_and_track(
             write_cursor=write_cursor,
             where_clause='WHERE location = ?',
             where_bindings=(location.serialize_for_db(),),
