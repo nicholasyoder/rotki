@@ -12,7 +12,10 @@ from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.evm_swap import EvmSwapEvent
-from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
+from rotkehlchen.history.events.structures.types import (
+    HistoryEventSubType,
+    HistoryEventType,
+)
 from rotkehlchen.serialization.deserialize import deserialize_evm_address
 from rotkehlchen.tasks.events import find_customized_event_duplicate_groups
 from rotkehlchen.tests.utils.factories import make_evm_tx_hash

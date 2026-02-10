@@ -1,6 +1,7 @@
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
+from operator import itemgetter
 from typing import TYPE_CHECKING, Final, Literal
 
 from rotkehlchen.api.v1.types import IncludeExcludeFilterData
@@ -50,7 +51,7 @@ from rotkehlchen.types import (
     SupportedBlockchain,
     Timestamp,
 )
-from rotkehlchen.utils.misc import ts_ms_to_sec, ts_now
+from rotkehlchen.utils.misc import is_valid_ethereum_tx_hash, ts_ms_to_sec, ts_now
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -396,7 +397,10 @@ def match_asset_movements(database: 'DBHandler') -> None:
                 assets_in_collection_cache[asset_identifier] = assets_in_collection
 
             match_window = settings.asset_movement_time_range
-            if ts_ms_to_sec(asset_movement.timestamp) < LEGACY_EXCHANGE_MATCH_CUTOFF_TS:
+            if (
+                match_window < LEGACY_EXCHANGE_MATCH_WINDOW and
+                ts_ms_to_sec(asset_movement.timestamp) < LEGACY_EXCHANGE_MATCH_CUTOFF_TS
+            ):
                 # Some exchanges had unusually long credit windows for certain events in 2017.
                 match_window = LEGACY_EXCHANGE_MATCH_WINDOW
 
@@ -411,7 +415,22 @@ def match_asset_movements(database: 'DBHandler') -> None:
                 blockchain_accounts=blockchain_accounts,
                 already_matched_event_ids=already_matched_event_ids,
                 tolerance=settings.asset_movement_amount_tolerance,
-            ))) == 1:
+            ))) > 1 and _has_related_movement(
+                asset_movement=asset_movement,
+                other_movements=asset_movements,
+                match_window_ms=match_window * 1000,
+                tolerance=settings.asset_movement_amount_tolerance,
+            ):
+                # Heuristic: if multiple related movements exist, pick the closest amount match.
+                matched_events = _pick_closest_amount_match(
+                    asset_movement=asset_movement,
+                    matches=matched_events,
+                    is_deposit=is_deposit,
+                    fee_event=fee_event,
+                )
+                match_count = len(matched_events)
+
+            if match_count == 1:
                 success, error_msg = update_asset_movement_matched_event(
                     events_db=events_db,
                     asset_movement=asset_movement,
@@ -709,14 +728,17 @@ def should_exclude_possible_match(
     - Event identifier is in the list of already matched ids.
     - Gas events
     """
-    if isinstance(event, AssetMovement) and event.location == asset_movement.location:
-        return True  # only allow exchange-to-exchange between different exchanges
-
     if (
-        event.location == asset_movement.location and
-        event.location_label == asset_movement.location_label
+        asset_movement.location in {Location.COINBASE, Location.COINBASEPRO} and
+        asset_movement.notes is not None and
+        asset_movement.notes.startswith('Transfer funds') and
+        asset_movement.notes.endswith('CoinbasePro') and
+        event.location not in {Location.COINBASE, Location.COINBASEPRO}
     ):
-        return True
+        return True  # Coinbase/CoinbasePro transfer should only match between those exchanges
+
+    if event.location == asset_movement.location:
+        return True  # only allow exchange-to-exchange between different exchanges
 
     if isinstance(event, OnchainEvent):
         if (
@@ -727,6 +749,9 @@ def should_exclude_possible_match(
             return True
 
         if event.counterparty in EXCHANGES_CPT and (
+            event.extra_data is None or
+            event.extra_data.get('matched_asset_movement') is None
+        ) and (
             (
                 asset_movement.event_type == HistoryEventType.WITHDRAWAL and
                 event.event_type == HistoryEventType.DEPOSIT and
@@ -761,13 +786,12 @@ def should_exclude_possible_match(
         return True
 
     if exclude_unexpected_direction:
-        direction = event.maybe_get_direction()
         expected_direction = (
             EventDirection.OUT
             if asset_movement.event_type == HistoryEventType.DEPOSIT
             else EventDirection.IN
         )
-        if direction not in {EventDirection.NEUTRAL, expected_direction}:
+        if event.maybe_get_direction() not in {EventDirection.NEUTRAL, expected_direction}:
             return True
 
     return event.identifier in already_matched_event_ids
@@ -839,9 +863,11 @@ def find_asset_movement_matches(
         f'movement_amount={asset_movement.amount}',
     )
 
-    amount_with_fee: FVal | None = None
-    if is_deposit and fee_event is not None and fee_event.asset == asset_movement.asset:
-        amount_with_fee = asset_movement.amount + fee_event.amount
+    expected_amounts = _get_expected_amounts(
+        asset_movement=asset_movement,
+        is_deposit=is_deposit,
+        fee_event=fee_event,
+    )
 
     onchain_candidates: list[HistoryBaseEntry] = []
     exchange_candidates: list[HistoryBaseEntry] = []
@@ -854,7 +880,7 @@ def find_asset_movement_matches(
         asset_movement=asset_movement,
         is_deposit=is_deposit,
         fee_event=fee_event,
-        amount_with_fee=amount_with_fee,
+        expected_amounts=expected_amounts,
         tolerance=tolerance,
         blockchain_accounts=blockchain_accounts,
         already_matched_event_ids=already_matched_event_ids,
@@ -866,7 +892,7 @@ def find_asset_movement_matches(
             asset_movement=asset_movement,
             is_deposit=is_deposit,
             fee_event=fee_event,
-            amount_with_fee=amount_with_fee,
+            expected_amounts=expected_amounts,
             tolerance=tolerance,
             blockchain_accounts=blockchain_accounts,
             already_matched_event_ids=already_matched_event_ids,
@@ -882,13 +908,32 @@ def find_asset_movement_matches(
     return close_matches
 
 
+def _get_expected_amounts(
+        asset_movement: AssetMovement,
+        is_deposit: bool,
+        fee_event: AssetMovement | None,
+) -> list[FVal]:
+    """Build candidate amounts to compare against when matching movements."""
+    expected_amounts: list[FVal] = [asset_movement.amount]
+    if is_deposit and fee_event is not None and fee_event.asset == asset_movement.asset:
+        expected_amounts.append(asset_movement.amount + fee_event.amount)
+    if (
+        not is_deposit and
+        fee_event is not None and
+        fee_event.asset == asset_movement.asset
+    ):
+        expected_amounts.append(asset_movement.amount - fee_event.amount)
+
+    return expected_amounts
+
+
 def _find_close_matches(
         candidates: list[HistoryBaseEntry],
         label: Literal['onchain', 'exchange'],
         asset_movement: AssetMovement,
         is_deposit: bool,
         fee_event: AssetMovement | None,
-        amount_with_fee: FVal | None,
+        expected_amounts: list[FVal],
         tolerance: FVal,
         blockchain_accounts: BlockchainAccounts,
         already_matched_event_ids: set[int],
@@ -915,28 +960,14 @@ def _find_close_matches(
         # already deducted and the amount should always match the main asset movement amount.
         # Also allow a small tolerance as long as the received amount is less
         # than the sent amount. A fee event will be added later to account for the difference.
-        if not (_match_amount(
-            movement_amount=asset_movement.amount,
-            event_amount=event.amount,
-            tolerance=tolerance,
-        ) or (
-            is_deposit and
-            amount_with_fee is not None and
+        if not any(
             _match_amount(
-                movement_amount=amount_with_fee,
+                movement_amount=expected_amount,
                 event_amount=event.amount,
                 tolerance=tolerance,
             )
-        ) or (
-            not is_deposit and
-            fee_event is not None and
-            fee_event.asset == asset_movement.asset and
-            _match_amount(
-                movement_amount=asset_movement.amount - fee_event.amount,
-                event_amount=event.amount,
-                tolerance=tolerance,
-            )
-        )):
+            for expected_amount in expected_amounts
+        ):
             log.debug(
                 f'MATCH_DEBUG: amount mismatch {label} id={event.identifier} '
                 f'movement={asset_movement.amount} event={event.amount} '
@@ -974,7 +1005,11 @@ def _find_close_matches(
         tx_ref_matches: list[HistoryBaseEntry] = []
         counterparty_matches: list[HistoryBaseEntry] = []
         event_type_matches: list[HistoryBaseEntry] = []
-        tx_ref = asset_movement.extra_data.get('transaction_id') if asset_movement.extra_data is not None else None  # noqa: E501
+        tx_ref = None if asset_movement.extra_data is None else asset_movement.extra_data.get('transaction_id')  # noqa: E501
+        # Some exchanges occasionally store tx hashes without the 0x prefix.
+        if tx_ref is not None and not tx_ref.startswith('0x') and is_valid_ethereum_tx_hash(prefixed_tx_ref := f'0x{tx_ref}'):  # noqa: E501
+            tx_ref = prefixed_tx_ref
+
         for match in close_matches:
             # Maybe match by exact asset match (matched events can have any asset in the collection)  # noqa: E501
             if match.asset == asset_movement.asset:
@@ -1008,3 +1043,52 @@ def _find_close_matches(
         )
 
     return close_matches
+
+
+def _has_related_movement(
+        asset_movement: AssetMovement,
+        other_movements: list[AssetMovement],
+        match_window_ms: int,
+        tolerance: FVal,
+) -> bool:
+    """Check if there is another movement close in time and amount for the same asset."""
+    movement_ts = asset_movement.timestamp
+    for other in other_movements:
+        if other is asset_movement or other.asset != asset_movement.asset:
+            continue
+        if abs(other.timestamp - movement_ts) > match_window_ms:
+            continue
+        if abs(other.amount - asset_movement.amount) <= asset_movement.amount * tolerance:
+            return True
+
+    return False
+
+
+def _pick_closest_amount_match(
+        asset_movement: AssetMovement,
+        matches: list[HistoryBaseEntry],
+        is_deposit: bool,
+        fee_event: AssetMovement | None,
+) -> list[HistoryBaseEntry]:
+    """Pick the closest amount match if it's strictly closer than the others."""
+    expected_amounts = _get_expected_amounts(
+        asset_movement=asset_movement,
+        is_deposit=is_deposit,
+        fee_event=fee_event,
+    )
+
+    amount_differences = [
+        (min(abs(match.amount - expected) for expected in expected_amounts), match)
+        for match in matches
+    ]
+    amount_differences.sort(key=itemgetter(0))
+    # Only collapse to a single candidate when there is a unique best amount match.
+    # If the top two candidates have the same difference, keep all candidates and let
+    # the caller handle the ambiguity with additional matching rules.
+    if (
+        len(amount_differences) >= 2 and
+        amount_differences[0][0] < amount_differences[1][0]
+    ):
+        return [amount_differences[0][1]]
+
+    return matches
