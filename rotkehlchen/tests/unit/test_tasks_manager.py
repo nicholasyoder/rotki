@@ -695,10 +695,10 @@ def test_maybe_query_produced_blocks(task_manager, ethereum_accounts):
 
     def maybe_run_task(expected_call_count: int, expected_indices: list[int]) -> None:
 
-        def mock_get_blocks(indices: list[int]) -> None:
+        def mock_get_blocks(indices: list[int], update_cache: bool = True) -> None:
             """Assert that both validators are queried."""
             assert indices == expected_indices
-            original_get_and_store_blocks(indices)
+            original_get_and_store_blocks(indices=indices, update_cache=update_cache)
 
         with (
             patch.object(

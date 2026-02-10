@@ -478,6 +478,32 @@ class Eth2(EthereumModule):
 
             self.detect_exited_validators()
 
+    def _fetch_withdrawals_from_external_sources(
+            self,
+            address: ChecksumEvmAddress,
+            period: TimestampOrBlockRange,
+    ) -> set[int] | None:
+        """Query etherscan for withdrawals with a blockscout fallback.
+        Returns untracked validator indices, or None if both sources fail.
+        """
+        try:
+            return self.ethereum.etherscan.get_withdrawals(
+                address=address,
+                period=period,
+            )
+        except (DeserializationError, RemoteError) as e:
+            log.error(f'Failed to query ethereum withdrawals for {address} through etherscan due to {e}. Will try blockscout.')  # noqa: E501
+
+        try:
+            return self.ethereum.blockscout.query_withdrawals(address)
+        except (DeserializationError, RemoteError, KeyError) as othere:
+            msg = str(othere)
+            if isinstance(othere, KeyError):
+                msg = f'Missing key entry for {msg}'
+            log.error(f'Failed to query ethereum withdrawals for {address} through blockscout due to {msg}. Bailing out for now.')  # noqa: E501
+
+        return None
+
     def query_single_address_withdrawals(self, address: ChecksumEvmAddress, to_ts: Timestamp) -> None:  # noqa: E501
         with self.database.conn.read_ctx() as cursor:
             # Get the last query timestamp for this address and a count of this address's
@@ -502,24 +528,9 @@ class Eth2(EthereumModule):
             return
 
         log.debug(f'Querying {address} ETH withdrawals from {from_ts} to {to_ts}')
-
-        try:
-            period = self.ethereum.maybe_timestamp_to_block_range(TimestampOrBlockRange('timestamps', from_ts, to_ts))  # noqa: E501
-            untracked_validator_indices = self.ethereum.etherscan.get_withdrawals(
-                address=address,
-                period=period,
-            )
-        except (DeserializationError, RemoteError) as e:
-            log.error(f'Failed to query ethereum withdrawals for {address} through etherscan due to {e}. Will try blockscout.')  # noqa: E501
-            try:
-                untracked_validator_indices = self.ethereum.blockscout.query_withdrawals(address)
-            except (DeserializationError, RemoteError, KeyError) as othere:
-                msg = str(othere)
-                if isinstance(othere, KeyError):
-                    msg = f'Missing key entry for {msg}'
-
-                log.error(f'Failed to query ethereum withdrawals for {address} through blockscout due to {msg}. Bailing out for now.')  # noqa: E501
-                return
+        period = self.ethereum.maybe_timestamp_to_block_range(TimestampOrBlockRange('timestamps', from_ts, to_ts))  # noqa: E501
+        if (untracked_validator_indices := self._fetch_withdrawals_from_external_sources(address, period)) is None:  # noqa: E501
+            return
 
         # pull data for newly detected validators and save them in the DB
         details = self.beacon_inquirer.get_validator_data(indices_or_pubkeys=list(untracked_validator_indices))  # noqa: E501

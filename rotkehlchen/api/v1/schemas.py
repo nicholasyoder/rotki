@@ -4709,6 +4709,69 @@ class Eth2StakingEventsResetSchema(Schema):
     )
 
 
+class RefetchStakingEventsSchema(AsyncQueryArgumentSchema, TimestampRangeSchema):
+    entry_type = SerializableEnumField(
+        enum_class=HistoryBaseEntryType,
+        allow_only=(HistoryBaseEntryType.ETH_BLOCK_EVENT, HistoryBaseEntryType.ETH_WITHDRAWAL_EVENT),  # noqa: E501
+        required=True,
+    )
+    validator_indices = fields.List(
+        fields.Integer(strict=True, validate=webargs.validate.Range(min=0)),
+        load_default=None,
+    )
+    addresses = fields.List(EvmAddressField(), load_default=None)
+
+    def __init__(self, database: 'DBHandler', **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.db = database
+
+    @validates_schema
+    def validate_refetch_schema(
+            self,
+            data: dict[str, Any],
+            **_kwargs: Any,
+    ) -> None:
+        validator_indices, addresses = data['validator_indices'], data['addresses']
+        if bool(validator_indices) == bool(addresses):
+            raise ValidationError(
+                message='Exactly one of validator_indices or addresses must be provided',
+                field_name='validator_indices',
+            )
+
+        with self.db.conn.read_ctx() as cursor:
+            if validator_indices:
+                question_marks = ','.join('?' * len(validator_indices))
+                count, resolved_addresses = 0, set[ChecksumEvmAddress]()
+                for row in cursor.execute(
+                    f'SELECT validator_index, withdrawal_address FROM eth2_validators WHERE validator_index IN ({question_marks})',  # noqa: E501
+                    validator_indices,
+                ):
+                    count += 1
+                    if row[1] is not None:
+                        resolved_addresses.add(row[1])
+                if count != len(validator_indices):
+                    raise ValidationError(
+                        message='Some validator indices are not tracked by rotki',
+                        field_name='validator_indices',
+                    )
+                data['addresses'] = list(resolved_addresses)
+            else:  # addresses is not None due to the check above
+                question_marks = ','.join('?' * len(addresses))
+                found_addresses, resolved_indices = set[ChecksumEvmAddress](), list[int]()
+                for row in cursor.execute(
+                    f'SELECT DISTINCT validator_index, withdrawal_address FROM eth2_validators WHERE withdrawal_address IN ({question_marks})',  # noqa: E501
+                    addresses,
+                ):
+                    resolved_indices.append(row[0])
+                    found_addresses.add(row[1])
+                if len(found_addresses) != len(addresses):
+                    raise ValidationError(
+                        message='Some addresses have no associated validators tracked by rotki',
+                        field_name='addresses',
+                    )
+                data['validator_indices'] = resolved_indices
+
+
 class SolanaTokenMigrationSchema(AsyncQueryArgumentSchema):
     old_asset = AssetField(required=True, expected_type=CryptoAsset, form_with_incomplete_data=True)  # noqa: E501
     address = SolanaAddressField(required=True)

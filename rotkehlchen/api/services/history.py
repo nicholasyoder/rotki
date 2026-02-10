@@ -19,6 +19,7 @@ from rotkehlchen.accounting.pot import AccountingPot
 from rotkehlchen.api.rest_helpers.downloads import register_post_download_cleanup
 from rotkehlchen.chain.ethereum.constants import CPT_KRAKEN
 from rotkehlchen.chain.evm.accounting.aggregator import EVMAccountingAggregators
+from rotkehlchen.chain.structures import TimestampOrBlockRange
 from rotkehlchen.constants import HOUR_IN_SECONDS, ZERO
 from rotkehlchen.db.accounting_rules import query_missing_accounting_rules
 from rotkehlchen.db.evmtx import DBEvmTx
@@ -46,6 +47,7 @@ from rotkehlchen.premium.premium import UserLimitType, get_user_limit, has_premi
 from rotkehlchen.types import (
     EVM_CHAIN_IDS_WITH_TRANSACTIONS,
     EVM_CHAINS_WITH_TRANSACTIONS,
+    ChecksumEvmAddress,
     HistoryEventQueryType,
     Location,
     Timestamp,
@@ -59,6 +61,7 @@ if TYPE_CHECKING:
         MissingPrice,
     )
     from rotkehlchen.assets.asset import Asset
+    from rotkehlchen.chain.ethereum.modules.eth2.eth2 import Eth2
     from rotkehlchen.db.constants import HistoryMappingState
     from rotkehlchen.db.filtering import HistoryBaseEntryFilterQuery
     from rotkehlchen.fval import FVal
@@ -759,3 +762,76 @@ class HistoryService:
             entries.append(current_group)
 
         return entries
+
+    def refetch_staking_events(
+            self,
+            entry_type: Literal[HistoryBaseEntryType.ETH_BLOCK_EVENT, HistoryBaseEntryType.ETH_WITHDRAWAL_EVENT],  # noqa: E501
+            from_timestamp: Timestamp,
+            to_timestamp: Timestamp,
+            validator_indices: list[int],
+            addresses: list[ChecksumEvmAddress],
+    ) -> dict[str, Any]:
+        """Refetch ETH staking events by re-querying external data sources.
+        Duplicates are handled by INSERT OR IGNORE.
+
+        For block production events, re-queries beaconcha.in (no time range filtering,
+        so all blocks for the validators are fetched). For withdrawal events, re-queries
+        etherscan within the specified time range.
+
+        validator_indices and addresses are pre-resolved by the schema.
+        """
+        if (eth2 := self.rotkehlchen.chains_aggregator.get_module('eth2')) is None:
+            return {
+                'result': None,
+                'message': 'eth2 module is not active',
+                'status_code': HTTPStatus.CONFLICT,
+            }
+
+        try:
+            if entry_type == HistoryBaseEntryType.ETH_BLOCK_EVENT:
+                log.debug(f'Refetching block production events for validator indices {validator_indices}')  # noqa: E501
+                eth2.beacon_inquirer.beaconchain.get_and_store_produced_blocks(
+                    indices=validator_indices,
+                    update_cache=False,
+                )
+                eth2.combine_block_with_tx_events()
+            else:
+                self._refetch_withdrawal_events(
+                    eth2=eth2,
+                    addresses=addresses,
+                    from_timestamp=from_timestamp,
+                    to_timestamp=to_timestamp,
+                )
+        except RemoteError as e:
+            return {
+                'result': None,
+                'message': str(e),
+                'status_code': HTTPStatus.BAD_GATEWAY,
+            }
+
+        return {'result': True, 'message': ''}
+
+    @staticmethod
+    def _refetch_withdrawal_events(
+            eth2: Eth2,
+            addresses: list[ChecksumEvmAddress],
+            from_timestamp: Timestamp,
+            to_timestamp: Timestamp,
+    ) -> None:
+        """Re-query etherscan for withdrawal events in the specified time range without
+        modifying the existing query cache. Duplicates are handled by INSERT OR IGNORE.
+        """
+        if len(addresses) == 0:
+            return
+
+        log.debug(
+            f'Refetching withdrawal events for addresses {addresses} '
+            f'from {from_timestamp} to {to_timestamp}',
+        )
+        period = eth2.ethereum.maybe_timestamp_to_block_range(
+            TimestampOrBlockRange('timestamps', from_timestamp, to_timestamp),
+        )
+        for address in addresses:
+            eth2._fetch_withdrawals_from_external_sources(address, period)
+
+        eth2.detect_exited_validators()

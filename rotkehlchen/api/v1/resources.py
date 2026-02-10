@@ -153,6 +153,7 @@ from rotkehlchen.api.v1.schemas import (
     QueriedAddressesSchema,
     QueryAddressbookSchema,
     QueryCalendarSchema,
+    RefetchStakingEventsSchema,
     RefetchTransactionsSchema,
     RefreshProtocolDataSchema,
     ResolveEnsSchema,
@@ -2179,6 +2180,32 @@ class Eth2StakingEventsResource(BaseMethodView):
         return self.rest_api.redecode_eth2_block_events(
             async_query=async_query,
             block_numbers=block_numbers,
+        )
+
+
+class RefetchStakingEventsResource(BaseMethodView):
+
+    def make_post_schema(self) -> RefetchStakingEventsSchema:
+        return RefetchStakingEventsSchema(database=self.rest_api.rotkehlchen.data.db)
+
+    @require_loggedin_user()
+    @resource_parser.use_kwargs(make_post_schema, location='json')
+    def post(
+            self,
+            async_query: bool,
+            entry_type: Literal[HistoryBaseEntryType.ETH_BLOCK_EVENT, HistoryBaseEntryType.ETH_WITHDRAWAL_EVENT],  # noqa: E501
+            from_timestamp: Timestamp,
+            to_timestamp: Timestamp,
+            validator_indices: list[int],
+            addresses: list[ChecksumEvmAddress],
+    ) -> Response:
+        return self.rest_api.refetch_staking_events(
+            async_query=async_query,
+            entry_type=entry_type,
+            from_timestamp=from_timestamp,
+            to_timestamp=to_timestamp,
+            validator_indices=validator_indices,
+            addresses=addresses,
         )
 
 

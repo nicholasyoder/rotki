@@ -16,6 +16,7 @@ from rotkehlchen.chain.ethereum.modules.eth2.structures import (
     ValidatorType,
 )
 from rotkehlchen.chain.evm.types import string_to_evm_address
+from rotkehlchen.chain.structures import TimestampOrBlockRange
 from rotkehlchen.constants import ONE
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.constants.misc import DEFAULT_BALANCE_LABEL, ZERO
@@ -1376,3 +1377,191 @@ def test_redecode_block_production_events(rotkehlchen_api_server: 'APIServer') -
         contained_in_msg='Some of the specified block numbers do not exist in the db',
         status_code=HTTPStatus.BAD_REQUEST,
     )
+
+
+def test_refetch_staking_events_validation(rotkehlchen_api_server: 'APIServer') -> None:
+    """Test validation for the refetch staking events endpoint."""
+    url = api_url_for(rotkehlchen_api_server, 'refetchstakingeventsresource')
+    assert_error_response(  # neither validator_indices nor addresses provided
+        response=requests.post(url, json={
+            'async_query': False,
+            'entry_type': 'eth_block_event',
+        }),
+        contained_in_msg='Exactly one of validator_indices or addresses must be provided',
+        status_code=HTTPStatus.BAD_REQUEST,
+    )
+    assert_error_response(  # both provided
+        response=requests.post(url, json={
+            'async_query': False,
+            'entry_type': 'eth_block_event',
+            'validator_indices': [1],
+            'addresses': ['0x4c66c2055f6a7a01e102bde8d8d71d1d36667e21'],
+        }),
+        contained_in_msg='Exactly one of validator_indices or addresses must be provided',
+        status_code=HTTPStatus.BAD_REQUEST,
+    )
+    assert_error_response(  # empty validator_indices
+        response=requests.post(url, json={
+            'async_query': False,
+            'entry_type': 'eth_block_event',
+            'validator_indices': [],
+        }),
+        contained_in_msg='Exactly one of validator_indices or addresses must be provided',
+        status_code=HTTPStatus.BAD_REQUEST,
+    )
+    assert_error_response(  # non-existent validator index
+        response=requests.post(url, json={
+            'async_query': False,
+            'entry_type': 'eth_block_event',
+            'validator_indices': [999999],
+        }),
+        contained_in_msg='are not tracked by rotki',
+        status_code=HTTPStatus.BAD_REQUEST,
+    )
+    assert_error_response(  # non-existent address
+        response=requests.post(url, json={
+            'async_query': False,
+            'entry_type': 'eth_withdrawal_event',
+            'addresses': ['0x4c66c2055f6a7a01e102bde8d8d71d1d36667e21'],
+        }),
+        contained_in_msg='have no associated validators tracked by rotki',
+        status_code=HTTPStatus.BAD_REQUEST,
+    )
+
+
+@pytest.mark.parametrize('ethereum_modules', [['eth2']])
+def test_refetch_block_production_events(rotkehlchen_api_server: 'APIServer') -> None:
+    """Test refetching block production events re-queries beaconcha.in for the
+    specified validators and stores any missing blocks."""
+    dbevents = DBHistoryEvents(db := rotkehlchen_api_server.rest_api.rotkehlchen.data.db)
+
+    # add a validator to the DB
+    with db.conn.write_ctx() as write_cursor:
+        write_cursor.execute(
+            'INSERT INTO eth2_validators(validator_index, public_key, validator_type, '
+            'ownership_proportion, withdrawal_address) VALUES(?, ?, ?, ?, ?)',
+            ((v_index := 12345), Eth2PubKey('0xaabb'), 1, '1', make_evm_address()),
+        )
+
+    # insert one block event already in DB
+    with db.conn.write_ctx() as write_cursor:
+        dbevents.add_history_event(
+            write_cursor=write_cursor,
+            event=EthBlockEvent(
+                validator_index=v_index,
+                timestamp=TimestampMS(1700000000000),
+                amount=FVal('0.1'),
+                fee_recipient=make_evm_address(),
+                fee_recipient_tracked=False,
+                block_number=100,
+                is_mev_reward=False,
+            ),
+        )
+
+    with db.conn.read_ctx() as cursor:
+        assert cursor.execute('SELECT COUNT(*) FROM history_events').fetchone()[0] == 1
+
+    with patch(  # mock beaconcha.in to return the existing block plus a new one
+        'rotkehlchen.externalapis.beaconchain.service.BeaconChain._query_chunked_endpoint_with_pagination',
+        return_value=[{
+            'blockNumber': 200,  # new, should be added
+            'timestamp': 1700100000,
+            'blockReward': '200000000000000000',
+            'blockMevReward': '0',
+            'feeRecipient': make_evm_address(),
+            'posConsensus': {'proposerIndex': v_index},
+        }, {
+            'blockNumber': 100,  # existing, should be skipped
+            'timestamp': 1700000000,
+            'blockReward': '100000000000000000',
+            'blockMevReward': '0',
+            'feeRecipient': make_evm_address(),
+            'posConsensus': {'proposerIndex': v_index},
+        }],
+    ):
+        response = requests.post(
+            api_url_for(rotkehlchen_api_server, 'refetchstakingeventsresource'),
+            json={
+                'async_query': False,
+                'entry_type': 'eth_block_event',
+                'validator_indices': [v_index],
+            },
+        )
+        assert_simple_ok_response(response)
+
+    # the new block should have been added
+    with db.conn.read_ctx() as cursor:
+        assert cursor.execute('SELECT COUNT(*) FROM history_events').fetchone()[0] == 2
+
+
+@pytest.mark.parametrize('ethereum_modules', [['eth2']])
+def test_refetch_withdrawal_events(rotkehlchen_api_server: 'APIServer') -> None:
+    """Test refetching withdrawal events re-queries etherscan for the specified
+    addresses and time range."""
+    dbevents = DBHistoryEvents(db := rotkehlchen_api_server.rest_api.rotkehlchen.data.db)
+
+    # add a validator to the DB
+    with db.conn.write_ctx() as write_cursor:
+        write_cursor.execute(
+            'INSERT INTO eth2_validators(validator_index, public_key, validator_type, '
+            'ownership_proportion, withdrawal_address) VALUES(?, ?, ?, ?, ?)',
+            ((v_index := 54321), Eth2PubKey('0xccdd'), 1, '1', (withdrawal_address := make_evm_address())),  # noqa: E501
+        )
+
+    # insert an existing withdrawal event
+    with db.conn.write_ctx() as write_cursor:
+        dbevents.add_history_event(
+            write_cursor=write_cursor,
+            event=(existing_withdrawal := EthWithdrawalEvent(
+                validator_index=v_index,
+                timestamp=TimestampMS(1710000000000),
+                amount=FVal('0.05'),
+                withdrawal_address=withdrawal_address,
+                is_exit=False,
+            )),
+        )
+
+    with db.conn.read_ctx() as cursor:
+        assert cursor.execute('SELECT COUNT(*) FROM history_events').fetchone()[0] == 1
+
+    # mock _fetch_withdrawals_from_external_sources on the eth2 module to insert
+    # a new withdrawal (simulating what etherscan would do) and return an empty set
+    assert (eth2 := rotkehlchen_api_server.rest_api.rotkehlchen.chains_aggregator.get_module('eth2')) is not None  # noqa: E501
+
+    def mock_fetch_withdrawals(address: 'ChecksumEvmAddress', period: TimestampOrBlockRange) -> set[int]:  # noqa: E501
+        with db.user_write() as write_cursor:
+            dbevents.add_history_events(
+                write_cursor=write_cursor,
+                history=[
+                    EthWithdrawalEvent(
+                        validator_index=v_index,
+                        timestamp=TimestampMS(1709900000000),
+                        amount=FVal('0.03'),
+                        withdrawal_address=withdrawal_address,
+                        is_exit=False,
+                    ),
+                    existing_withdrawal,
+                ],
+            )
+        return set()
+
+    with (
+        patch.object(eth2, '_fetch_withdrawals_from_external_sources', side_effect=mock_fetch_withdrawals),  # noqa: E501
+        patch.object(eth2.ethereum, 'maybe_timestamp_to_block_range', return_value=TimestampOrBlockRange('blocks', 0, 99999999)),  # noqa: E501
+        patch.object(eth2, 'detect_exited_validators'),
+    ):
+        response = requests.post(
+            api_url_for(rotkehlchen_api_server, 'refetchstakingeventsresource'),
+            json={
+                'async_query': False,
+                'entry_type': 'eth_withdrawal_event',
+                'addresses': [withdrawal_address],
+                'from_timestamp': 1709800000,
+                'to_timestamp': 1710200000,
+            },
+        )
+        assert_simple_ok_response(response)
+
+    # the new withdrawal should have been added, existing one skipped
+    with db.conn.read_ctx() as cursor:
+        assert cursor.execute('SELECT COUNT(*) FROM history_events').fetchone()[0] == 2
