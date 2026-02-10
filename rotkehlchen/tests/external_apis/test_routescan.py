@@ -6,10 +6,10 @@ import pytest
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants import DAY_IN_SECONDS
 from rotkehlchen.errors.misc import RemoteError
-from rotkehlchen.externalapis.etherscan_like import HasChainActivity
+from rotkehlchen.externalapis.etherscan_like import EtherscanLikeApi, HasChainActivity
 from rotkehlchen.externalapis.routescan import ROUTESCAN_SUPPORTED_CHAINS, Routescan
 from rotkehlchen.tests.utils.mock import MockResponse
-from rotkehlchen.types import ChainID, Timestamp
+from rotkehlchen.types import ChainID, Timestamp, deserialize_evm_tx_hash
 
 
 @pytest.fixture(name='routescan')
@@ -78,3 +78,54 @@ def test_routescan_rate_limits(routescan: Routescan) -> None:
             pytest.raises(RemoteError, match=expected_msg),
         ):
             routescan.get_blocknumber_by_time(chain_id=ChainID.ETHEREUM, ts=Timestamp(1700000000))
+
+
+@pytest.mark.parametrize('action', ['txlist', None])
+def test_routescan_account_queries_use_explicit_pagination(
+        routescan: Routescan,
+        action: str | None,
+) -> None:
+    """RouteScan account endpoints should always include explicit page and offset."""
+    with patch.object(EtherscanLikeApi, '_query', return_value=[]) as query_mock:
+        account = string_to_evm_address('0x56a1A34F0d33788ebA53e2706854A37A5F275536')
+        if action is None:
+            list(routescan.get_token_transaction_hashes(
+                chain_id=ChainID.ETHEREUM,
+                account=account,
+            ))
+        else:
+            list(routescan.get_transactions(
+                chain_id=ChainID.ETHEREUM,
+                account=account,
+                action='txlist',
+            ))
+
+    query_options = query_mock.call_args.kwargs['options']
+    assert query_options['page'] == '1'
+    assert query_options['offset'] == str(routescan.pagination_limit)
+
+
+def test_routescan_internal_by_txhash_uses_lower_offset(routescan: Routescan) -> None:
+    with patch.object(EtherscanLikeApi, '_query', return_value=[]) as query_mock:
+        list(routescan.get_transactions(
+            chain_id=ChainID.ETHEREUM,
+            account=None,
+            action='txlistinternal',
+            period_or_hash=deserialize_evm_tx_hash(
+                '0x2cb9dcf83b3fd1bbbec4cd5f8d0b688bfc3f6aadd99081f28eaccafcd26c4243',
+            ),
+        ))
+
+    query_options = query_mock.call_args.kwargs['options']
+    assert query_options['page'] == '1'
+    assert query_options['offset'] == '100'
+
+
+def test_routescan_maybe_paginate_uses_request_offset(routescan: Routescan) -> None:
+    result = [{'blockNumber': str(i)} for i in range(100)]
+    options = {'offset': '100'}
+
+    new_options = routescan._maybe_paginate(result=result, options=options)
+
+    assert new_options is not None
+    assert new_options['startblock'] == '99'

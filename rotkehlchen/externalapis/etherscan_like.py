@@ -4,6 +4,7 @@ import logging
 import operator
 from abc import ABC
 from collections.abc import Iterator
+from contextlib import suppress
 from enum import Enum, auto
 from http import HTTPStatus
 from json.decoder import JSONDecodeError
@@ -177,6 +178,14 @@ class EtherscanLikeApi(ABC):
         May raise RemoteError or ChainNotSupported if the result indicates an error.
         """
         return False  # no-op by default
+
+    def _get_account_pagination_options(
+            self,
+            action: str,
+            options: dict[str, Any],
+    ) -> dict[str, str] | None:
+        """Return optional account endpoint pagination params for an indexer."""
+        return None
 
     @overload
     def _query(
@@ -455,7 +464,12 @@ class EtherscanLikeApi(ABC):
     ) -> dict[str, Any] | None:
         """Check if the results have hit the pagination limit.
         If yes adjust the options accordingly. Otherwise signal we are done"""
-        if len(result) != self.pagination_limit:
+        expected_page_size = self.pagination_limit
+        if (offset := options.get('offset')) is not None:
+            with suppress(TypeError, ValueError):
+                expected_page_size = int(offset)
+
+        if len(result) != expected_page_size:
             return None
 
         # else we hit the limit. Query once more with startblock being the last
@@ -518,6 +532,11 @@ class EtherscanLikeApi(ABC):
             else:  # has to be parent transaction hash and internal transaction
                 options['txhash'] = period_or_hash.hex()
                 parent_tx_hash = period_or_hash
+        if (pagination_options := self._get_account_pagination_options(
+            action=action,
+            options=options,
+        )) is not None:
+            options.update(pagination_options)
 
         transactions: list[EvmTransaction] | list[EvmInternalTransaction] = []
         is_internal = action == 'txlistinternal'
@@ -613,6 +632,11 @@ class EtherscanLikeApi(ABC):
             to_block: int | None = None,
     ) -> Iterator[list[EVMTxHash]]:
         options = {'address': str(account), 'sort': 'asc'}
+        if (pagination_options := self._get_account_pagination_options(
+            action='tokentx',
+            options=options,
+        )) is not None:
+            options.update(pagination_options)
         if from_block is not None:
             options['startblock'] = str(from_block)
         if to_block is not None:
