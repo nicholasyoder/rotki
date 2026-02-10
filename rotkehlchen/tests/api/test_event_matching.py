@@ -37,6 +37,32 @@ from rotkehlchen.types import Location, TimestampMS
 
 if TYPE_CHECKING:
     from rotkehlchen.api.server import APIServer
+    from rotkehlchen.history.events.structures.base import HistoryBaseEntry
+
+
+def _check_all_unlinked(
+        dbevents: 'DBHistoryEvents',
+        original_events: list['HistoryBaseEntry'],
+) -> None:
+    """Check that all asset movements are unlinked with the matched events restored
+    to their original state.
+    """
+    with dbevents.db.conn.read_ctx() as cursor:
+        # Check that all modified events have been restored to their original state and the
+        # adjustment event has been removed.
+        assert dbevents.get_history_events_internal(
+            cursor=cursor,
+            filter_query=HistoryEventFilterQuery.make(
+                order_by_rules=[('history_events_identifier', True)],
+            ),
+        ) == original_events
+        # Check that no events remain in the backup table
+        assert cursor.execute('SELECT COUNT(*) FROM history_events_backup').fetchone()[0] == 0
+        # Check that the auto-matched mapping states have been removed.
+        assert cursor.execute(
+            'SELECT COUNT(*) FROM history_events_mappings WHERE name=? AND value=?',
+            (HISTORY_MAPPING_KEY_STATE, HistoryMappingState.AUTO_MATCHED.serialize_for_db()),
+        ).fetchone()[0] == 0
 
 
 def test_match_asset_movements(rotkehlchen_api_server: 'APIServer') -> None:
@@ -143,7 +169,7 @@ def test_multi_match_asset_movements(rotkehlchen_api_server: 'APIServer') -> Non
     with rotki.data.db.conn.write_ctx() as write_cursor:
         dbevents.add_history_events(
             write_cursor=write_cursor,
-            history=[(before_event := HistoryEvent(
+            history=(original_events := [(before_event := HistoryEvent(
                 identifier=1,
                 group_identifier='xyz1',
                 sequence_index=0,
@@ -218,7 +244,7 @@ def test_multi_match_asset_movements(rotkehlchen_api_server: 'APIServer') -> Non
                 timestamp=TimestampMS(1510000000003),
                 asset=A_BTC,
                 amount=FVal('0.01'),
-            ))],
+            ))]),
         )
 
     assert_simple_ok_response(requests.put(
@@ -308,6 +334,13 @@ def test_multi_match_asset_movements(rotkehlchen_api_server: 'APIServer') -> Non
     assert result[2]['entry']['actual_group_identifier'] == matched_event1.group_identifier
     assert len(result[3]) == 3  # movement and two matched events
     assert result[4]['entry']['group_identifier'] == before_event.group_identifier
+
+    # Check that unlinking a multi-match works properly
+    assert_simple_ok_response(requests.delete(
+        url=api_url_for(rotkehlchen_api_server, 'matchassetmovementsresource'),
+        json={'identifier': asset_movement.identifier},
+    ))
+    _check_all_unlinked(dbevents=dbevents, original_events=original_events)
 
 
 def test_mark_asset_movement_no_match(rotkehlchen_api_server: 'APIServer') -> None:
@@ -484,22 +517,7 @@ def test_unlink_matched_asset_movements(rotkehlchen_api_server: 'APIServer') -> 
                 (HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),),
             ).fetchall()) == {(identifier,) for identifier in expected_ignored}
 
-    with rotki.data.db.conn.read_ctx() as cursor:
-        # Check that all modified events have been restored to their original state and the
-        # adjustment event has been removed.
-        assert dbevents.get_history_events_internal(
-            cursor=cursor,
-            filter_query=HistoryEventFilterQuery.make(
-                order_by_rules=[('history_events_identifier', True)],
-            ),
-        ) == original_events
-        # Check that no events remain in the backup table
-        assert cursor.execute('SELECT COUNT(*) FROM history_events_backup').fetchone()[0] == 0
-        # Check that the auto-matched mapping states have been removed.
-        assert cursor.execute(
-            'SELECT COUNT(*) FROM history_events_mappings WHERE name=? AND value=?',
-            (HISTORY_MAPPING_KEY_STATE, HistoryMappingState.AUTO_MATCHED.serialize_for_db()),
-        ).fetchone()[0] == 0
+    _check_all_unlinked(dbevents=dbevents, original_events=original_events)
 
 
 def test_get_unmatched_asset_movements(rotkehlchen_api_server: 'APIServer') -> None:

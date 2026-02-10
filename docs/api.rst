@@ -6415,11 +6415,11 @@ Match exchange asset movements with onchain events
 
       {
           "asset_movement": 123,
-          "matched_event": 124
+          "matched_events": [124]
       }
 
    :reqjson int asset_movement: DB identifier of the asset movement to match
-   :reqjson int[optional] matched_event: DB identifier of the corresponding event to match with the asset movement. The asset movement is marked as having no match if this parameter is omitted or set to null.
+   :reqjson list[int][optional] matched_events: List of DB identifiers of events to match with the asset movement. The asset movement is marked as having no match if this parameter is omitted or an empty list.
 
    **Example Response**:
 

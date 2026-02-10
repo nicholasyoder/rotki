@@ -3699,75 +3699,73 @@ class RestAPI:
         delete the event and redecode the tx to reset it if needed.
         """
         with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
-            if (result := cursor.execute(
+            linked_ids = defaultdict(list)
+            for movement_id, matched_id in cursor.execute(
                 'SELECT left_event_id, right_event_id FROM history_event_links '
                 'WHERE link_type=? AND (left_event_id=? OR right_event_id=?)',
                 (HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(), identifier, identifier),  # noqa: E501
-            ).fetchone()) is not None:
-                asset_movement_identifier, matched_event_identifier = result
-            elif cursor.execute(
-                'SELECT 1 FROM history_event_link_ignores '
-                'WHERE event_id=? AND link_type=?',
-                (identifier, HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db()),
-            ).fetchone() is not None:
-                asset_movement_identifier = identifier
-                matched_event_identifier = None
-            else:
-                return api_response(wrap_in_fail_result(message=(
-                    f'The specified identifier {identifier} does not correspond to either the '
-                    'asset movement or its match for any matched pairs in the DB.'
-                )), HTTPStatus.BAD_REQUEST)
+            ):
+                linked_ids[movement_id].append(matched_id)
+
+        if len(linked_ids) == 0:
+            with self.rotkehlchen.data.db.conn.write_ctx() as write_cursor:
+                if write_cursor.execute(
+                    'DELETE FROM history_event_link_ignores WHERE event_id=? AND link_type=?',
+                    (identifier, HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db()),
+                ).rowcount == 0:
+                    return api_response(wrap_in_fail_result(message=(
+                        f'The specified identifier {identifier} does not correspond to either the '
+                        'asset movement or its match for any matched pairs in the DB.'
+                    )), HTTPStatus.BAD_REQUEST)
+
+                return api_response(OK_RESULT)
 
         with self.rotkehlchen.data.db.conn.write_ctx() as write_cursor:
-            if matched_event_identifier is None:
-                write_cursor.execute(
-                    'DELETE FROM history_event_link_ignores WHERE event_id=? AND link_type=?',
-                    (asset_movement_identifier, HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db()),  # noqa: E501
-                )
-            else:
+            for asset_movement_identifier, matched_event_identifiers in linked_ids.items():
                 write_cursor.execute(
                     'DELETE FROM history_event_links WHERE left_event_id=? AND link_type=?',
                     (asset_movement_identifier, HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db()),  # noqa: E501
                 )
-                write_cursor.execute(
+                write_cursor.executemany(
                     'DELETE FROM history_event_links WHERE left_event_id=? AND right_event_id=? '
                     'AND link_type=?',
-                    (
+                    [(
                         matched_event_identifier,
                         asset_movement_identifier,
                         HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),
-                    ),
+                    ) for matched_event_identifier in matched_event_identifiers],
                 )
                 # Remove any adjustment event that was added during matching
-                write_cursor.execute(
+                write_cursor.executemany(
                     'DELETE FROM history_events WHERE type=? AND group_identifier IN '
                     '(SELECT group_identifier FROM history_events WHERE identifier IN (?, ?))'
                     'AND identifier IN (SELECT parent_identifier FROM history_events_mappings '
                     'WHERE name=? AND value=?)',
-                    (
+                    [(
                         HistoryEventType.EXCHANGE_ADJUSTMENT.serialize(),
                         asset_movement_identifier,
                         matched_event_identifier,
                         HISTORY_MAPPING_KEY_STATE,
                         HistoryMappingState.AUTO_MATCHED.serialize_for_db(),
-                    ),
+                    ) for matched_event_identifier in matched_event_identifiers],
                 )
                 # Restore events from the backup created before matching
                 DBHistoryEvents.maybe_restore_history_events_from_backup(
                     write_cursor=write_cursor,
-                    identifiers=[matched_event_identifier, asset_movement_identifier],
+                    identifiers=[*matched_event_identifiers, asset_movement_identifier],
                 )
-                for id_to_restore in (matched_event_identifier, asset_movement_identifier):
-                    # Remove the auto-matched event state
-                    write_cursor.execute(
-                        'DELETE FROM history_events_mappings '
-                        'WHERE parent_identifier=? AND name=? AND value=?',
-                        (
-                            id_to_restore,
-                            HISTORY_MAPPING_KEY_STATE,
-                            HistoryMappingState.AUTO_MATCHED.serialize_for_db(),
-                        ),
-                    )
+                # Remove the auto-matched event state
+                placeholders = ','.join(['?'] * (len(matched_event_identifiers) + 1))
+                write_cursor.execute(
+                    'DELETE FROM history_events_mappings '
+                    f'WHERE parent_identifier IN({placeholders}) AND name=? AND value=?',
+                    (
+                        *matched_event_identifiers,
+                        asset_movement_identifier,
+                        HISTORY_MAPPING_KEY_STATE,
+                        HistoryMappingState.AUTO_MATCHED.serialize_for_db(),
+                    ),
+                )
 
         return api_response(OK_RESULT)
 
