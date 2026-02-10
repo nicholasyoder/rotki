@@ -23,7 +23,7 @@ clean:
 
 
 docker-image:
-	packaging/docker-image.sh
+	packaging/build-docker.sh
 
 
 test-assets:
