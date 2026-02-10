@@ -61,10 +61,6 @@ def get_event_direction(
     for_balance_tracking special cases:
     - DEPOSIT/DEPOSIT_ASSET -> IN
     - WITHDRAWAL/REMOVE_ASSET -> OUT
-
-    for_movement_matching uses the same special-casing except:
-    - DEPOSIT/DEPOSIT_ASSET -> OUT
-    - WITHDRAWAL/REMOVE_ASSET -> IN
     """
     if event_type == HistoryEventType.INFORMATIONAL:
         return EventDirection.NEUTRAL
@@ -85,9 +81,9 @@ def get_event_direction(
 
     if (for_balance_tracking or for_movement_matching) and direction == EventDirection.NEUTRAL:
         if (event_type, event_subtype) == (HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_ASSET):  # noqa: E501
-            return EventDirection.OUT if for_movement_matching else EventDirection.IN
+            return EventDirection.IN
         if (event_type, event_subtype) == (HistoryEventType.WITHDRAWAL, HistoryEventSubType.REMOVE_ASSET):  # noqa: E501
-            return EventDirection.IN if for_movement_matching else EventDirection.OUT
+            return EventDirection.OUT
         if (event_type, event_subtype) == (HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_TO_PROTOCOL):  # noqa: E501
             return EventDirection.OUT
         if (event_type, event_subtype) == (HistoryEventType.WITHDRAWAL, HistoryEventSubType.WITHDRAW_FROM_PROTOCOL):  # noqa: E501

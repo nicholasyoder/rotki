@@ -491,7 +491,8 @@ def test_multiple_close_matches_clustered(database: 'DBHandler') -> None:
     with database.conn.write_ctx() as write_cursor:
         events_db.add_history_events(
             write_cursor=write_cursor,
-            history=[(evm_event_1 := EvmEvent(
+            history=[EvmEvent(
+                identifier=(evm_event_1_id := 1),
                 tx_ref=make_evm_tx_hash(),
                 sequence_index=0,
                 timestamp=TimestampMS(1700000000000),
@@ -501,7 +502,8 @@ def test_multiple_close_matches_clustered(database: 'DBHandler') -> None:
                 asset=A_ETH,
                 amount=FVal('25.61'),
                 location_label=make_evm_address(),
-            )), (evm_event_2 := EvmEvent(
+            ), EvmEvent(
+                identifier=(evm_event_2_id := 2),
                 tx_ref=make_evm_tx_hash(),
                 sequence_index=0,
                 timestamp=TimestampMS(1700000000000 + 6 * 60 * 1000),
@@ -511,7 +513,8 @@ def test_multiple_close_matches_clustered(database: 'DBHandler') -> None:
                 asset=A_ETH,
                 amount=FVal('25.50'),
                 location_label=make_evm_address(),
-            )), (movement_1 := AssetMovement(
+            ), AssetMovement(
+                identifier=(movement_1_id := 3),
                 location=Location.POLONIEX,
                 event_type=HistoryEventType.DEPOSIT,
                 timestamp=TimestampMS(1700000000000 + 2 * 60 * 1000),
@@ -519,7 +522,8 @@ def test_multiple_close_matches_clustered(database: 'DBHandler') -> None:
                 amount=FVal('25.59'),
                 unique_id='polo_deposit_1',
                 location_label='Poloniex 1',
-            )), (movement_2 := AssetMovement(
+            ), AssetMovement(
+                identifier=(movement_2_id := 4),
                 location=Location.POLONIEX,
                 event_type=HistoryEventType.DEPOSIT,
                 timestamp=TimestampMS(1700000000000 + 4 * 60 * 1000),
@@ -527,28 +531,11 @@ def test_multiple_close_matches_clustered(database: 'DBHandler') -> None:
                 amount=FVal('25.45'),
                 unique_id='polo_deposit_2',
                 location_label='Poloniex 1',
-            ))],
+            )],
         )
 
     match_asset_movements(database=database)
     with database.conn.read_ctx() as cursor:
-        evm_event_1_id = cursor.execute(
-            'SELECT identifier FROM history_events WHERE group_identifier=?',
-            (evm_event_1.group_identifier,),
-        ).fetchone()[0]
-        evm_event_2_id = cursor.execute(
-            'SELECT identifier FROM history_events WHERE group_identifier=?',
-            (evm_event_2.group_identifier,),
-        ).fetchone()[0]
-        movement_1_id = cursor.execute(
-            'SELECT identifier FROM history_events WHERE group_identifier=?',
-            (movement_1.group_identifier,),
-        ).fetchone()[0]
-        movement_2_id = cursor.execute(
-            'SELECT identifier FROM history_events WHERE group_identifier=?',
-            (movement_2.group_identifier,),
-        ).fetchone()[0]
-
         matched_1 = _get_match_for_movement(cursor=cursor, movement_id=movement_1_id)
         matched_2 = _get_match_for_movement(cursor=cursor, movement_id=movement_2_id)
 
@@ -566,6 +553,7 @@ def test_customized_deposit(database: 'DBHandler') -> None:
         events_db.add_history_events(
             write_cursor=write_cursor,
             history=[(gas_event := EvmEvent(
+                identifier=1,
                 tx_ref=(tx_hash := make_evm_tx_hash()),
                 sequence_index=0,
                 timestamp=TimestampMS(1700002000000),
@@ -576,7 +564,8 @@ def test_customized_deposit(database: 'DBHandler') -> None:
                 amount=FVal('0.001'),
                 counterparty=CPT_GAS,
                 location_label=(location_label := make_evm_address()),
-            )), (deposit_event := EvmEvent(
+            )), EvmEvent(
+                identifier=(customized_id := 2),
                 tx_ref=tx_hash,
                 sequence_index=1,
                 timestamp=gas_event.timestamp,
@@ -586,7 +575,8 @@ def test_customized_deposit(database: 'DBHandler') -> None:
                 asset=A_ETH,
                 amount=ONE,
                 location_label=location_label,
-            )), (movement_event := AssetMovement(
+            ), AssetMovement(
+                identifier=(movement_id := 3),
                 location=Location.KRAKEN,
                 event_type=HistoryEventType.DEPOSIT,
                 timestamp=TimestampMS(1700002060000),
@@ -594,7 +584,7 @@ def test_customized_deposit(database: 'DBHandler') -> None:
                 amount=FVal('0.997109827'),
                 unique_id='kraken_deposit_eth_1',
                 location_label='Kraken 1',
-            )), EvmEvent(
+            ), EvmEvent(
                 tx_ref=make_evm_tx_hash(),
                 sequence_index=0,
                 timestamp=TimestampMS(1700002000000 + 900000),
@@ -640,10 +630,6 @@ def test_customized_deposit(database: 'DBHandler') -> None:
                 location_label=location_label,
             )],
         )
-        customized_id = write_cursor.execute(
-            'SELECT identifier FROM history_events WHERE group_identifier=? AND sequence_index=?',
-            (deposit_event.group_identifier, 1),
-        ).fetchone()[0]
         write_cursor.execute(
             'INSERT INTO history_events_mappings(parent_identifier, name, value) '
             'VALUES(?, ?, ?)',
@@ -656,10 +642,6 @@ def test_customized_deposit(database: 'DBHandler') -> None:
 
     match_asset_movements(database=database)
     with database.conn.read_ctx() as cursor:
-        movement_id = cursor.execute(
-            'SELECT identifier FROM history_events WHERE group_identifier=?',
-            (movement_event.group_identifier,),
-        ).fetchone()[0]
         assert _get_match_for_movement(cursor=cursor, movement_id=movement_id) == customized_id
 
 
@@ -670,6 +652,7 @@ def test_deposit_withdrawal_direction(database: 'DBHandler') -> None:
         events_db.add_history_events(
             write_cursor=write_cursor,
             history=[EvmEvent(
+                identifier=1,
                 tx_ref=make_evm_tx_hash(),
                 sequence_index=0,
                 timestamp=TimestampMS(1700003000000),
@@ -680,7 +663,8 @@ def test_deposit_withdrawal_direction(database: 'DBHandler') -> None:
                 amount=ONE,
                 counterparty=CPT_KRAKEN,
                 location_label=make_evm_address(),
-            ), (movement_event := AssetMovement(
+            ), AssetMovement(
+                identifier=(movement_id := 2),
                 location=Location.KRAKEN,
                 event_type=HistoryEventType.WITHDRAWAL,
                 timestamp=TimestampMS(1700003001000),
@@ -688,15 +672,11 @@ def test_deposit_withdrawal_direction(database: 'DBHandler') -> None:
                 amount=ONE,
                 unique_id='kraken_withdrawal_1',
                 location_label='Kraken 1',
-            ))],
+            )],
         )
 
     match_asset_movements(database=database)
     with database.conn.read_ctx() as cursor:
-        movement_id = cursor.execute(
-            'SELECT identifier FROM history_events WHERE group_identifier=?',
-            (movement_event.group_identifier,),
-        ).fetchone()[0]
         assert _get_match_for_movement(cursor=cursor, movement_id=movement_id) is None
 
 
@@ -706,6 +686,7 @@ def test_gno_kraken_flow(database: 'DBHandler') -> None:
         DBHistoryEvents(database).add_history_events(
             write_cursor=write_cursor,
             history=[EvmEvent(  # deposit to kraken
+                identifier=1,
                 tx_ref=make_evm_tx_hash(),
                 sequence_index=0,
                 timestamp=TimestampMS(1700004000000),
@@ -717,6 +698,7 @@ def test_gno_kraken_flow(database: 'DBHandler') -> None:
                 counterparty=CPT_KRAKEN,
                 location_label=make_evm_address(),
             ), EvmEvent(  # gas fee for deposit
+                identifier=2,
                 tx_ref=make_evm_tx_hash(),
                 sequence_index=1,
                 timestamp=TimestampMS(1700004000000),
@@ -727,7 +709,8 @@ def test_gno_kraken_flow(database: 'DBHandler') -> None:
                 amount=FVal('0.001'),
                 counterparty=CPT_GAS,
                 location_label=make_evm_address(),
-            ), (deposit_movement := AssetMovement(
+            ), AssetMovement(
+                identifier=(deposit_id := 3),
                 location=Location.KRAKEN,
                 event_type=HistoryEventType.DEPOSIT,
                 timestamp=TimestampMS(1700004060000),
@@ -735,7 +718,8 @@ def test_gno_kraken_flow(database: 'DBHandler') -> None:
                 amount=FVal('64'),
                 unique_id='kraken_gno_deposit_1',
                 location_label='Kraken 1',
-            )), (withdrawal_movement := AssetMovement(
+            ), AssetMovement(
+                identifier=(withdrawal_id := 4),
                 location=Location.KRAKEN,
                 event_type=HistoryEventType.WITHDRAWAL,
                 timestamp=TimestampMS(1700005000000),
@@ -743,7 +727,8 @@ def test_gno_kraken_flow(database: 'DBHandler') -> None:
                 amount=FVal('64'),
                 unique_id='kraken_gno_withdrawal_1',
                 location_label='Kraken 1',
-            )), AssetMovement(  # withdrawal fee
+            ), AssetMovement(  # withdrawal fee
+                identifier=5,
                 location=Location.KRAKEN,
                 event_type=HistoryEventType.WITHDRAWAL,
                 timestamp=TimestampMS(1700005000000),
@@ -752,7 +737,8 @@ def test_gno_kraken_flow(database: 'DBHandler') -> None:
                 unique_id='kraken_gno_withdrawal_1',
                 location_label='Kraken 1',
                 is_fee=True,
-            ), (withdraw_event := EvmEvent(  # onchain received after withdrawal
+            ), EvmEvent(  # onchain received after withdrawal
+                identifier=(withdraw_event_id := 6),
                 tx_ref=make_evm_tx_hash(),
                 sequence_index=0,
                 timestamp=TimestampMS(1700005060000),
@@ -762,7 +748,8 @@ def test_gno_kraken_flow(database: 'DBHandler') -> None:
                 asset=A_GNO,
                 amount=FVal('63.99'),
                 location_label=make_evm_address(),
-            )), EvmEvent(  # bridge event
+            ), EvmEvent(  # bridge event
+                identifier=7,
                 tx_ref=make_evm_tx_hash(),
                 sequence_index=0,
                 timestamp=TimestampMS(1700006000000),
@@ -778,18 +765,6 @@ def test_gno_kraken_flow(database: 'DBHandler') -> None:
 
     match_asset_movements(database=database)
     with database.conn.read_ctx() as cursor:
-        deposit_id = cursor.execute(
-            'SELECT identifier FROM history_events WHERE group_identifier=?',
-            (deposit_movement.group_identifier,),
-        ).fetchone()[0]
-        withdrawal_id = cursor.execute(
-            'SELECT identifier FROM history_events WHERE group_identifier=?',
-            (withdrawal_movement.group_identifier,),
-        ).fetchone()[0]
-        withdraw_event_id = cursor.execute(
-            'SELECT identifier FROM history_events WHERE group_identifier=?',
-            (withdraw_event.group_identifier,),
-        ).fetchone()[0]
         assert _get_match_for_movement(cursor=cursor, movement_id=deposit_id) is not None
         assert _get_match_for_movement(cursor=cursor, movement_id=withdrawal_id) == withdraw_event_id  # noqa: E501
 

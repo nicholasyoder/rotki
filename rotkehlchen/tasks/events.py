@@ -51,7 +51,7 @@ from rotkehlchen.types import (
     SupportedBlockchain,
     Timestamp,
 )
-from rotkehlchen.utils.misc import ts_ms_to_sec, ts_now
+from rotkehlchen.utils.misc import is_valid_ethereum_tx_hash, ts_ms_to_sec, ts_now
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -123,7 +123,7 @@ class CustomizedEventCandidate:
                 event_type=HistoryEventType.deserialize(self.event_type),
                 event_subtype=HistoryEventSubType.deserialize(self.event_subtype),
                 location=Location.deserialize_from_db(self.location),
-                for_movement_matching=True,
+                for_balance_tracking=True,
             )
         except DeserializationError:
             return None
@@ -863,15 +863,11 @@ def find_asset_movement_matches(
         f'movement_amount={asset_movement.amount}',
     )
 
-    expected_amounts: list[FVal] = [asset_movement.amount]
-    if is_deposit and fee_event is not None and fee_event.asset == asset_movement.asset:
-        expected_amounts.append(asset_movement.amount + fee_event.amount)
-    if (
-        not is_deposit and
-        fee_event is not None and
-        fee_event.asset == asset_movement.asset
-    ):
-        expected_amounts.append(asset_movement.amount - fee_event.amount)
+    expected_amounts = _get_expected_amounts(
+        asset_movement=asset_movement,
+        is_deposit=is_deposit,
+        fee_event=fee_event,
+    )
 
     onchain_candidates: list[HistoryBaseEntry] = []
     exchange_candidates: list[HistoryBaseEntry] = []
@@ -910,6 +906,25 @@ def find_asset_movement_matches(
         )
 
     return close_matches
+
+
+def _get_expected_amounts(
+        asset_movement: AssetMovement,
+        is_deposit: bool,
+        fee_event: AssetMovement | None,
+) -> list[FVal]:
+    """Build candidate amounts to compare against when matching movements."""
+    expected_amounts: list[FVal] = [asset_movement.amount]
+    if is_deposit and fee_event is not None and fee_event.asset == asset_movement.asset:
+        expected_amounts.append(asset_movement.amount + fee_event.amount)
+    if (
+        not is_deposit and
+        fee_event is not None and
+        fee_event.asset == asset_movement.asset
+    ):
+        expected_amounts.append(asset_movement.amount - fee_event.amount)
+
+    return expected_amounts
 
 
 def _find_close_matches(
@@ -991,12 +1006,9 @@ def _find_close_matches(
         counterparty_matches: list[HistoryBaseEntry] = []
         event_type_matches: list[HistoryBaseEntry] = []
         tx_ref = None if asset_movement.extra_data is None else asset_movement.extra_data.get('transaction_id')  # noqa: E501
-        if tx_ref is not None and not tx_ref.startswith('0x'):
-            movement_address = (
-                None if asset_movement.extra_data is None else asset_movement.extra_data.get('address')  # noqa: E501
-            )
-            if movement_address is not None and movement_address.startswith('0x'):
-                tx_ref = f'0x{tx_ref}'
+        # Some exchanges occasionally store tx hashes without the 0x prefix.
+        if tx_ref is not None and not tx_ref.startswith('0x') and is_valid_ethereum_tx_hash(prefixed_tx_ref := f'0x{tx_ref}'):  # noqa: E501
+            tx_ref = prefixed_tx_ref
 
         for match in close_matches:
             # Maybe match by exact asset match (matched events can have any asset in the collection)  # noqa: E501
@@ -1059,21 +1071,20 @@ def _pick_closest_amount_match(
         fee_event: AssetMovement | None,
 ) -> list[HistoryBaseEntry]:
     """Pick the closest amount match if it's strictly closer than the others."""
-    expected_amounts: list[FVal] = [asset_movement.amount]
-    if is_deposit and fee_event is not None and fee_event.asset == asset_movement.asset:
-        expected_amounts.append(asset_movement.amount + fee_event.amount)
-    if (
-        not is_deposit and
-        fee_event is not None and
-        fee_event.asset == asset_movement.asset
-    ):
-        expected_amounts.append(asset_movement.amount - fee_event.amount)
+    expected_amounts = _get_expected_amounts(
+        asset_movement=asset_movement,
+        is_deposit=is_deposit,
+        fee_event=fee_event,
+    )
 
     amount_differences = [
         (min(abs(match.amount - expected) for expected in expected_amounts), match)
         for match in matches
     ]
     amount_differences.sort(key=itemgetter(0))
+    # Only collapse to a single candidate when there is a unique best amount match.
+    # If the top two candidates have the same difference, keep all candidates and let
+    # the caller handle the ambiguity with additional matching rules.
     if (
         len(amount_differences) >= 2 and
         amount_differences[0][0] < amount_differences[1][0]
