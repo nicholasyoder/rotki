@@ -431,21 +431,15 @@ def match_asset_movements(database: 'DBHandler') -> None:
                 match_count = len(matched_events)
 
             if match_count == 1:
-                success, error_msg = update_asset_movement_matched_event(
+                update_asset_movement_matched_event(
                     events_db=events_db,
                     asset_movement=asset_movement,
                     fee_event=fee_event,
                     matched_event=(matched_event := matched_events[0]),
                     is_deposit=is_deposit,
                 )
-                if success:
-                    already_matched_event_ids.add(matched_event.identifier)  # type: ignore[arg-type]  # ids from db will not be none
-                    continue
-
-                log.error(
-                    f'Failed to match asset movement {asset_movement.group_identifier} '
-                    f'due to: {error_msg}',
-                )
+                already_matched_event_ids.add(matched_event.identifier)  # type: ignore[arg-type]  # ids from db will not be none
+                continue
             elif match_count == 0 and not any(
                 (
                     asset.identifier in NATIVE_TOKEN_IDS_OF_CHAINS_WITH_TXS or
@@ -621,10 +615,10 @@ def update_asset_movement_matched_event(
         fee_event: AssetMovement | None,
         matched_event: HistoryBaseEntry,
         is_deposit: bool,
-) -> tuple[bool, str]:
+        allow_adding_adjustments: bool = True,
+) -> None:
     """Update the given matched event with proper event_type, counterparty, etc and cache the
-    event identifiers. Returns a tuple containing a boolean indicating success and a string
-    containing any error message.
+    event identifiers.
     """
     should_edit_notes = True
     if isinstance(matched_event, OnchainEvent):
@@ -670,13 +664,14 @@ def update_asset_movement_matched_event(
         'exchange_name': asset_movement.location_label,
     }
 
-    _maybe_add_adjustment_event(
-        events_db=events_db,
-        asset_movement=asset_movement,
-        fee_event=fee_event,
-        matched_event=matched_event,
-        is_deposit=is_deposit,
-    )
+    if allow_adding_adjustments:
+        _maybe_add_adjustment_event(
+            events_db=events_db,
+            asset_movement=asset_movement,
+            fee_event=fee_event,
+            matched_event=matched_event,
+            is_deposit=is_deposit,
+        )
 
     # Save the event and cache the matched identifiers
     with events_db.db.conn.write_ctx() as write_cursor:
@@ -703,8 +698,6 @@ def update_asset_movement_matched_event(
             'MATCH_DEBUG: cached match movement_id='
             f'{asset_movement.identifier} matched_id={matched_event.identifier}',
         )
-
-    return True, ''
 
 
 def should_exclude_possible_match(

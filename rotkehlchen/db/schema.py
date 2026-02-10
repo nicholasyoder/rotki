@@ -706,9 +706,10 @@ CREATE TABLE IF NOT EXISTS history_event_links (
     left_event_id INTEGER NOT NULL,
     right_event_id INTEGER NOT NULL,
     link_type INTEGER NOT NULL,
-    PRIMARY KEY (left_event_id, link_type),
+    PRIMARY KEY (left_event_id, link_type, right_event_id),
     FOREIGN KEY(left_event_id) REFERENCES history_events(identifier) ON DELETE CASCADE,
-    FOREIGN KEY(right_event_id) REFERENCES history_events(identifier) ON DELETE CASCADE
+    FOREIGN KEY(right_event_id) REFERENCES history_events(identifier) ON DELETE CASCADE,
+    UNIQUE(right_event_id, link_type)
 );
 """
 
