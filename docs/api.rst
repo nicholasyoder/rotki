@@ -15105,6 +15105,70 @@ Ethereum staking events
    :statuscode 401: No user is currently logged in.
    :statuscode 500: Internal rotki error.
 
+Refetch ETH staking events
+===================================
+
+.. http:post:: /api/(version)/blockchains/eth2/events/refetch
+
+   Doing a POST on this endpoint will force a re-query of ETH staking events (block productions or withdrawals) for the specified validators or addresses. This is useful to recover potentially missed events due to indexer errors or other temporary failures.
+
+   For block production events, beaconcha.in does not support time range filtering, so all blocks for the targeted validators are re-queried regardless of the provided time range. This operation can be expensive in terms of API usage.
+
+   For withdrawal events, etherscan is queried for the specified time range.
+
+   Existing events are not deleted. Duplicates are handled automatically.
+
+   .. note::
+      This endpoint can also be queried asynchronously by using ``"async_query": true``
+
+   **Example Request (block productions by validator indices)**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      POST /api/1/blockchains/eth2/events/refetch HTTP/1.1
+      Host: localhost:5042
+      Content-Type: application/json;charset=UTF-8
+
+      {"async_query": false, "entry_type": "eth_block_event", "validator_indices": [12345, 67890]}
+
+   **Example Request (withdrawals by addresses)**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      POST /api/1/blockchains/eth2/events/refetch HTTP/1.1
+      Host: localhost:5042
+      Content-Type: application/json;charset=UTF-8
+
+      {"async_query": false, "entry_type": "eth_withdrawal_event", "addresses": ["0x4c66C2055f6A7A01e102Bde8d8d71d1D36667e21"], "from_timestamp": 1640995200, "to_timestamp": 1672531200}
+
+   :reqjson bool async_query: If true, the query will be processed asynchronously.
+   :reqjson string entry_type: The type of staking events to refetch. Must be either ``eth_block_event`` or ``eth_withdrawal_event``.
+   :reqjson list[int] validator_indices: Optional. A non-empty list of validator indices to refetch events for. Exactly one of ``validator_indices`` or ``addresses`` must be provided.
+   :reqjson list[string] addresses: Optional. A non-empty list of withdrawal addresses to refetch events for. Exactly one of ``validator_indices`` or ``addresses`` must be provided.
+   :reqjson int from_timestamp: Optional. Start of the time period. Defaults to 0. Only meaningful for withdrawal events since beaconcha.in does not support time range filtering.
+   :reqjson int to_timestamp: Optional. End of the time period. Defaults to current time. Only meaningful for withdrawal events since beaconcha.in does not support time range filtering.
+
+   **Example Response**:
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+          "result": true,
+          "message": ""
+      }
+
+   :resjson boolean result: Returns ``true`` when the refetch operation completes successfully.
+
+   :statuscode 200: Refetch operation completed successfully.
+   :statuscode 400: Invalid parameters such as empty validator_indices, providing both validator_indices and addresses, or validator indices not tracked by rotki.
+   :statuscode 401: No user is currently logged in.
+   :statuscode 409: eth2 module is not active.
+   :statuscode 502: Could not reach external data sources (beaconcha.in or etherscan).
+   :statuscode 500: Internal rotki error.
+
 
 Solana Token Migration
 ======================

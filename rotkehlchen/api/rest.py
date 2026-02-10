@@ -1971,6 +1971,23 @@ class RestAPI:
         DBHistoryEvents(self.rotkehlchen.data.db).reset_eth_staking_data(entry_type=entry_type)
         return api_response(OK_RESULT, status_code=HTTPStatus.OK)
 
+    @async_api_call()
+    def refetch_staking_events(
+            self,
+            entry_type: Literal[HistoryBaseEntryType.ETH_BLOCK_EVENT, HistoryBaseEntryType.ETH_WITHDRAWAL_EVENT],  # noqa: E501
+            from_timestamp: Timestamp,
+            to_timestamp: Timestamp,
+            validator_indices: list[int],
+            addresses: list[ChecksumEvmAddress],
+    ) -> dict[str, Any]:
+        return self.history_service.refetch_staking_events(
+            entry_type=entry_type,
+            from_timestamp=from_timestamp,
+            to_timestamp=to_timestamp,
+            validator_indices=validator_indices,
+            addresses=addresses,
+        )
+
     @overload
     def delete_blockchain_transaction_data(
             self,

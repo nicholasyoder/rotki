@@ -318,13 +318,15 @@ class BeaconChain(ExternalServiceWithRecommendedApiKey):
     def get_and_store_produced_blocks(
             self,
             indices: list[int],
+            update_cache: bool = True,
     ) -> None:
         with self.produced_blocks_lock:
-            self._get_and_store_produced_blocks(indices)
+            self._get_and_store_produced_blocks(indices=indices, update_cache=update_cache)
 
     def _get_and_store_produced_blocks(
             self,
             indices: list[int],
+            update_cache: bool = True,
     ) -> None:
         """Get blocks produced by a set of validator indices/pubkeys and store the
         data in the DB.
@@ -343,6 +345,10 @@ class BeaconChain(ExternalServiceWithRecommendedApiKey):
         by the relay. It can also be wrong due to misreporting by the relay. Beaconchain
         can also tell us there is relay data but that relay data just saying recipient
         is same as producer and same amount, meaning no extra MEV reward.
+
+        If `update_cache` is True (default), updates LAST_PRODUCED_BLOCKS_QUERY_TS to now
+        for each validator. Set to False when refetching historical data so that the
+        normal periodic query schedule is not affected.
 
         May raise:
         - RemoteError due to problems querying beaconcha.in API
@@ -404,15 +410,16 @@ class BeaconChain(ExternalServiceWithRecommendedApiKey):
                     if mev_event is not None:
                         dbevents.add_history_event(write_cursor=write_cursor, event=mev_event)
 
-            with self.db.user_write() as write_cursor:
-                now = ts_now()
-                for index in indices:
-                    self.db.set_dynamic_cache(
-                        write_cursor=write_cursor,
-                        name=DBCacheDynamic.LAST_PRODUCED_BLOCKS_QUERY_TS,
-                        value=now,
-                        index=index,
-                    )
+            if update_cache:
+                with self.db.user_write() as write_cursor:
+                    now = ts_now()
+                    for index in indices:
+                        self.db.set_dynamic_cache(
+                            write_cursor=write_cursor,
+                            name=DBCacheDynamic.LAST_PRODUCED_BLOCKS_QUERY_TS,
+                            value=now,
+                            index=index,
+                        )
 
         except KeyError as e:  # raising and not continuing since if 1 key missing something is off  # noqa: E501
             raise RemoteError(
