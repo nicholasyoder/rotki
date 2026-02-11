@@ -651,8 +651,9 @@ class HistoryService:
     ) -> list[dict[str, Any] | list[dict[str, Any]]]:
         """Serialize and group history events for the api.
         Groups onchain swaps, multi trades, and matched asset movement events into sub-lists.
-        Uses the order defined in EVENT_GROUPING_ORDER as well as some custom logic for matched
-        asset movements to decide which events belong in which group.
+        For swaps, since the events will be sequential, grouping simply uses the order defined in
+        EVENT_GROUPING_ORDER. But for asset movement groups, there may be other events between
+        the movement and its matched event(s), so it can't simply rely on the order of the events.
 
         Args:
         - events: list of events to serialize and group
@@ -671,10 +672,10 @@ class HistoryService:
         Returns a list of serialized events with grouped events in sub-lists.
         """
         entries: list[dict[str, Any] | list[dict[str, Any]]] = []
-        current_group: list[dict[str, Any]] = []
-        current_asset_movement_group_id: str | None = None
+        current_sequential_group: list[dict[str, Any]] = []
+        current_matched_group: list[dict[str, Any]] = []
+        current_matched_group_id = None
         last_subtype_index: int | None = None
-        already_grouped_event_count = 0
         for event, event_accounting_rule_status, grouped_events_num in zip(
             events,
             event_accounting_rule_statuses,
@@ -704,32 +705,33 @@ class HistoryService:
 
             if (
                 replacement_group_id is not None and
-                event.group_identifier != current_asset_movement_group_id and
-                ((  # this is the matched event
-                    event.extra_data is not None and
-                    (current_asset_movement_group_id := event.extra_data.get('matched_asset_movement', {}).get('group_identifier')) is not None  # noqa: E501
-                ) or (  # or the matched event was an asset movement and this is its fee event
-                    event.entry_type == HistoryBaseEntryType.ASSET_MOVEMENT_EVENT and
-                    event.event_subtype == HistoryEventSubType.FEE
+                ((  # this is a matched event
+                     event.extra_data is not None and
+                     event.extra_data.get('matched_asset_movement') is not None
+                ) or (  # or this is an asset movement
+                     event.entry_type == HistoryBaseEntryType.ASSET_MOVEMENT_EVENT
                 ))
-            ):  # This event is part of the matched event for an asset movement.
-                if len(current_group) != already_grouped_event_count:
+            ):  # This event is part of a matched asset movement group.
+                if len(current_sequential_group) > 0:  # First flush the current sequential group if present  # noqa: E501
+                    entries.append(current_sequential_group)
+                    current_sequential_group, last_subtype_index = [], None
+
+                if (
+                    current_matched_group_id is not None and
+                    current_matched_group_id != replacement_group_id
+                ):
                     # This is the beginning of an asset movement group coming immediately after
                     # another asset movement group. Add the current group to entries and reset
                     # to begin a new group.
-                    entries.append(current_group)
-                    current_group, already_grouped_event_count, last_subtype_index = [], 0, None
+                    entries.append(current_matched_group)
+                    current_matched_group = []
 
-                # Append to current_group and increment already_grouped_event_count so the logic
-                # below using the EVENT_GROUPING_ORDER works correctly for the asset movement.
-                current_group.append(serialized)
-                already_grouped_event_count += 1
+                # Append to current_matched_group and set the current_matched_group_id
+                current_matched_group.append(serialized)
+                current_matched_group_id = replacement_group_id
             elif (event.entry_type in (
                 HistoryBaseEntryType.EVM_SWAP_EVENT,
                 HistoryBaseEntryType.SOLANA_SWAP_EVENT,
-            ) or (
-                event.group_identifier == current_asset_movement_group_id and
-                event.entry_type == HistoryBaseEntryType.ASSET_MOVEMENT_EVENT
             )):
                 if (event_subtype_index := EVENT_GROUPING_ORDER[event.event_type].get(event.event_subtype)) is None:  # noqa: E501
                     log.error(
@@ -739,27 +741,30 @@ class HistoryService:
                     event_subtype_index = 0
 
                 if (
-                    len(current_group) == already_grouped_event_count or
+                    len(current_sequential_group) == 0 or
                     (last_subtype_index is not None and event_subtype_index >= last_subtype_index)
                 ):
-                    current_group.append(serialized)
+                    current_sequential_group.append(serialized)
                 else:  # Start a new group because the order is broken
-                    if len(current_group) > 0:
-                        entries.append(current_group)
-                    current_group = [serialized]
-                    already_grouped_event_count = 0
-                    current_asset_movement_group_id = None
+                    if len(current_sequential_group) > 0:
+                        entries.append(current_sequential_group)
+                    current_sequential_group = [serialized]
 
                 last_subtype_index = event_subtype_index
             else:  # Non-groupable event
-                if len(current_group) > 0:
-                    entries.append(current_group)
-                    current_group, already_grouped_event_count = [], 0
-                    last_subtype_index = current_asset_movement_group_id = None
+                if len(current_sequential_group) > 0:
+                    entries.append(current_sequential_group)
+                    current_sequential_group, last_subtype_index = [], None
+                if len(current_matched_group) > 0 and replacement_group_id is None:
+                    entries.append(current_matched_group)
+                    current_matched_group, current_matched_group_id = [], None
                 entries.append(serialized)
 
-        if len(current_group) > 0:  # Append any remaining group
-            entries.append(current_group)
+        # Append any remaining groups
+        if len(current_sequential_group) > 0:
+            entries.append(current_sequential_group)
+        if len(current_matched_group) > 0:
+            entries.append(current_matched_group)
 
         return entries
 

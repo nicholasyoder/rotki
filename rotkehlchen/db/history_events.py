@@ -67,7 +67,7 @@ from rotkehlchen.history.events.structures.onchain_event import OnchainEvent
 from rotkehlchen.history.events.structures.solana_event import SolanaEvent
 from rotkehlchen.history.events.structures.solana_swap import SolanaSwapEvent
 from rotkehlchen.history.events.structures.swap import SwapEvent
-from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
+from rotkehlchen.history.events.structures.types import HistoryEventType
 from rotkehlchen.history.price import query_price_or_use_default
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import deserialize_fval
@@ -1923,7 +1923,7 @@ class DBHistoryEvents:
         Returns a tuple containing the processed events, joined group ids dict, entries found,
         entries with limit, entries total, and group identifiers with ignored assets.
         """
-        movement_group_to_match_info: dict[str, tuple[int, str, int]] = {}
+        movement_group_to_match_info: dict[str, list[tuple[int, str, int]]] = defaultdict(list)
         match_group_to_movement_info: dict[str, tuple[str, int]] = {}
         joined_group_ids: dict[str, str] = {}
         if len(events_result) == 0:
@@ -1945,8 +1945,18 @@ class DBHistoryEvents:
         group_ids_to_count: set[str] = set()
         matched_rows: list[tuple[int, int, str, str, int, int]] = []
         for chunk, placeholders in get_query_chunks(list(result_group_ids)):
+            # First, find the ids of all movements associated with the provided events in a cte,
+            # then load the info for these movements and all events that may be matched with them.
+            # This properly handles getting all associated events no matter which event from a
+            # matched pair or multi-match group is present in the events_list here.
             for row in cursor.execute(
-                'SELECT history_event_links.left_event_id, history_event_links.right_event_id, '
+                'WITH movement_ids AS ('
+                    'SELECT DISTINCT history_event_links.left_event_id '
+                    'FROM history_event_links JOIN history_events ON history_events.identifier IN '
+                    '(history_event_links.right_event_id, history_event_links.left_event_id) '
+                    'WHERE history_event_links.link_type = ? '
+                    f'AND history_events.group_identifier IN ({placeholders})'
+                ') SELECT history_event_links.left_event_id, history_event_links.right_event_id, '
                 'movement_events_join.group_identifier, match_events_join.group_identifier, '
                 'movement_events_join.entry_type, match_events_join.entry_type '
                 'FROM history_event_links '
@@ -1954,18 +1964,21 @@ class DBHistoryEvents:
                 'movement_events_join.identifier = history_event_links.left_event_id '
                 'JOIN history_events match_events_join ON '
                 'match_events_join.identifier = history_event_links.right_event_id '
-                'WHERE history_event_links.link_type = ? AND ('
-                f'movement_events_join.group_identifier IN ({placeholders}) OR '
-                f'match_events_join.group_identifier IN ({placeholders}))',
-                (HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(), *chunk, *chunk),
+                'WHERE history_event_links.link_type = ? AND '
+                'history_event_links.left_event_id IN movement_ids',
+                (
+                    HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),
+                    *chunk,
+                    HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),
+                ),
             ):
                 matched_rows.append((
-                    int(row[0]),
-                    int(row[1]),
+                    int(row[0]),  # movement id
+                    int(row[1]),  # match id
                     (movement_group_identifier := row[2]),
                     (match_group_identifier := row[3]),
-                    int(row[4]),
-                    int(row[5]),
+                    int(row[4]),  # movement entry type
+                    int(row[5]),  # match entry type
                 ))
                 group_ids_to_count.add(movement_group_identifier)
                 group_ids_to_count.add(match_group_identifier)
@@ -2012,13 +2025,14 @@ class DBHistoryEvents:
                 joined_group_ids[movement_group_identifier] = canonical_group_identifier
                 joined_group_ids[match_group_identifier] = canonical_group_identifier
             else:
-                joined_group_ids[movement_group_identifier] = match_group_identifier
-                joined_group_ids[match_group_identifier] = match_group_identifier
-            movement_group_to_match_info[movement_group_identifier] = (
+                joined_group_ids[movement_group_identifier] = movement_group_identifier
+                joined_group_ids[match_group_identifier] = movement_group_identifier
+
+            movement_group_to_match_info[movement_group_identifier].append((
                 match_id,
                 match_group_identifier,
                 match_group_count,
-            )
+            ))
             match_group_to_movement_info[match_group_identifier] = (
                 movement_group_identifier,
                 movement_group_count,
@@ -2037,23 +2051,39 @@ class DBHistoryEvents:
             # - skip the event if we have already processed an event from that movement/match group
             already_processed_matches: set[str] = set()
             for grouped_events_num, event in cast('list[tuple[int, HistoryBaseEntry]]', events_result):  # noqa: E501
-                matched_group_identifier: str | None
-                matched_joined_group_count: int
+                should_skip, matched_joined_group_count = False, 0
                 if (
-                    (match_info := movement_group_to_match_info.get(event.group_identifier)) is not None and  # noqa: E501
+                    (match_info_list := movement_group_to_match_info.get(event.group_identifier)) is not None and  # noqa: E501
                     event.group_identifier in match_group_to_movement_info
                 ):  # This is a movement matched with a movement.
-                    _, matched_group_identifier, matched_joined_group_count = match_info
-                    should_skip = len({matched_group_identifier, event.group_identifier} & already_processed_matches) != 0  # noqa: E501
-                elif match_info is not None:
-                    _, matched_group_identifier, matched_joined_group_count = match_info
-                    should_skip = matched_group_identifier in already_processed_matches
+                    for _, matched_group_identifier, joined_count in match_info_list:
+                        matched_joined_group_count += joined_count
+                        if len({matched_group_identifier, event.group_identifier} & already_processed_matches) != 0:  # noqa: E501
+                            should_skip = True
+                        already_processed_matches.add(matched_group_identifier)
+                    already_processed_matches.add(event.group_identifier)
+                elif match_info_list is not None:
+                    for _, matched_group_identifier, joined_count in match_info_list:
+                        matched_joined_group_count += joined_count
+                        if matched_group_identifier in already_processed_matches:
+                            should_skip = True
+                        else:
+                            already_processed_matches.add(matched_group_identifier)
                 elif (movement_info := match_group_to_movement_info.get(event.group_identifier)) is not None:  # noqa: E501
-                    _, matched_joined_group_count = movement_info
+                    movement_group_identifier, matched_joined_group_count = movement_info
                     should_skip = event.group_identifier in already_processed_matches
-                    matched_group_identifier = event.group_identifier
-                else:
-                    should_skip, matched_joined_group_count, matched_group_identifier = False, 0, None  # noqa: E501
+                    already_processed_matches.add(event.group_identifier)
+                    # also load any other matched events associated with this movement.
+                    if (
+                        not should_skip and
+                        (match_info_list := movement_group_to_match_info.get(movement_group_identifier)) is not None  # noqa: E501
+                    ):
+                        for _, matched_group_id, joined_count in match_info_list:
+                            if matched_group_id == event.group_identifier:
+                                continue
+
+                            matched_joined_group_count += joined_count
+                            already_processed_matches.add(matched_group_id)
 
                 if should_skip:  # already processed the other side of this pair, so skip.
                     entries_found -= 1
@@ -2063,54 +2093,62 @@ class DBHistoryEvents:
                 processed_events_result.append(
                     (grouped_events_num + matched_joined_group_count, event),   # type: ignore[arg-type]  # will be a list of tuple[int, HistoryBaseEntry]
                 )
-                if matched_group_identifier is not None:
-                    already_processed_matches.add(matched_group_identifier)
 
-        else:  # Not aggregating. Need to include the asset movements in their matched groups
+        else:  # Not aggregating. Need to include all associated events in the movement groups.
             events_by_group: dict[str, list[HistoryBaseEntry]] = defaultdict(list)
             for event in cast('list[HistoryBaseEntry]', events_result):
                 events_by_group[event.group_identifier].append(event)
 
-            movement_group_ids = [
-                movement_info[0]
-                for group_identifier in events_by_group
-                if (movement_info := match_group_to_movement_info.get(group_identifier)) is not None  # noqa: E501
-            ]
+            # Collect any group ids that are associated with some of the current events, but that
+            # are not already present in the current event list.
+            needed_group_ids: set[str] = set()
+            for group_identifier in events_by_group:
+                if (match_info_list := movement_group_to_match_info.get(group_identifier)) is not None:  # noqa: E501
+                    needed_group_ids.update(
+                        group_id for _, group_id, _ in match_info_list
+                        if group_id not in events_by_group
+                    )
+                if (movement_info := match_group_to_movement_info.get(group_identifier)) is not None:  # noqa: E501
+                    if (movement_group_id := movement_info[0]) not in events_by_group:
+                        needed_group_ids.add(movement_group_id)
 
-            movement_events_by_group: dict[str, list[HistoryBaseEntry]] = defaultdict(list)
-            if len(movement_group_ids) > 0:
-                movement_events_result = self._get_history_events_with_ignored_groups(
+                    # also include group ids of any other events matched with this movement.
+                    if (match_info_list := movement_group_to_match_info.get(movement_group_id)) is not None:  # noqa: E501
+                        needed_group_ids.update(
+                            group_id for _, group_id, _ in match_info_list
+                            if group_id not in events_by_group
+                        )
+
+            # Load the actual events for these associated groups
+            joined_events_by_group: dict[str, list[HistoryBaseEntry]] = defaultdict(list)
+            if len(needed_group_ids) > 0:
+                joined_events_result = self._get_history_events_with_ignored_groups(
                     cursor=cursor,
                     filter_query=HistoryEventFilterQuery.make(
-                        group_identifiers=movement_group_ids,
+                        group_identifiers=list(needed_group_ids),
                     ),
                     entries_limit=None,
                 )
-                for movement in movement_events_result.events:
-                    movement_events_by_group[movement.group_identifier].append(movement)  # type: ignore  # will be a list of HistoryBaseEntry
+                for joined_event in joined_events_result.events:
+                    joined_events_by_group[joined_event.group_identifier].append(joined_event)  # type: ignore  # will be a list of HistoryBaseEntry
                 ignored_group_identifiers.update(
-                    movement_events_result.ignored_group_identifiers,
+                    joined_events_result.ignored_group_identifiers,
                 )
 
+            # Include the newly loaded events with their associated groups.
             for group_identifier, events in events_by_group.items():
-                if (
-                    (movement_info := match_group_to_movement_info.get(group_identifier)) is not None and  # noqa: E501
-                    (match_info := movement_group_to_match_info.get(movement_group_id := movement_info[0])) is not None and  # noqa: E501
-                    len(match_events := [x for x in events if x.identifier == match_info[0]]) == 1
-                ):
-                    insert_index = events.index(match_events[0]) + 1  # insert immediately after the matched event  # noqa: E501
-                    if (
-                        len(events) > insert_index and
-                        (next_event := events[insert_index]).entry_type == HistoryBaseEntryType.ASSET_MOVEMENT_EVENT and  # noqa: E501
-                        next_event.event_subtype == HistoryEventSubType.FEE
-                    ):  # if the matched event is an asset movement with a fee,
-                        # insert after the fee instead of between the movement and its fee
-                        insert_index += 1
+                if (match_info_list := movement_group_to_match_info.get(group_identifier)) is not None:  # noqa: E501
+                    for _, matched_group_id, _ in match_info_list:
+                        events.extend(joined_events_by_group[matched_group_id])
+                elif (movement_info := match_group_to_movement_info.get(group_identifier)) is not None:  # noqa: E501
+                    events.extend(joined_events_by_group[movement_group_id := movement_info[0]])
+                    # also include all events from the groups of any other events that are
+                    # matched with this movement.
+                    if (match_info_list := movement_group_to_match_info.get(movement_group_id)) is not None:  # noqa: E501
+                        for _, group_id, _ in match_info_list:
+                            events.extend(joined_events_by_group[group_id])
 
-                    movement_events = movement_events_by_group.get(movement_group_id, [])
-                    events[insert_index:insert_index] = movement_events
-
-                processed_events_result.extend(events)  # type: ignore[arg-type]  # will be a list of HistoryBaseEntry
+                processed_events_result.extend(sorted(events, key=lambda event: event.timestamp))  # type: ignore  # will be a list of HistoryBaseEntry
 
         return (
             processed_events_result,

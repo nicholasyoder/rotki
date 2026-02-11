@@ -3548,12 +3548,12 @@ class RestAPI:
     def match_asset_movements(
             self,
             asset_movement_identifier: int,
-            matched_event_identifier: int | None,
+            matched_event_identifiers: list[int],
     ) -> Response:
-        """Match an exchange asset movement to an onchain event, or mark the movement as having
-        no match if the matched_event_identifier is None.
+        """Match an exchange asset movement to onchain event(s), or mark the movement as having
+        no match if no matched_event_identifiers are specified.
         """
-        if matched_event_identifier is None:
+        if len(matched_event_identifiers) == 0:
             # No matched event specified. Mark as having no match so this movement will be ignored.
             with self.rotkehlchen.data.db.conn.write_ctx() as write_cursor:
                 write_cursor.execute(
@@ -3564,22 +3564,22 @@ class RestAPI:
             return api_response(OK_RESULT)
 
         events_db = DBHistoryEvents(database=self.rotkehlchen.data.db)
-        asset_movement = matched_event = fee_event = None
+        asset_movement, matched_events, fee_event = None, [], None
         with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
             for event in events_db.get_history_events_internal(
                 cursor=cursor,
                 filter_query=HistoryEventFilterQuery.make(
-                    identifiers=[asset_movement_identifier, matched_event_identifier],
+                    identifiers=[asset_movement_identifier, *matched_event_identifiers],
                 ),
             ):
                 if event.identifier == asset_movement_identifier:
                     asset_movement = event
-                elif event.identifier == matched_event_identifier:
-                    matched_event = event
+                elif event.identifier in matched_event_identifiers:
+                    matched_events.append(event)
 
             if (
                 asset_movement is not None and
-                matched_event is not None and
+                len(matched_events) > 0 and
                 len(fee_events := events_db.get_history_events_internal(
                     cursor=cursor,
                     filter_query=HistoryEventFilterQuery.make(
@@ -3595,18 +3595,23 @@ class RestAPI:
 
         if asset_movement is None or not isinstance(asset_movement, AssetMovement):
             error_msg = f'No asset movement event found in the DB for identifier {asset_movement_identifier}'  # noqa: E501
-        elif matched_event is None:
-            error_msg = f'No event found in the DB for identifier {matched_event_identifier}'
-        else:
-            success, error_msg = update_asset_movement_matched_event(
-                events_db=events_db,
-                asset_movement=asset_movement,
-                fee_event=fee_event,  # type: ignore[arg-type]  # Will be asset movement fee. Query is filtered by entry type above.
-                matched_event=matched_event,
-                is_deposit=asset_movement.event_type == HistoryEventType.DEPOSIT,
-            )
-            if success:
-                return api_response(OK_RESULT)
+        elif len(matched_events) != len(matched_event_identifiers):
+            error_msg = f'Some of the specified matched event identifiers {matched_event_identifiers} are missing from the DB.'  # noqa: E501
+        else:  # Successfully found events for the provided ids. Update the matched events.
+            # Don't allow adding any adjustment events when multi-matching since there are
+            # expected to be differences between the movement amount and each individual matched
+            # event's amount in that case.
+            allow_adding_adjustments = len(matched_events) == 1
+            for matched_event in matched_events:
+                update_asset_movement_matched_event(
+                    events_db=events_db,
+                    asset_movement=asset_movement,
+                    fee_event=fee_event,  # type: ignore[arg-type]  # Will be asset movement fee. Query is filtered by entry type above.
+                    matched_event=matched_event,
+                    is_deposit=asset_movement.event_type == HistoryEventType.DEPOSIT,
+                    allow_adding_adjustments=allow_adding_adjustments,
+                )
+            return api_response(OK_RESULT)
 
         return api_response(wrap_in_fail_result(message=error_msg), HTTPStatus.BAD_REQUEST)
 
