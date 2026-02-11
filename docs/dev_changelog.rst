@@ -86,8 +86,8 @@ Exchange asset movement events may now be manually matched with specific onchain
 
   - Match asset movements with corresponding events or mark asset movements as having no match.
   - Required ``asset_movement`` parameter specifying the DB identifier of the asset movement.
-  - Optional ``matched_event`` parameter specifying the DB identifier of the event to match with the asset movement. If this parameter is omitted or set to null, the asset movement is marked as having no match.
-  - Example: ``{"asset_movement": 123, "matched_event": 124}``
+  - Optional ``matched_events`` parameter specifying the list of DB identifiers of events to match with the asset movement. The asset movement is marked as having no match if this parameter is omitted or an empty list.
+  - Example: ``{"asset_movement": 123, "matched_events": [124]}``
 
 * **New Endpoint**: ``POST /api/(version)/history/events/match/asset_movements``
 
