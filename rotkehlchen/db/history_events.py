@@ -67,7 +67,7 @@ from rotkehlchen.history.events.structures.onchain_event import OnchainEvent
 from rotkehlchen.history.events.structures.solana_event import SolanaEvent
 from rotkehlchen.history.events.structures.solana_swap import SolanaSwapEvent
 from rotkehlchen.history.events.structures.swap import SwapEvent
-from rotkehlchen.history.events.structures.types import HistoryEventSubType
+from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.history.price import query_price_or_use_default
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import deserialize_fval
@@ -293,25 +293,94 @@ class DBHistoryEvents:
         )
 
     @staticmethod
-    def maybe_restore_history_event_from_backup(
+    def maybe_restore_history_events_from_backup(
             write_cursor: 'DBCursor',
-            identifier: int,
+            identifiers: list[int],
     ) -> None:
-        """Restore a history event to its original backed-up state.
-        If no backup exists, this function does nothing.
+        """Restore multiple history events to their original backed-up state in bulk.
+        Events without a backup are silently skipped.
         """
-        for table in ('history_events', 'chain_events_info'):
+        for chunk, placeholders in get_query_chunks(identifiers):
+            for table in ('history_events', 'chain_events_info'):
+                write_cursor.execute(
+                    f'INSERT OR REPLACE INTO {table} '
+                    f'SELECT * FROM {table}_backup WHERE identifier IN ({placeholders})',
+                    chunk,
+                )
+            # Delete backup entries (also deletes backup chain info via foreign key)
             write_cursor.execute(
-                f'INSERT OR REPLACE INTO {table} '
-                f'SELECT * FROM {table}_backup WHERE identifier=?',
-                (identifier,),
+                f'DELETE FROM history_events_backup WHERE identifier IN ({placeholders})',
+                chunk,
             )
 
-        # Delete backup entry (will also delete backup chain info due to foreign key constraint)
-        write_cursor.execute(
-            'DELETE FROM history_events_backup WHERE identifier=?',
-            (identifier,),
+    def restore_matched_events_before_purge(
+            self,
+            write_cursor: 'DBCursor',
+            location: Location,
+    ) -> None:
+        """Undo asset movement matching for events linked to the purged location.
+
+        Matched events on the other side still carry modified fields from the matching process.
+        This restores them from backup and removes any auto-created adjustment events.
+        """
+        link_type_db = HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db()
+        location_db = location.serialize_for_db()
+        events_to_restore: set[int] = set()
+
+        # grab all matched pairs that touch this location, along with each side's location
+        # so we can figure out which side survives the purge and needs restoration
+        for left_id, right_id, left_loc, right_loc in write_cursor.execute(
+            'SELECT L.left_event_id, L.right_event_id, '
+            'HL.location, HR.location '
+            'FROM history_event_links L '
+            'INNER JOIN history_events HL ON HL.identifier = L.left_event_id '
+            'INNER JOIN history_events HR ON HR.identifier = L.right_event_id '
+            'WHERE L.link_type = ? AND (HL.location = ? OR HR.location = ?)',
+            (link_type_db, location_db, location_db),
+        ):
+            if left_loc == location_db and right_loc != location_db:
+                events_to_restore.add(right_id)
+            elif right_loc == location_db and left_loc != location_db:
+                events_to_restore.add(left_id)
+            # both sides belong to the purged location, nothing to restore
+
+        if len(events_to_restore) == 0:
+            return
+
+        # clean up any adjustment events that were auto-created during matching
+        # on the surviving side (adjustments in the purged location get deleted with the purge)
+        for chunk, placeholders in get_query_chunks(list(events_to_restore)):
+            self.delete_events_and_track(
+                write_cursor=write_cursor,
+                where_clause=(
+                    f'WHERE type = ? AND group_identifier IN '
+                    f'(SELECT group_identifier FROM history_events '
+                    f'WHERE identifier IN ({placeholders})) '
+                    f'AND identifier IN (SELECT parent_identifier FROM history_events_mappings '
+                    f'WHERE name = ? AND value = ?)'
+                ),
+                where_bindings=(
+                    HistoryEventType.EXCHANGE_ADJUSTMENT.serialize(),
+                    *chunk,
+                    HISTORY_MAPPING_KEY_STATE,
+                    HistoryMappingState.AUTO_MATCHED.serialize_for_db(),
+                ),
+            )
+
+        # put each surviving event back to its pre-match state
+        self.maybe_restore_history_events_from_backup(
+            write_cursor=write_cursor,
+            identifiers=list(events_to_restore),
         )
+
+        # and drop their AUTO_MATCHED mappings in one go
+        for chunk, placeholders in get_query_chunks(list(events_to_restore)):
+            write_cursor.execute(
+                f'DELETE FROM history_events_mappings '
+                f'WHERE parent_identifier IN ({placeholders}) '
+                f'AND name = ? AND value = ?',
+                (*chunk, HISTORY_MAPPING_KEY_STATE, HistoryMappingState.AUTO_MATCHED.serialize_for_db()),  # noqa: E501
+            )
 
     def edit_history_event(
             self,
