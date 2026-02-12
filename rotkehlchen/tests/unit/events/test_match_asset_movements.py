@@ -142,13 +142,13 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
                 amount=FVal('0.2'),
                 unique_id='3',
                 location_label='Coinbase 1',
-            )), EvmEvent(  # withdrawal1's matched event, already a deposit/deposit_asset, but notes and counterparty will be updated.  # noqa: E501
+            )), EvmEvent(  # withdrawal1's matched event, already an exchange_transfer/receive, but notes and counterparty will be updated.  # noqa: E501
                 tx_ref=make_evm_tx_hash(),
                 sequence_index=0,
                 timestamp=withdrawal1.timestamp,
                 location=Location.ARBITRUM_ONE,
-                event_type=HistoryEventType.DEPOSIT,
-                event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+                event_type=HistoryEventType.EXCHANGE_TRANSFER,
+                event_subtype=HistoryEventSubType.RECEIVE,
                 asset=A_USDC,
                 amount=FVal('0.2'),
                 location_label=(withdrawal1_user_address := make_evm_address()),
@@ -157,8 +157,8 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
                 sequence_index=0,
                 timestamp=withdrawal1.timestamp,
                 location=Location.ARBITRUM_ONE,
-                event_type=HistoryEventType.DEPOSIT,
-                event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+                event_type=HistoryEventType.EXCHANGE_TRANSFER,
+                event_subtype=HistoryEventSubType.RECEIVE,
                 asset=A_USDC,
                 amount=FVal('0.21'),
             )), (withdrawal1_wrong_ts_event := EvmEvent(  # similar to withdrawal1's matched event, but timestamp is farther away than the time range  # noqa: E501
@@ -166,8 +166,8 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
                 sequence_index=0,
                 timestamp=TimestampMS(withdrawal1.timestamp + ts_sec_to_ms(Timestamp(DEFAULT_ASSET_MOVEMENT_TIME_RANGE + 1))),  # noqa: E501
                 location=Location.ARBITRUM_ONE,
-                event_type=HistoryEventType.DEPOSIT,
-                event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+                event_type=HistoryEventType.EXCHANGE_TRANSFER,
+                event_subtype=HistoryEventSubType.RECEIVE,
                 asset=A_USDC,
                 amount=FVal('0.2'),
             )), (withdrawal2 := AssetMovement(  # withdrawal2, with two similar events
@@ -645,48 +645,13 @@ def test_customized_deposit(database: 'DBHandler') -> None:
         assert _get_match_for_movement(cursor=cursor, movement_id=movement_id) == customized_id
 
 
-def test_deposit_withdrawal_direction(database: 'DBHandler') -> None:
-    """Onchain deposit to exchange should not match an exchange withdrawal."""
-    events_db = DBHistoryEvents(database)
-    with database.conn.write_ctx() as write_cursor:
-        events_db.add_history_events(
-            write_cursor=write_cursor,
-            history=[EvmEvent(
-                identifier=1,
-                tx_ref=make_evm_tx_hash(),
-                sequence_index=0,
-                timestamp=TimestampMS(1700003000000),
-                location=Location.ETHEREUM,
-                event_type=HistoryEventType.DEPOSIT,
-                event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
-                asset=A_ETH,
-                amount=ONE,
-                counterparty=CPT_KRAKEN,
-                location_label=make_evm_address(),
-            ), AssetMovement(
-                identifier=(movement_id := 2),
-                location=Location.KRAKEN,
-                event_subtype=HistoryEventSubType.SPEND,
-                timestamp=TimestampMS(1700003001000),
-                asset=A_ETH,
-                amount=ONE,
-                unique_id='kraken_withdrawal_1',
-                location_label='Kraken 1',
-            )],
-        )
-
-    match_asset_movements(database=database)
-    with database.conn.read_ctx() as cursor:
-        assert _get_match_for_movement(cursor=cursor, movement_id=movement_id) is None
-
-
 def test_gno_kraken_flow(database: 'DBHandler') -> None:
     """Test GNO deposit/withdrawal flow with fees and bridge event."""
     with database.conn.write_ctx() as write_cursor:
         DBHistoryEvents(database).add_history_events(
             write_cursor=write_cursor,
             history=[EvmEvent(  # deposit to kraken
-                identifier=1,
+                identifier=(deposit_event_id := 1),
                 tx_ref=make_evm_tx_hash(),
                 sequence_index=0,
                 timestamp=TimestampMS(1700004000000),
@@ -764,7 +729,7 @@ def test_gno_kraken_flow(database: 'DBHandler') -> None:
 
     match_asset_movements(database=database)
     with database.conn.read_ctx() as cursor:
-        assert _get_match_for_movement(cursor=cursor, movement_id=deposit_id) is not None
+        assert _get_match_for_movement(cursor=cursor, movement_id=deposit_id) == deposit_event_id
         assert _get_match_for_movement(cursor=cursor, movement_id=withdrawal_id) == withdraw_event_id  # noqa: E501
 
 
@@ -1116,46 +1081,52 @@ def test_adjustments(database: 'DBHandler') -> None:
             assert events[0].amount == FVal('0.01')
 
 
-def test_match_by_balance_tracking_event_direction(database: 'DBHandler') -> None:
+def test_deposit_withdrawal_direction(database: 'DBHandler') -> None:
     """Test that when there are multiple close matches due to the accounting direction being
-    neutral that we narrow the match based on is balance tracking direction.
+    neutral that we narrow the match with deposits as OUT events and withdrawals as IN events.
     """
-    with database.conn.write_ctx() as write_cursor:
-        DBHistoryEvents(database).add_history_events(
-            write_cursor=write_cursor,
-            history=[(movement_event := AssetMovement(
-                identifier=(movement_id := 1),
-                location=Location.KRAKEN,
-                event_subtype=HistoryEventSubType.SPEND,
-                timestamp=TimestampMS(1520000000000),
-                asset=A_USDC,
-                amount=FVal('25'),
-                unique_id='xyz',
-                location_label='Kraken 1',
-            )), EvmEvent(  # Ignored event. Balance tracking direction is OUT (wrong direction).
-                identifier=2,
-                tx_ref=make_evm_tx_hash(),
-                sequence_index=0,
-                timestamp=movement_event.timestamp,
-                location=Location.ETHEREUM,
-                event_type=HistoryEventType.WITHDRAWAL,
-                event_subtype=HistoryEventSubType.REMOVE_ASSET,
-                asset=movement_event.asset,
-                amount=movement_event.amount,
-            ), EvmEvent(  # Matched event. Balance tracking direction is IN (expected direction).
-                identifier=(match_id := 3),
-                tx_ref=make_evm_tx_hash(),
-                sequence_index=0,
-                timestamp=movement_event.timestamp,
-                location=Location.ETHEREUM,
-                event_type=HistoryEventType.DEPOSIT,
-                event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
-                asset=movement_event.asset,
-                amount=movement_event.amount,
-            )],
-        )
+    for movement_type, expected_match in (
+        (HistoryEventSubType.SPEND, 2),  # OUT from exchange matches with the Withdrawal (id 2)
+        (HistoryEventSubType.RECEIVE, 3),  # IN to exchange matches with the Deposit (id 3)
+    ):
+        with database.conn.write_ctx() as write_cursor:
+            DBHistoryEvents(database).add_history_events(
+                write_cursor=write_cursor,
+                history=[(movement_event := AssetMovement(
+                    identifier=(movement_id := 1),
+                    location=Location.KRAKEN,
+                    event_subtype=movement_type,  # type: ignore[arg-type]  # will only be spend or receive
+                    timestamp=TimestampMS(1520000000000),
+                    asset=A_USDC,
+                    amount=FVal('25'),
+                    unique_id='xyz',
+                    location_label='Kraken 1',
+                )), EvmEvent(
+                    identifier=2,
+                    tx_ref=make_evm_tx_hash(),
+                    sequence_index=0,
+                    timestamp=movement_event.timestamp,
+                    location=Location.ETHEREUM,
+                    event_type=HistoryEventType.WITHDRAWAL,
+                    event_subtype=HistoryEventSubType.REMOVE_ASSET,
+                    asset=movement_event.asset,
+                    amount=movement_event.amount,
+                ), EvmEvent(
+                    identifier=3,
+                    tx_ref=make_evm_tx_hash(),
+                    sequence_index=0,
+                    timestamp=movement_event.timestamp,
+                    location=Location.ETHEREUM,
+                    event_type=HistoryEventType.DEPOSIT,
+                    event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+                    asset=movement_event.asset,
+                    amount=movement_event.amount,
+                )],
+            )
 
-    _match_and_check(database=database, expected_matches=[(movement_id, match_id)])
+        _match_and_check(database=database, expected_matches=[(movement_id, expected_match)])
+        with database.conn.write_ctx() as write_cursor:
+            write_cursor.execute('DELETE FROM history_events')
 
 
 def test_match_by_transaction_id_without_0x_prefix(database: 'DBHandler') -> None:

@@ -61,6 +61,17 @@ def get_event_direction(
     for_balance_tracking special cases:
     - DEPOSIT/DEPOSIT_ASSET -> IN
     - WITHDRAWAL/REMOVE_ASSET -> OUT
+    - DEPOSIT/DEPOSIT_TO_PROTOCOL -> OUT
+    - WITHDRAWAL/WITHDRAW_FROM_PROTOCOL -> IN
+    - TRANSFER/NONE -> OUT
+    - EXCHANGE_TRANSFER/SPEND -> OUT
+    - EXCHANGE_TRANSFER/RECEIVE -> IN
+    - EXCHANGE_TRANSFER/FEE -> OUT
+
+    for_movement_matching special cases:
+    - DEPOSIT/DEPOSIT_ASSET -> OUT
+    - WITHDRAWAL/REMOVE_ASSET -> IN
+    - all other cases handled the same as for_balance_tracking
     """
     if event_type == HistoryEventType.INFORMATIONAL:
         return EventDirection.NEUTRAL
@@ -81,9 +92,9 @@ def get_event_direction(
 
     if (for_balance_tracking or for_movement_matching) and direction == EventDirection.NEUTRAL:
         if (event_type, event_subtype) == (HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_ASSET):  # noqa: E501
-            return EventDirection.IN
+            return EventDirection.OUT if for_movement_matching else EventDirection.IN
         if (event_type, event_subtype) == (HistoryEventType.WITHDRAWAL, HistoryEventSubType.REMOVE_ASSET):  # noqa: E501
-            return EventDirection.OUT
+            return EventDirection.IN if for_movement_matching else EventDirection.OUT
         if (event_type, event_subtype) == (HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_TO_PROTOCOL):  # noqa: E501
             return EventDirection.OUT
         if (event_type, event_subtype) == (HistoryEventType.WITHDRAWAL, HistoryEventSubType.WITHDRAW_FROM_PROTOCOL):  # noqa: E501
