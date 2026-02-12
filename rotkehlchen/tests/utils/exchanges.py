@@ -1240,13 +1240,13 @@ TRANSACTIONS_RESPONSE = """{
     "currency": "USDC"
   },
   "created_at": "2024-12-02T14:46:23Z",
-  "id": "5a1a32dc-bfda-5cbf-b625-1a197e699829",
+  "id": "id9",
   "native_amount": {
     "amount": "-9.98",
     "currency": "EUR"
   },
   "resource": "transaction",
-  "resource_path": "/v2/accounts/40e03599-5601-534c-95c2-0db5f5c5e652/transactions/5a1a32dc-bfda-5cbf-b625-1a197e699829",
+  "resource_path": "/v2/accounts/40e03599-5601-534c-95c2-0db5f5c5e652/transactions/id9",
   "status": "completed",
   "trade": {
     "fee": {
@@ -1421,11 +1421,11 @@ TRANSACTIONS_RESPONSE = """{
  "description": null,
  "details": {"header": "Bought 0.05772716 ETH (€10.99)", "health": "positive", "payment_method_name": "1234********7890", "subtitle": "Using 1234********7890", "title": "Bought Ethereum"},
  "hide_native_amount": false,
- "id": "txid-1",
+ "id": "id10",
  "instant_exchange": false,
  "native_amount": {"amount": "10.99", "currency": "EUR"},
  "resource": "transaction",
- "resource_path": "/v2/accounts/accountid-1/transactions/txid-1",
+ "resource_path": "/v2/accounts/accountid-1/transactions/id10",
  "status": "completed",
  "type": "buy",
  "updated_at": "2021-11-08T01:18:26Z"
@@ -1436,11 +1436,11 @@ TRANSACTIONS_RESPONSE = """{
  "description": null,
  "details": {"header": "Sold 0.05772715 ETH (€10.98)", "health": "positive", "payment_method_name": "1234********7890", "subtitle": "Using 1234********7890", "title": "Sold Ethereum"},
  "hide_native_amount": false,
- "id": "txid-2",
+ "id": "id11",
  "instant_exchange": false,
  "native_amount": {"amount": "10.98", "currency": "EUR"},
  "resource": "transaction",
- "resource_path": "/v2/accounts/accountid-1/transactions/txid-2",
+ "resource_path": "/v2/accounts/accountid-1/transactions/id11",
  "status": "completed",
  "type": "sell",
  "updated_at": "2021-12-08T01:18:26Z"
