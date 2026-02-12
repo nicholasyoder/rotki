@@ -368,7 +368,7 @@ def test_poloniex_deposits_withdrawal_unknown_asset(poloniex: 'Poloniex') -> Non
     assert asset_movements == [AssetMovement(
         location=Location.POLONIEX,
         location_label=poloniex.name,
-        event_type=HistoryEventType.WITHDRAWAL,
+        event_subtype=HistoryEventSubType.SPEND,
         timestamp=TimestampMS(1458994442000),
         asset=A_BTC,
         amount=FVal('4.5'),
@@ -380,16 +380,15 @@ def test_poloniex_deposits_withdrawal_unknown_asset(poloniex: 'Poloniex') -> Non
     ), AssetMovement(
         location=Location.POLONIEX,
         location_label=poloniex.name,
-        event_type=HistoryEventType.WITHDRAWAL,
+        event_subtype=HistoryEventSubType.FEE,
         timestamp=TimestampMS(1458994442000),
         asset=A_BTC,
         amount=FVal('0.5'),
         unique_id='withdrawal_1',
-        is_fee=True,
     ), AssetMovement(
         location=Location.POLONIEX,
         location_label=poloniex.name,
-        event_type=HistoryEventType.WITHDRAWAL,
+        event_subtype=HistoryEventSubType.SPEND,
         timestamp=TimestampMS(1468994442000),
         asset=A_ETH,
         amount=FVal('9.9'),
@@ -401,16 +400,15 @@ def test_poloniex_deposits_withdrawal_unknown_asset(poloniex: 'Poloniex') -> Non
     ), AssetMovement(
         location=Location.POLONIEX,
         location_label=poloniex.name,
-        event_type=HistoryEventType.WITHDRAWAL,
+        event_subtype=HistoryEventSubType.FEE,
         timestamp=TimestampMS(1468994442000),
         asset=A_ETH,
         amount=FVal('0.1'),
         unique_id='withdrawal_2',
-        is_fee=True,
     ), AssetMovement(
         location=Location.POLONIEX,
         location_label=poloniex.name,
-        event_type=HistoryEventType.DEPOSIT,
+        event_subtype=HistoryEventSubType.RECEIVE,
         timestamp=TimestampMS(1448994442000),
         asset=A_BTC,
         amount=FVal('50.0'),
@@ -422,7 +420,7 @@ def test_poloniex_deposits_withdrawal_unknown_asset(poloniex: 'Poloniex') -> Non
     ), AssetMovement(
         location=Location.POLONIEX,
         location_label=poloniex.name,
-        event_type=HistoryEventType.DEPOSIT,
+        event_subtype=HistoryEventSubType.RECEIVE,
         timestamp=TimestampMS(1438994442000),
         asset=A_ETH,
         amount=FVal('100.0'),
@@ -465,7 +463,8 @@ def test_poloniex_deposits_withdrawal_null_fee(poloniex: 'Poloniex'):
         )
 
     assert len(asset_movements) == 1
-    assert asset_movements[0].event_type == HistoryEventType.WITHDRAWAL
+    assert asset_movements[0].event_type == HistoryEventType.EXCHANGE_TRANSFER
+    assert asset_movements[0].event_subtype == HistoryEventSubType.SPEND
     assert asset_movements[0].timestamp == TimestampMS(1478994442000)
     assert asset_movements[0].asset == Asset('FAIR')
     assert asset_movements[0].amount == FVal('100.5')

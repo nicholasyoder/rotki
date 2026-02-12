@@ -75,7 +75,7 @@ def test_match_asset_movements(rotkehlchen_api_server: 'APIServer') -> None:
             history=[(asset_movement := AssetMovement(
                 identifier=1,
                 location=Location.KRAKEN,
-                event_type=HistoryEventType.WITHDRAWAL,
+                event_subtype=HistoryEventSubType.SPEND,
                 timestamp=TimestampMS(1510000000000),
                 asset=A_ETH,
                 amount=FVal('0.1'),
@@ -112,10 +112,10 @@ def test_match_asset_movements(rotkehlchen_api_server: 'APIServer') -> None:
         )
 
     # Check that the matched event was properly updated
-    matched_event.event_type = HistoryEventType.DEPOSIT
-    matched_event.event_subtype = HistoryEventSubType.DEPOSIT_ASSET
+    matched_event.event_type = HistoryEventType.EXCHANGE_TRANSFER
+    matched_event.event_subtype = HistoryEventSubType.RECEIVE
     matched_event.counterparty = 'kraken'
-    matched_event.notes = f'Deposit 0.1 ETH to {user_address} from Kraken 1'
+    matched_event.notes = f'Receive 0.1 ETH in {user_address} from Kraken 1'
     matched_event.extra_data = {'matched_asset_movement': {
         'group_identifier': asset_movement.group_identifier,
         'exchange': 'kraken',
@@ -144,7 +144,7 @@ def test_match_asset_movements_errors(rotkehlchen_api_server: 'APIServer') -> No
             history=[AssetMovement(
                 identifier=1,
                 location=Location.KRAKEN,
-                event_type=HistoryEventType.WITHDRAWAL,
+                event_subtype=HistoryEventSubType.SPEND,
                 timestamp=TimestampMS(1510000000000),
                 asset=A_ETH,
                 amount=FVal('0.1'),
@@ -182,7 +182,7 @@ def test_multi_match_asset_movements(rotkehlchen_api_server: 'APIServer') -> Non
             )), (asset_movement := AssetMovement(
                 identifier=2,
                 location=Location.KRAKEN,
-                event_type=HistoryEventType.WITHDRAWAL,
+                event_subtype=HistoryEventSubType.SPEND,
                 timestamp=TimestampMS(1510000000000),
                 asset=A_ETH,
                 amount=FVal('0.3'),
@@ -268,7 +268,8 @@ def test_multi_match_asset_movements(rotkehlchen_api_server: 'APIServer') -> Non
             cursor=cursor,
             filter_query=HistoryEventFilterQuery.make(
                 entry_types=IncludeExcludeFilterData([HistoryBaseEntryType.EVM_EVENT]),
-                event_types=[HistoryEventType.DEPOSIT],
+                event_types=[HistoryEventType.EXCHANGE_TRANSFER],
+                event_subtypes=[HistoryEventSubType.RECEIVE],
             ),
         )) == 2  # the two matched events
         assert all(
@@ -313,11 +314,14 @@ def test_multi_match_asset_movements(rotkehlchen_api_server: 'APIServer') -> Non
         assert result[1]['entry']['counterparty'] == CPT_GAS
         assert len(sublist := result[2]) == 3  # movement and two matched events
         assert all(x['entry']['group_identifier'] == asset_movement.group_identifier for x in sublist)  # noqa: E501
-        assert sublist[0]['entry']['event_type'] == HistoryEventType.WITHDRAWAL.serialize()
+        assert sublist[0]['entry']['event_type'] == HistoryEventType.EXCHANGE_TRANSFER.serialize()
+        assert sublist[0]['entry']['event_subtype'] == HistoryEventSubType.SPEND.serialize()
         assert sublist[0]['entry']['actual_group_identifier'] == asset_movement.group_identifier
-        assert sublist[1]['entry']['event_type'] == HistoryEventType.DEPOSIT.serialize()
+        assert sublist[1]['entry']['event_type'] == HistoryEventType.EXCHANGE_TRANSFER.serialize()
+        assert sublist[1]['entry']['event_subtype'] == HistoryEventSubType.RECEIVE.serialize()
         assert sublist[1]['entry']['actual_group_identifier'] == matched_event1.group_identifier
-        assert sublist[2]['entry']['event_type'] == HistoryEventType.DEPOSIT.serialize()
+        assert sublist[2]['entry']['event_type'] == HistoryEventType.EXCHANGE_TRANSFER.serialize()
+        assert sublist[2]['entry']['event_subtype'] == HistoryEventSubType.RECEIVE.serialize()
         assert sublist[2]['entry']['actual_group_identifier'] == matched_event2.group_identifier
 
     # Check that non-aggregating with no filter works properly including the surrounding events.
@@ -355,7 +359,7 @@ def test_mark_asset_movement_no_match(rotkehlchen_api_server: 'APIServer') -> No
             history=[(asset_movement := AssetMovement(
                 identifier=1,
                 location=Location.KRAKEN,
-                event_type=HistoryEventType.WITHDRAWAL,
+                event_subtype=HistoryEventSubType.SPEND,
                 timestamp=TimestampMS(1500000000000),
                 asset=A_ETH,
                 amount=FVal('0.1'),
@@ -418,7 +422,7 @@ def test_unlink_matched_asset_movements(rotkehlchen_api_server: 'APIServer') -> 
             history=(original_events := [(movement1 := AssetMovement(
                 identifier=1,
                 location=Location.KRAKEN,
-                event_type=HistoryEventType.WITHDRAWAL,
+                event_subtype=HistoryEventSubType.SPEND,
                 timestamp=TimestampMS(1500000000000),
                 asset=A_ETH,
                 amount=FVal('0.1'),
@@ -426,7 +430,7 @@ def test_unlink_matched_asset_movements(rotkehlchen_api_server: 'APIServer') -> 
             )), (movement2 := AssetMovement(
                 identifier=2,
                 location=Location.BINANCE,
-                event_type=HistoryEventType.DEPOSIT,
+                event_subtype=HistoryEventSubType.RECEIVE,
                 timestamp=movement1.timestamp,
                 asset=movement1.asset,
                 amount=movement1.amount + FVal('0.0001'),  # different amount - will make an adjustment event.  # noqa: E501
@@ -434,7 +438,7 @@ def test_unlink_matched_asset_movements(rotkehlchen_api_server: 'APIServer') -> 
             )), (movement3 := AssetMovement(
                 identifier=3,
                 location=Location.BITSTAMP,
-                event_type=HistoryEventType.WITHDRAWAL,
+                event_subtype=HistoryEventSubType.SPEND,
                 timestamp=TimestampMS(1600000000000),
                 asset=A_ETH,
                 amount=FVal('0.5'),
@@ -452,7 +456,7 @@ def test_unlink_matched_asset_movements(rotkehlchen_api_server: 'APIServer') -> 
             )), (movement4 := AssetMovement(
                 identifier=5,
                 location=Location.COINBASE,
-                event_type=HistoryEventType.DEPOSIT,
+                event_subtype=HistoryEventSubType.RECEIVE,
                 timestamp=TimestampMS(1700000000000),
                 asset=A_ETH,
                 amount=FVal('0.1'),
@@ -519,6 +523,15 @@ def test_unlink_matched_asset_movements(rotkehlchen_api_server: 'APIServer') -> 
 
     _check_all_unlinked(dbevents=dbevents, original_events=original_events)
 
+    # Re-link after unlinking should not fail due to duplicated key_value_cache entries.
+    assert_simple_ok_response(requests.put(
+        url=api_url_for(rotkehlchen_api_server, 'matchassetmovementsresource'),
+        json={
+            'asset_movement': movement3.identifier,
+            'matched_events': [movement3_match.identifier],
+        },
+    ))
+
 
 def test_get_unmatched_asset_movements(rotkehlchen_api_server: 'APIServer') -> None:
     """Test getting unmatched asset movements"""
@@ -530,7 +543,7 @@ def test_get_unmatched_asset_movements(rotkehlchen_api_server: 'APIServer') -> N
             history=[(matched_movement := AssetMovement(
                 identifier=1,
                 location=Location.KRAKEN,
-                event_type=HistoryEventType.WITHDRAWAL,
+                event_subtype=HistoryEventSubType.SPEND,
                 timestamp=TimestampMS(1510000000000),
                 asset=A_ETH,
                 amount=FVal('0.1'),
@@ -538,7 +551,7 @@ def test_get_unmatched_asset_movements(rotkehlchen_api_server: 'APIServer') -> N
             )), (unmatched_movement := AssetMovement(
                 identifier=2,
                 location=Location.KRAKEN,
-                event_type=HistoryEventType.WITHDRAWAL,
+                event_subtype=HistoryEventSubType.SPEND,
                 timestamp=TimestampMS(1510000000000),
                 asset=A_ETH,
                 amount=FVal('0.1'),
@@ -546,7 +559,7 @@ def test_get_unmatched_asset_movements(rotkehlchen_api_server: 'APIServer') -> N
             )), (no_match_movement := AssetMovement(
                 identifier=3,
                 location=Location.KRAKEN,
-                event_type=HistoryEventType.WITHDRAWAL,
+                event_subtype=HistoryEventSubType.SPEND,
                 timestamp=TimestampMS(1510000000000),
                 asset=A_ETH,
                 amount=FVal('0.1'),
@@ -603,7 +616,7 @@ def test_get_possible_matches(rotkehlchen_api_server: 'APIServer') -> None:
     matched_movement = AssetMovement(
         identifier=1,
         location=Location.KRAKEN,
-        event_type=HistoryEventType.WITHDRAWAL,
+        event_subtype=HistoryEventSubType.SPEND,
         timestamp=TimestampMS(1510000000000),
         asset=A_ETH,
         amount=FVal('0.1'),
@@ -695,7 +708,7 @@ def test_get_possible_matches(rotkehlchen_api_server: 'APIServer') -> None:
                 event=AssetMovement(
                     group_identifier=f'dummy-{idx}',
                     timestamp=matched_movement.timestamp,
-                    event_type=HistoryEventType.DEPOSIT,
+                    event_subtype=HistoryEventSubType.RECEIVE,
                     location=Location.EXTERNAL,
                     asset=A_ETH,
                     amount=FVal('0.1'),
@@ -745,7 +758,7 @@ def test_get_history_events_with_matched_asset_movements(
             history=[(movement1 := AssetMovement(
                 identifier=1,
                 location=Location.KRAKEN,
-                event_type=HistoryEventType.WITHDRAWAL,
+                event_subtype=HistoryEventSubType.SPEND,
                 timestamp=TimestampMS(1500000000000),
                 asset=A_ETH,
                 amount=FVal('0.1'),
@@ -753,16 +766,15 @@ def test_get_history_events_with_matched_asset_movements(
             )), AssetMovement(
                 identifier=2,
                 location=Location.KRAKEN,
-                event_type=HistoryEventType.WITHDRAWAL,
+                event_subtype=HistoryEventSubType.FEE,
                 timestamp=movement1.timestamp,
                 asset=A_ETH,
                 amount=FVal('0.001'),
-                is_fee=True,
                 unique_id='1',
             ), (movement2 := AssetMovement(
                 identifier=3,
                 location=Location.BINANCE,
-                event_type=HistoryEventType.DEPOSIT,
+                event_subtype=HistoryEventSubType.RECEIVE,
                 timestamp=TimestampMS(1500000000001),
                 asset=A_ETH,
                 amount=FVal('0.1'),
@@ -770,16 +782,15 @@ def test_get_history_events_with_matched_asset_movements(
             )), AssetMovement(
                 identifier=4,
                 location=Location.BINANCE,
-                event_type=HistoryEventType.DEPOSIT,
+                event_subtype=HistoryEventSubType.FEE,
                 timestamp=movement2.timestamp,
                 asset=A_ETH,
                 amount=FVal('0.001'),
-                is_fee=True,
                 unique_id='2',
             ), (movement3 := AssetMovement(
                 identifier=5,
                 location=Location.KRAKEN,
-                event_type=HistoryEventType.WITHDRAWAL,
+                event_subtype=HistoryEventSubType.SPEND,
                 timestamp=TimestampMS(1500000000002),
                 asset=A_ETH,
                 amount=FVal('0.5'),
@@ -854,10 +865,12 @@ def test_get_history_events_with_matched_asset_movements(
     assert unrelated_event_entry['entry']['actual_group_identifier'] == evm_event_1.group_identifier  # noqa: E501
     # matched events are in a sublist so frontend can easily group them
     assert len(match1_sublist := result[1]) == 2
-    assert match1_sublist[0]['entry']['event_type'] == 'deposit'
+    assert match1_sublist[0]['entry']['event_type'] == 'exchange transfer'
+    assert match1_sublist[0]['entry']['event_subtype'] == 'receive'
     assert match1_sublist[0]['entry']['group_identifier'] == movement3.group_identifier
     assert match1_sublist[0]['entry']['actual_group_identifier'] == evm_event_1.group_identifier
-    assert match1_sublist[1]['entry']['event_type'] == 'withdrawal'
+    assert match1_sublist[1]['entry']['event_type'] == 'exchange transfer'
+    assert match1_sublist[1]['entry']['event_subtype'] == 'spend'
     assert match1_sublist[1]['entry']['group_identifier'] == movement3.group_identifier
     assert match1_sublist[1]['entry']['actual_group_identifier'] == movement3.group_identifier
 
@@ -872,11 +885,13 @@ def test_get_history_events_with_matched_asset_movements(
     assert len(result) == 1
     assert len(match2_sublist := result[0]) == 4
     assert all(x['entry']['group_identifier'] == movement1.group_identifier for x in match2_sublist)  # noqa: E501
-    assert match2_sublist[0]['entry']['event_type'] == 'withdrawal'
+    assert match2_sublist[0]['entry']['event_type'] == 'exchange transfer'
+    assert match2_sublist[0]['entry']['event_subtype'] == 'spend'
     assert match2_sublist[0]['entry']['actual_group_identifier'] == movement1.group_identifier
     assert match2_sublist[1]['entry']['event_subtype'] == 'fee'
     assert match2_sublist[1]['entry']['actual_group_identifier'] == movement1.group_identifier
-    assert match2_sublist[2]['entry']['event_type'] == 'deposit'
+    assert match2_sublist[2]['entry']['event_type'] == 'exchange transfer'
+    assert match2_sublist[2]['entry']['event_subtype'] == 'receive'
     assert match2_sublist[2]['entry']['actual_group_identifier'] == movement2.group_identifier
     assert match2_sublist[3]['entry']['event_subtype'] == 'fee'
     assert match2_sublist[3]['entry']['actual_group_identifier'] == movement2.group_identifier

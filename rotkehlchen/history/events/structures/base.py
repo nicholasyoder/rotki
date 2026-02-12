@@ -91,6 +91,14 @@ def get_event_direction(
         if (event_type, event_subtype) == (HistoryEventType.TRANSFER, HistoryEventSubType.NONE):
             return EventDirection.OUT
 
+        if event_type == HistoryEventType.EXCHANGE_TRANSFER:
+            if event_subtype == HistoryEventSubType.SPEND:
+                return EventDirection.OUT
+            if event_subtype == HistoryEventSubType.RECEIVE:
+                return EventDirection.IN
+            if event_subtype == HistoryEventSubType.FEE:
+                return EventDirection.OUT
+
     return direction
 
 

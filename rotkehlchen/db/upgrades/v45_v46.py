@@ -1,23 +1,23 @@
 import json
 import logging
 import urllib.parse
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal
 
 from rotkehlchen.assets.asset import Asset
-from rotkehlchen.constants import ALLASSETIMAGESDIR_NAME, ASSETIMAGESDIR_NAME, IMAGESDIR_NAME
+from rotkehlchen.constants import ALLASSETIMAGESDIR_NAME, ASSETIMAGESDIR_NAME, IMAGESDIR_NAME, ZERO
 from rotkehlchen.constants.assets import A_COW, A_GNOSIS_COW, A_LQTY
 from rotkehlchen.data_import.utils import maybe_set_transaction_extra_data
 from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HistoryMappingState
 from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
-from rotkehlchen.history.events.structures.asset_movement import (
-    AssetMovement,
-    create_asset_movement_with_fee,
-)
-from rotkehlchen.history.events.structures.types import HistoryEventType
+from rotkehlchen.history.events.structures.asset_movement import AssetMovementExtraData
+from rotkehlchen.history.events.structures.base import HistoryBaseEntryType
+from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
+from rotkehlchen.history.events.utils import create_group_identifier
 from rotkehlchen.logging import RotkehlchenLogsAdapter, enter_exit_debug_log
-from rotkehlchen.types import AssetAmount, Location
+from rotkehlchen.types import AssetAmount, Location, TimestampMS
 from rotkehlchen.utils.misc import ts_sec_to_ms
 from rotkehlchen.utils.progress import perform_userdb_upgrade_steps, progress_step
 
@@ -28,6 +28,90 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
+
+
+@dataclass
+class LegacyAssetMovement:
+    """Legacy v45-v46 representation of converted asset movements."""
+
+    group_identifier: str
+    sequence_index: int
+    timestamp: TimestampMS
+    location: Location
+    location_label: str | None
+    event_type: Literal[HistoryEventType.DEPOSIT, HistoryEventType.WITHDRAWAL]
+    event_subtype: Literal[
+        HistoryEventSubType.DEPOSIT_ASSET,
+        HistoryEventSubType.REMOVE_ASSET,
+        HistoryEventSubType.FEE,
+    ]
+    asset: Asset
+    amount: FVal
+    extra_data: AssetMovementExtraData | None = None
+    notes: str | None = None
+
+    @property
+    def entry_type(self) -> HistoryBaseEntryType:
+        return HistoryBaseEntryType.ASSET_MOVEMENT_EVENT
+
+
+def _create_legacy_asset_movement_with_fee(
+        timestamp: TimestampMS,
+        location: Location,
+        event_type: Literal[HistoryEventType.DEPOSIT, HistoryEventType.WITHDRAWAL],
+        asset: Asset,
+        amount: FVal,
+        fee: AssetAmount | None = None,
+        location_label: str | None = None,
+        extra_data: AssetMovementExtraData | None = None,
+) -> list[LegacyAssetMovement]:
+    """Create asset movements using the legacy type/subtype representation.
+
+    This upgrade must preserve historical output as it was in v45->v46.
+    """
+    movement_subtype: Literal[
+        HistoryEventSubType.DEPOSIT_ASSET,
+        HistoryEventSubType.REMOVE_ASSET,
+    ] = (
+        HistoryEventSubType.DEPOSIT_ASSET
+        if event_type == HistoryEventType.DEPOSIT else
+        HistoryEventSubType.REMOVE_ASSET
+    )
+    group_identifier = create_group_identifier(
+        location=location,
+        timestamp=timestamp,
+        asset=asset,
+        amount=amount,
+        unique_id=None,
+    )
+    events = [LegacyAssetMovement(
+        group_identifier=group_identifier,
+        sequence_index=0,
+        timestamp=timestamp,
+        location=location,
+        location_label=location_label,
+        event_type=event_type,
+        event_subtype=movement_subtype,
+        asset=asset,
+        amount=amount,
+        extra_data=extra_data,
+    )]
+
+    if fee is not None and fee.amount != ZERO:
+        fee_event = LegacyAssetMovement(
+            group_identifier=group_identifier,
+            sequence_index=1,
+            timestamp=timestamp,
+            location=location,
+            location_label=location_label,
+            event_type=event_type,
+            event_subtype=HistoryEventSubType.FEE,
+            asset=fee.asset,
+            amount=fee.amount,
+        )
+        events.append(fee_event)
+
+    return events
 
 
 @enter_exit_debug_log(name='UserDB v45->v46 upgrade')
@@ -78,7 +162,7 @@ def upgrade_v45_to_v46(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
 
     @progress_step(description='Converting asset movements to history events')
     def move_asset_movements(write_cursor: 'DBCursor') -> None:
-        new_events: list[AssetMovement] = []
+        new_events: list[LegacyAssetMovement] = []
         # kraken events appear both as history events and asset movements.
         # We get the event_identifiers mapped to labels and then delete the history
         # events so they can be created as movements.
@@ -105,13 +189,16 @@ def upgrade_v45_to_v46(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
                 (label := event_identifier_to_label.get(row[10])) is not None
             ):
                 location_label = label
+            event_type: Literal[HistoryEventType.DEPOSIT, HistoryEventType.WITHDRAWAL] = (
+                HistoryEventType.DEPOSIT if row[2] == 'A' else HistoryEventType.WITHDRAWAL
+            )
 
             try:
-                new_events.extend(create_asset_movement_with_fee(
+                new_events.extend(_create_legacy_asset_movement_with_fee(
                     timestamp=ts_sec_to_ms(row[5]),
                     location=location,
                     location_label=location_label,
-                    event_type=HistoryEventType.DEPOSIT if row[2] == 'A' else HistoryEventType.WITHDRAWAL,  # noqa: E501
+                    event_type=event_type,
                     asset=Asset(row[6]).check_existence(),  # Added existence check here since AssetMovement has been changed to no longer resolve the asset on initialization  # noqa: E501
                     amount=FVal(row[7]),
                     fee=AssetAmount(asset=Asset(row[8]), amount=FVal(row[9])),

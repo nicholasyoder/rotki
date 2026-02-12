@@ -1091,9 +1091,9 @@ class CreateHistoryEventSchema(Schema):
             return {'events': [EthWithdrawalEvent(**data)]}
 
     class CreateAssetMovementEventSchema(BaseSchema):
-        event_type = SerializableEnumField(
-            enum_class=HistoryEventType,
-            allow_only=[HistoryEventType.DEPOSIT, HistoryEventType.WITHDRAWAL],
+        event_subtype = SerializableEnumField(
+            enum_class=HistoryEventSubType,
+            allow_only=[HistoryEventSubType.RECEIVE, HistoryEventSubType.SPEND],
             required=True,
         )
         fee = AmountField(load_default=None, validate=validate.Range(min=ZERO, min_inclusive=False))  # noqa: E501
@@ -1131,7 +1131,6 @@ class CreateHistoryEventSchema(Schema):
                     message='fee_notes may only be provided when fee_amount is present',
                     field_name='fee_notes',
                 )
-
             extra_data: AssetMovementExtraData = {}
             if (address := data['address']) is not None:
                 extra_data['address'] = address
@@ -1151,7 +1150,7 @@ class CreateHistoryEventSchema(Schema):
                 location=data['location'],
                 unique_id=unique_id,
                 timestamp=data['timestamp'],
-                event_type=data['event_type'],
+                event_subtype=data['event_subtype'],
                 identifier=data.get('identifier'),
                 group_identifier=data['group_identifier'],
                 amount=data['amount'],
@@ -1165,14 +1164,13 @@ class CreateHistoryEventSchema(Schema):
                 movement_notes=movement_notes,
                 fee_notes=fee_notes,
             ) if fee is not None else [AssetMovement(
-                is_fee=False,
                 asset=data['asset'],
                 amount=data['amount'],
                 location=data['location'],
                 unique_id=unique_id,
                 timestamp=data['timestamp'],
                 identifier=data.get('identifier'),
-                event_type=data['event_type'],
+                event_subtype=data['event_subtype'],
                 extra_data=extra_data,
                 group_identifier=data['group_identifier'],
                 location_label=data['location_label'],

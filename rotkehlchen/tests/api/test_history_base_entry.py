@@ -834,7 +834,7 @@ def test_add_edit_asset_movements(rotkehlchen_api_server: 'APIServer') -> None:
             'entry_type': 'asset movement event',
             'timestamp': 1569924575000,
             'amount': '0.44',
-            'event_type': 'deposit',
+            'event_subtype': 'receive',
             'location': 'bitfinex',
             'unique_id': 'BITFINEX-543',
             'asset': 'ETH',
@@ -842,7 +842,7 @@ def test_add_edit_asset_movements(rotkehlchen_api_server: 'APIServer') -> None:
             'entry_type': 'asset movement event',
             'timestamp': 1669924575000,
             'amount': '0.0569',
-            'event_type': 'withdrawal',
+            'event_subtype': 'spend',
             'fee': '0.000004',
             'location': 'bitfinex',
             'unique_id': 'BITFINEX-344',
@@ -866,7 +866,7 @@ def test_add_edit_asset_movements(rotkehlchen_api_server: 'APIServer') -> None:
             filter_query=HistoryEventFilterQuery.make(),
             aggregate_by_group_ids=False,
         )) == 3  # including the fee event.
-        assert events[1].event_subtype == HistoryEventSubType.REMOVE_ASSET
+        assert events[1].event_subtype == HistoryEventSubType.SPEND
         assert events[1].notes == 'Main event note'
         assert events[2].event_subtype == HistoryEventSubType.FEE
         assert events[2].notes == 'Fee event note'
@@ -877,8 +877,8 @@ def test_add_edit_asset_movements(rotkehlchen_api_server: 'APIServer') -> None:
     # Check event serialization.
     assert generate_events_response(data=[events[1]])[0]['entry'] == {
         'timestamp': 1669924575000,
-        'event_type': 'withdrawal',
-        'event_subtype': 'remove asset',
+        'event_type': 'exchange transfer',
+        'event_subtype': 'spend',
         'location': 'bitfinex',
         'location_label': None,
         'asset': 'ETH',
@@ -933,12 +933,13 @@ def test_add_edit_asset_movements(rotkehlchen_api_server: 'APIServer') -> None:
                     'asset': 'ETH',
                     'amount': '0.000004',
                     'entry_type': 'asset movement event',
-                    'event_type': 'withdrawal',
+                    'event_type': 'exchange transfer',
                     'identifier': 3,
                     'location': 'bitfinex',
                 }
             else:
                 expected_event = entries[idx].copy()
+                expected_event['event_type'] = 'exchange transfer'
 
             for field in fields_to_exclude:
                 serialized_event.pop(field, None)
