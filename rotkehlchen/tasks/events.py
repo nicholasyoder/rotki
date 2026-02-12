@@ -1221,7 +1221,7 @@ def _find_close_matches(
         )
         direction_matches = [
             match for match in close_matches
-            if match.maybe_get_direction(for_balance_tracking=True) == expected_direction
+            if match.maybe_get_direction(for_movement_matching=True) == expected_direction
         ]
         if len(direction_matches) > 0:
             close_matches = direction_matches
@@ -1240,9 +1240,9 @@ def _find_close_matches(
             if match.asset == asset_movement.asset:
                 asset_matches.append(match)
 
-            if (  # Maybe match by balance tracking event direction
+            if (  # Maybe match by movement matching event direction
                 (match_direction := match.maybe_get_direction(
-                    for_balance_tracking=True,
+                    for_movement_matching=True,
                 )) != EventDirection.NEUTRAL and
                 ((is_deposit and match_direction == EventDirection.OUT) or
                 (not is_deposit and match_direction == EventDirection.IN))
