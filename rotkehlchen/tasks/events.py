@@ -489,6 +489,17 @@ def _process_movement_candidate_set(
 ) -> None:
     """Process one movement and update retry/ignore/unmatched collections."""
     movement_id = asset_movement.identifier
+    # Skip movements that are already part of a match.
+    # This prevents reusing them as candidates for another movement.
+    if movement_id is not None and movement_id in matching_state.already_matched_event_ids:
+        _remove_unresolved_movement(
+            movement_id=movement_id,
+            unresolved_ambiguous_movements=matching_state.unresolved_ambiguous_movements,
+            ambiguous_movement_candidate_ids=matching_state.ambiguous_movement_candidate_ids,
+            candidate_to_ambiguous_movement_ids=matching_state.candidate_to_ambiguous_movement_ids,
+        )
+        return
+
     if _should_auto_ignore_movement(asset_movement=asset_movement):
         _remove_unresolved_movement(
             movement_id=movement_id,
@@ -561,6 +572,9 @@ def _process_movement_candidate_set(
         )
         if (matched_event_id := matched_event.identifier) is not None:
             matching_state.already_matched_event_ids.add(matched_event_id)
+            if movement_id is not None:
+                # Mark the movement id too so it cannot be matched again later in this run.
+                matching_state.already_matched_event_ids.add(movement_id)
             matching_state.movements_to_retry.update(
                 matching_state.candidate_to_ambiguous_movement_ids[matched_event_id],
             )
@@ -924,6 +938,30 @@ def update_asset_movement_matched_event(
                 HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),
             ),
         )
+        if isinstance(matched_event, AssetMovement):
+            # Keep movement to movement matches symmetric in links and metadata.
+            if asset_movement.extra_data is None:
+                asset_movement.extra_data = {}
+            asset_movement.extra_data['matched_asset_movement'] = {
+                'group_identifier': matched_event.group_identifier,
+                'exchange': matched_event.location.serialize(),
+                'exchange_name': matched_event.location_label,
+            }
+            events_db.edit_history_event(
+                write_cursor=write_cursor,
+                event=asset_movement,
+                mapping_state=HistoryMappingState.AUTO_MATCHED,
+                save_backup=True,
+            )
+            write_cursor.execute(
+                'INSERT OR REPLACE INTO history_event_links('
+                'left_event_id, right_event_id, link_type) VALUES(?, ?, ?)',
+                (
+                    matched_event.identifier,
+                    asset_movement.identifier,
+                    HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),
+                ),
+            )
         log.debug(
             'MATCH_DEBUG: cached match movement_id='
             f'{asset_movement.identifier} matched_id={matched_event.identifier}',
@@ -1060,11 +1098,16 @@ def _match_amount(
 def get_already_matched_event_ids(
         cursor: 'DBCursor',
 ) -> set[int]:
-    """Get the ids of events that are already matched with asset movements."""
-    return {int(row[0]) for row in cursor.execute(
-        'SELECT right_event_id FROM history_event_links WHERE link_type=?;',
+    """Get ids already participating in asset movement matches on either side of the link."""
+    event_ids: set[int] = set()
+    for row in cursor.execute(
+        'SELECT left_event_id, right_event_id FROM history_event_links WHERE link_type=?;',
         (HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),),
-    )}
+    ):
+        event_ids.add(int(row[0]))
+        event_ids.add(int(row[1]))
+
+    return event_ids
 
 
 def find_asset_movement_matches(

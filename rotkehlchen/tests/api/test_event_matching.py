@@ -8,7 +8,7 @@ from rotkehlchen.api.v1.types import IncludeExcludeFilterData, TaskName
 from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.decoding.aave.constants import CPT_AAVE_V3
 from rotkehlchen.constants import HOUR_IN_SECONDS
-from rotkehlchen.constants.assets import A_BTC, A_ETH, A_WETH
+from rotkehlchen.constants.assets import A_BAT, A_BTC, A_ETH, A_WETH
 from rotkehlchen.db.constants import (
     HISTORY_MAPPING_KEY_STATE,
     HistoryEventLinkType,
@@ -17,7 +17,10 @@ from rotkehlchen.db.constants import (
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.fval import FVal
-from rotkehlchen.history.events.structures.asset_movement import AssetMovement
+from rotkehlchen.history.events.structures.asset_movement import (
+    AssetMovement,
+    AssetMovementExtraData,
+)
 from rotkehlchen.history.events.structures.base import HistoryBaseEntryType, HistoryEvent
 from rotkehlchen.history.events.structures.eth2 import EthWithdrawalEvent
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
@@ -1006,6 +1009,104 @@ def test_get_history_events_with_matched_asset_movements(
         ),
         rotkehlchen_api_server=rotkehlchen_api_server,
     )['entries'] == [unrelated_event_entry, match1_sublist, match2_sublist]
+
+
+def test_coinbase_chain_two_groups(
+        rotkehlchen_api_server: 'APIServer',
+) -> None:
+    """Regression reproducer for Coinbase/CoinbasePro/EVM chain grouping."""
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+    dbevents = DBHistoryEvents(rotki.data.db)
+    with rotki.data.db.conn.write_ctx() as write_cursor:
+        dbevents.add_history_events(
+            write_cursor=write_cursor,
+            history=[(coinbase_deposit := AssetMovement(
+                identifier=1,  # oldest
+                location=Location.COINBASE,
+                event_subtype=HistoryEventSubType.RECEIVE,
+                timestamp=TimestampMS(1700000000000),
+                asset=A_BAT,
+                amount=FVal('5.49'),
+                unique_id='cb_deposit_1',
+                location_label='Coinbase 1',
+                notes='Transfer funds from CoinbasePro',
+            )), (coinbasepro_withdrawal := AssetMovement(
+                identifier=2,
+                location=Location.COINBASEPRO,
+                event_subtype=HistoryEventSubType.SPEND,
+                timestamp=TimestampMS(1700000001000),
+                asset=A_BAT,
+                amount=FVal('5.49'),
+                unique_id='cbpro_withdrawal_1',
+                location_label='Coinbase Pro 1',
+                notes='Withdraw 5.49 from Coinbase Pro',
+                extra_data=AssetMovementExtraData(
+                    transaction_id=str(tx_hash := make_evm_tx_hash()),
+                    address=make_evm_address(),
+                ),
+            )), (coinbase_withdrawal := AssetMovement(
+                identifier=3,
+                location=Location.COINBASE,
+                event_subtype=HistoryEventSubType.SPEND,
+                timestamp=TimestampMS(1700000002000),
+                asset=A_BAT,
+                amount=FVal('5.49'),
+                unique_id='cb_withdrawal_1',
+                location_label='Coinbase 1',
+                notes='Withdraw 5.49 BAT from Coinbase',
+                extra_data=AssetMovementExtraData(
+                    transaction_id=str(tx_hash)[2:],  # same hash but without 0x prefix
+                    address=make_evm_address(),
+                ),
+            )), (evm_receive := EvmEvent(
+                identifier=4,  # newest
+                tx_ref=tx_hash,
+                sequence_index=0,
+                timestamp=TimestampMS(1700000003000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_BAT,
+                amount=FVal('5.49'),
+                location_label=make_evm_address(),
+            ))],
+        )
+
+    match_asset_movements(database=rotki.data.db)
+
+    with rotki.data.db.conn.read_ctx() as cursor:
+        links = cursor.execute(
+            'SELECT left_event_id, right_event_id FROM history_event_links WHERE link_type=?',
+            (HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),),
+        ).fetchall()
+
+    assert coinbase_deposit.identifier is not None
+    assert coinbasepro_withdrawal.identifier is not None
+    assert coinbase_withdrawal.identifier is not None
+    assert evm_receive.identifier is not None
+    logical_matches = {tuple(sorted(link)) for link in links}
+    assert logical_matches == {
+        tuple(sorted((coinbase_deposit.identifier, coinbasepro_withdrawal.identifier))),
+        tuple(sorted((coinbase_withdrawal.identifier, evm_receive.identifier))),
+    }
+
+    result = assert_proper_response_with_result(
+        response=requests.post(
+            api_url_for(rotkehlchen_api_server, 'historyeventresource'),
+            json={
+                'aggregate_by_group_ids': True,
+                'group_identifiers': [
+                    coinbase_deposit.group_identifier,
+                    coinbasepro_withdrawal.group_identifier,
+                    coinbase_withdrawal.group_identifier,
+                    evm_receive.group_identifier,
+                ],
+            },
+        ),
+        rotkehlchen_api_server=rotkehlchen_api_server,
+    )
+    assert result['entries_found'] == 2
+    assert len(result['entries']) == 2
 
 
 def test_trigger_matching_task(rotkehlchen_api_server: 'APIServer') -> None:

@@ -13,6 +13,7 @@ from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
 from rotkehlchen.constants import HOUR_IN_SECONDS, ONE
 from rotkehlchen.constants.assets import (
     A_AAVE,
+    A_BAT,
     A_BTC,
     A_DAI,
     A_ETH,
@@ -1679,6 +1680,175 @@ def test_coinbasepro_transfer_with_onchain_event(database: 'DBHandler') -> None:
             (match_id_2, movement_id_2),
         ],
     )
+
+
+def test_coinbase_unprefixed_hash(database: 'DBHandler') -> None:
+    """Match CoinbasePro->Coinbase transfer and Coinbase withdrawal by unprefixed tx hash."""
+    tx_hash = make_evm_tx_hash()
+    window_offset = ts_sec_to_ms(Timestamp(DEFAULT_ASSET_MOVEMENT_TIME_RANGE + 1))
+    with database.conn.write_ctx() as write_cursor:
+        DBHistoryEvents(database).add_history_events(
+            write_cursor=write_cursor,
+            history=[AssetMovement(  # Oldest: Coinbase deposit from CoinbasePro transfer
+                identifier=(coinbase_deposit_id := 1),
+                location=Location.COINBASE,
+                event_subtype=HistoryEventSubType.RECEIVE,
+                timestamp=TimestampMS(1700000000000),
+                asset=A_BAT,
+                amount=(amount := FVal('5.49')),
+                unique_id='coinbase_deposit_1',
+                location_label='Coinbase 1',
+                notes='Transfer funds from CoinbasePro',
+            ), AssetMovement(  # CoinbasePro withdrawal should match the transfer deposit above.
+                identifier=(coinbasepro_withdrawal_id := 2),
+                location=Location.COINBASEPRO,
+                event_subtype=HistoryEventSubType.SPEND,
+                timestamp=TimestampMS(1700000010000),
+                asset=A_BAT,
+                amount=amount,
+                unique_id='coinbasepro_withdrawal_1',
+                location_label='Coinbase Pro 1',
+                notes='Withdraw 5.49 from Coinbase Pro',
+                extra_data=AssetMovementExtraData(
+                    transaction_id=str(tx_hash),
+                    address=make_evm_address(),
+                ),
+            ), AssetMovement(  # Coinbase withdrawal should match the EVM receive below.
+                identifier=(coinbase_withdrawal_id := 3),
+                location=Location.COINBASE,
+                event_subtype=HistoryEventSubType.SPEND,
+                timestamp=TimestampMS(1700000010000 + window_offset),
+                asset=A_BAT,
+                amount=amount,
+                unique_id='coinbase_withdrawal_1',
+                location_label='Coinbase 1',
+                notes='Withdraw 5.49 BAT from Coinbase',
+                extra_data=AssetMovementExtraData(
+                    transaction_id=str(tx_hash)[2:],  # same hash as onchain, but without 0x
+                    address=make_evm_address(),
+                ),
+            ), EvmEvent(  # Newest
+                identifier=(evm_receive_id := 4),
+                tx_ref=tx_hash,
+                sequence_index=0,
+                timestamp=TimestampMS(1700000011000 + window_offset),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_BAT,
+                amount=amount,
+                location_label=make_evm_address(),
+            )],
+        )
+
+    match_asset_movements(database=database)
+    with database.conn.read_ctx() as cursor:
+        links = cursor.execute(
+            'SELECT left_event_id, right_event_id FROM history_event_links WHERE link_type=?',
+            (HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),),
+        ).fetchall()
+
+    # Transfer movement pairs are stored bidirectionally, so assert logical (deduplicated) matches.
+    logical_matches = {tuple(sorted(link)) for link in links}
+    assert logical_matches == {
+        tuple(sorted((coinbasepro_withdrawal_id, coinbase_deposit_id))),
+        tuple(sorted((coinbase_withdrawal_id, evm_receive_id))),
+    }
+
+
+def test_no_double_link_coinbase_withdrawal(database: 'DBHandler') -> None:
+    """Regression test for double linking a Coinbase withdrawal.
+
+    The bug was that after matching Coinbase withdrawal to an onchain receive,
+    a later CoinbasePro withdrawal could still match that same Coinbase withdrawal.
+    This created two links involving the same Coinbase withdrawal event.
+    """
+    base_ts = TimestampMS(1700000000000)
+    cbpro_ts = TimestampMS(
+        base_ts + ts_sec_to_ms(Timestamp(DEFAULT_ASSET_MOVEMENT_TIME_RANGE + 5)),
+    )
+    tx_hash = make_evm_tx_hash()
+    with database.conn.write_ctx() as write_cursor:
+        DBHistoryEvents(database).add_history_events(
+            write_cursor=write_cursor,
+            history=[AssetMovement(  # outside time window for the CoinbasePro withdrawal below
+                identifier=(coinbase_deposit_id := 1),
+                location=Location.COINBASE,
+                event_subtype=HistoryEventSubType.RECEIVE,
+                timestamp=base_ts,
+                asset=A_BAT,
+                amount=FVal('5.49'),
+                unique_id='coinbase_deposit_1',
+                location_label='Coinbase 1',
+                notes='Transfer funds from CoinbasePro',
+            ), AssetMovement(
+                identifier=(coinbasepro_withdrawal_id := 2),
+                location=Location.COINBASEPRO,
+                event_subtype=HistoryEventSubType.SPEND,
+                timestamp=cbpro_ts,
+                asset=A_BAT,
+                amount=FVal('5.49'),
+                unique_id='coinbasepro_withdrawal_1',
+                location_label='Coinbase Pro 1',
+                notes='Withdraw 5.49 from Coinbase Pro',
+                extra_data=AssetMovementExtraData(
+                    transaction_id=str(tx_hash),
+                    address=make_evm_address(),
+                ),
+            ), AssetMovement(
+                identifier=(coinbase_withdrawal_id := 3),
+                location=Location.COINBASE,
+                event_subtype=HistoryEventSubType.SPEND,
+                timestamp=TimestampMS(cbpro_ts + 1000),
+                asset=A_BAT,
+                amount=FVal('5.49'),
+                unique_id='coinbase_withdrawal_1',
+                location_label='Coinbase 1',
+                notes='Withdraw 5.49 BAT from Coinbase',
+                extra_data=AssetMovementExtraData(
+                    transaction_id=str(tx_hash)[2:],  # same hash without 0x
+                    address=make_evm_address(),
+                ),
+            ), EvmEvent(
+                identifier=(evm_receive_id := 4),
+                tx_ref=tx_hash,
+                sequence_index=0,
+                timestamp=TimestampMS(cbpro_ts + 2000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_BAT,
+                amount=FVal('5.49'),
+                location_label=make_evm_address(),
+            )],
+        )
+
+    match_asset_movements(database=database)
+
+    with database.conn.read_ctx() as cursor:
+        links = cursor.execute(
+            'SELECT left_event_id, right_event_id FROM history_event_links WHERE link_type=?',
+            (HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),),
+        ).fetchall()
+        involved_links = cursor.execute(
+            'SELECT left_event_id, right_event_id FROM history_event_links '
+            'WHERE link_type=? AND (left_event_id=? OR right_event_id=?)',
+            (
+                HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),
+                coinbase_withdrawal_id,
+                coinbase_withdrawal_id,
+            ),
+        ).fetchall()
+
+    # Expected behavior: Coinbase withdrawal should only match the EVM event.
+    assert tuple(sorted((coinbase_withdrawal_id, evm_receive_id))) in {
+        tuple(sorted(link)) for link in links
+    }
+    assert len(involved_links) == 1
+    assert set(involved_links) == {(coinbase_withdrawal_id, evm_receive_id)}
+    assert (coinbasepro_withdrawal_id, coinbase_withdrawal_id) not in set(links)
+    assert (coinbase_withdrawal_id, coinbasepro_withdrawal_id) not in set(links)
+    assert (coinbasepro_withdrawal_id, coinbase_deposit_id) not in set(links)
 
 
 def test_deposit_to_anon(database: 'DBHandler') -> None:
