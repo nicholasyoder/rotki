@@ -1112,6 +1112,72 @@ def test_coinbase_chain_two_groups(
     assert len(result['entries']) == 2
 
 
+def test_group_header_event(rotkehlchen_api_server: 'APIServer') -> None:
+    """Test that we get the asset movement as the header event even when filtering for an
+    adjustment event or an evm event in the same tx other than the matched event.
+    """
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+    events_db = DBHistoryEvents(rotki.data.db)
+    with rotki.data.db.conn.write_ctx() as write_cursor:
+        events_db.add_history_events(
+            write_cursor=write_cursor,
+            history=[(movement_event := AssetMovement(
+                identifier=1,
+                location=Location.KRAKEN,
+                event_subtype=HistoryEventSubType.SPEND,
+                timestamp=TimestampMS(1520000000000),
+                asset=A_BTC,
+                amount=FVal('0.2'),
+                unique_id='xyz',
+                location_label='Kraken 1',
+            )), EvmEvent(
+                identifier=(other_evm_event_id := 2),
+                tx_ref=(tx_hash := make_evm_tx_hash()),
+                sequence_index=0,
+                timestamp=movement_event.timestamp,
+                location=Location.ARBITRUM_ONE,
+                event_type=HistoryEventType.SPEND,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=FVal('0.001'),
+                location_label=make_evm_address(),
+            ), EvmEvent(
+                identifier=3,
+                tx_ref=tx_hash,
+                sequence_index=1,
+                timestamp=movement_event.timestamp,
+                location=Location.ARBITRUM_ONE,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=movement_event.asset,
+                amount=FVal('0.19999'),
+                location_label=make_evm_address(),
+            )],
+        )
+
+    match_asset_movements(database=rotki.data.db)
+    with rotki.data.db.conn.read_ctx() as cursor:
+        assert len(events_db.get_history_events_internal(
+            cursor=cursor,
+            filter_query=HistoryEventFilterQuery.make(
+                event_types=[HistoryEventType.EXCHANGE_ADJUSTMENT],
+            ),
+        )) == 1
+
+    for filters in (
+        {'event_types': [HistoryEventType.EXCHANGE_ADJUSTMENT.serialize()]},
+        {'identifiers': [other_evm_event_id]},
+    ):
+        assert len(result := assert_proper_response_with_result(
+            response=requests.post(
+                api_url_for(rotkehlchen_api_server, 'historyeventresource'),
+                json={**filters, 'aggregate_by_group_ids': True},
+            ),
+            rotkehlchen_api_server=rotkehlchen_api_server,
+        )['entries']) == 1
+        assert result[0]['entry']['entry_type'] == HistoryBaseEntryType.ASSET_MOVEMENT_EVENT.serialize()  # noqa: E501
+
+
 def test_trigger_matching_task(rotkehlchen_api_server: 'APIServer') -> None:
     """Test that triggering the matching task works as expected."""
     for async_query in (True, False):
