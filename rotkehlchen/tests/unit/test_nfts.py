@@ -8,7 +8,7 @@ from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants.assets import A_ETH, A_USDC
 from rotkehlchen.db.filtering import NFTFilterQuery
 from rotkehlchen.fval import FVal
-from rotkehlchen.types import ChainID, ChecksumEvmAddress, TokenKind
+from rotkehlchen.types import ChainID, ChecksumEvmAddress, Price, TokenKind
 
 TEST_ACC1 = '0xc37b40ABdB939635068d3c5f13E7faF686F03B65'  # yabir.eth
 TEST_ACC2 = '0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12'  # lefteris.eth
@@ -132,3 +132,44 @@ def test_duplicate_balances(
     assert Asset('eip155:1/erc721:0x524cAB2ec69124574082676e6F654a18df49A048') not in balances['assets']  # noqa: E501
     assert Asset('_nft_0x524cAB2ec69124574082676e6F654a18df49A048_7535') in balances['assets']
     assert Asset('eip155:100/erc721:0x88997988a6A5aAF29BA973d298D276FE75fb69ab') in balances['assets']  # noqa: E501
+
+
+@pytest.mark.parametrize('ethereum_accounts', [[TEST_ACC1]])
+@pytest.mark.parametrize('start_with_valid_premium', [True])
+@pytest.mark.parametrize('ethereum_modules', [['nfts']])
+def test_add_and_delete_nft_custom_price(blockchain: ChainsAggregator):
+    """Test that adding and deleting a custom price for an NFT works correctly.
+
+    Regression test: delete_price_for_nft used to set last_price and last_price_asset to NULL,
+    which violated the NOT NULL constraints added in the v43-to-v44 DB upgrade.
+    """
+    nft_id = '_nft_0x524cAB2ec69124574082676e6F654a18df49A048_7535'
+    with blockchain.database.user_write() as write_cursor:
+        write_cursor.execute('INSERT INTO assets(identifier) VALUES(?)', (nft_id,))
+        write_cursor.execute(
+            'INSERT INTO nfts (identifier, name, last_price, last_price_asset, '
+            'manual_price, owner_address, is_lp, image_url, '
+            'collection_name, usd_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            (nft_id, 'Test NFT', '0', 'ETH', 0, TEST_ACC1, 0, '', 'Test Collection', 0.0),
+        )
+
+    nft_module = blockchain.get_module('nfts')
+    assert nft_module is not None
+    assert nft_module.add_nft_with_price(  # set a custom price
+        from_asset=(nft_asset := Asset(nft_id)),
+        to_asset=A_ETH,
+        price=Price(FVal('1.5')),
+    ) is True
+    with blockchain.database.conn.read_ctx() as cursor:
+        assert cursor.execute(
+            'SELECT last_price, last_price_asset, manual_price FROM nfts WHERE identifier=?',
+            (nft_id,),
+        ).fetchone() == ('1.5', 'ETH', 1)
+
+    # delete the custom price (this used to fail with NOT NULL constraint)
+    assert nft_module.delete_price_for_nft(asset=nft_asset) is True
+    with blockchain.database.conn.read_ctx() as cursor:
+        assert cursor.execute(
+            'SELECT last_price, last_price_asset, manual_price FROM nfts WHERE identifier=?',
+            (nft_id,),
+        ).fetchone() == ('0', 'ETH', 0)

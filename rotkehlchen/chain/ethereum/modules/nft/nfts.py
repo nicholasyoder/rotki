@@ -383,8 +383,9 @@ class Nfts(EthereumModule, CacheableMixIn, LockableQueryMixIn):
         with self.db.user_write() as cursor:
             try:
                 cursor.execute(
-                    'UPDATE nfts SET last_price=?, last_price_asset=? WHERE identifier=?',
-                    (None, None, asset.identifier),
+                    'UPDATE nfts SET last_price=?, last_price_asset=?, manual_price=? '
+                    'WHERE identifier=?',
+                    ('0', 'ETH', 0, asset.identifier),
                 )
             except sqlcipher.DatabaseError as e:  # pylint: disable=no-member
                 raise InputError(f'Failed to delete price for {asset.identifier} due to {e!s}') from e  # noqa: E501
