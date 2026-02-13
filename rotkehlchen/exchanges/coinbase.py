@@ -85,6 +85,17 @@ ECDSA_PRIVATE_KEY_RE: re.Pattern = re.compile(
 )
 
 
+def _is_same_asset_amount_trade(spend: AssetAmount, receive: AssetAmount) -> bool:
+    """There are some cases where coinbase reports trades from/to the same asset.
+    This has been noticed especially in connection with EURc->EUR and USDC->USD swaps
+    where there would be an extra useless EUR->EUR or USD->USD swap.
+
+    Returns True if the amounts and assets are the same on the spend and receive, otherwise
+    returns False.
+    """
+    return spend == receive
+
+
 class CoinbaseKeyType(Enum):
     """Coinbase API key types with their corresponding authentication algorithms"""
     ECDSA = 'ES256'
@@ -700,11 +711,17 @@ class Coinbase(ExchangeInterface):
                     amount=abs(deserialize_fval(fee_data['amount'])),
                 )
 
+        if _is_same_asset_amount_trade(
+            spend=(spend := AssetAmount(asset=tx_asset, amount=tx_amount)),
+            receive=(receive := AssetAmount(asset=native_asset, amount=native_amount)),
+        ):
+            return []
+
         return create_swap_events(
             timestamp=ts_sec_to_ms(timestamp),
             location=self.location,
-            spend=AssetAmount(asset=tx_asset, amount=tx_amount),
-            receive=AssetAmount(asset=native_asset, amount=native_amount),
+            spend=spend,
+            receive=receive,
             fee=fee,
             location_label=self.name,
             group_identifier=create_group_identifier_from_unique_id(
@@ -786,21 +803,22 @@ class Coinbase(ExchangeInterface):
         tx_asset = asset_from_coinbase(event['amount']['currency'], time=timestamp)
         native_amount = deserialize_fval_force_positive(event['native_amount']['amount'])
         native_asset = asset_from_coinbase(event['native_amount']['currency'], time=timestamp)
-        if tx_asset == native_asset and tx_amount == native_amount:
-            return []  # There are some cases where coinbase reports trades from/to the same asset.
-            # This has been noticed especially in connection with EURc->EUR and USDC->USD swaps
-            # where there would be an extra useless EUR->EUR or USD->USD swap.
-
         spend_asset, spend_amount, receive_asset, receive_amount = (
             (native_asset, native_amount, tx_asset, tx_amount)
             if event['type'] == 'buy' else  # Either buy or sell in _process_normal_trade
             (tx_asset, tx_amount, native_asset, native_amount)
         )
+        if _is_same_asset_amount_trade(
+            spend=(spend := AssetAmount(asset=spend_asset, amount=spend_amount)),
+            receive=(receive := AssetAmount(asset=receive_asset, amount=receive_amount)),
+        ):
+            return []
+
         return create_swap_events(
             timestamp=ts_sec_to_ms(timestamp),
             location=self.location,
-            spend=AssetAmount(asset=spend_asset, amount=spend_amount),
-            receive=AssetAmount(asset=receive_asset, amount=receive_amount),
+            spend=spend,
+            receive=receive,
             fee=AssetAmount(
                 amount=abs(deserialize_fval_or_zero(event['fee']['amount'])),
                 asset=asset_from_coinbase(event['fee']['currency'], time=timestamp),
@@ -862,6 +880,9 @@ class Coinbase(ExchangeInterface):
             amount=abs(amount),
             rate=rate,
         )
+        if _is_same_asset_amount_trade(spend=spend, receive=receive):
+            return []
+
         return create_swap_events(
             timestamp=ts_sec_to_ms(timestamp),
             location=self.location,

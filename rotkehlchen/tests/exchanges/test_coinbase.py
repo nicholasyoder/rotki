@@ -1,4 +1,5 @@
 import base64
+import re
 import uuid
 import warnings as test_warnings
 from typing import TYPE_CHECKING, Any
@@ -363,11 +364,20 @@ def test_coinbase_query_trade_history_paginated(function_scope_coinbase):
         '"next_uri": null',
         '"next_uri": "/v2/transactions/?next-page"',
     )
+    highest_id = max(int(x) for x in re.findall(r'"id": "id(\d+)"', TRANSACTIONS_RESPONSE))
+    for idx in range(1, highest_id + 1):
+        # Convert ids so they are unique when it uses the original TRANSACTIONS_RESPONSE when
+        # querying the next page
+        paginated_transactions_response = paginated_transactions_response.replace(
+            f'"id": "id{idx}"',
+            f'"id": "id{idx + highest_id}"',
+        )
+
     query_coinbase_and_test(
         coinbase=coinbase,
         expected_warnings_num=0,
         expected_errors_num=0,
-        expected_events_num=7,
+        expected_events_num=14,
         transactions_response=paginated_transactions_response,
     )
 
@@ -464,7 +474,7 @@ def test_coinbase_query_history_events(
         location_label=coinbase.name,
         group_identifier=create_group_identifier_from_unique_id(
             location=Location.COINBASE,
-            unique_id='txid-1',
+            unique_id='id10',
         ),
     ), SwapEvent(
         identifier=9,
@@ -476,7 +486,7 @@ def test_coinbase_query_history_events(
         location_label=coinbase.name,
         group_identifier=create_group_identifier_from_unique_id(
             location=Location.COINBASE,
-            unique_id='txid-1',
+            unique_id='id10',
         ),
     ), AssetMovement(
         identifier=1,
@@ -524,7 +534,7 @@ def test_coinbase_query_history_events(
         location_label=coinbase.name,
         group_identifier=create_group_identifier_from_unique_id(
             location=Location.COINBASE,
-            unique_id='txid-2',
+            unique_id='id11',
         ),
     ), SwapEvent(
         identifier=11,
@@ -536,7 +546,7 @@ def test_coinbase_query_history_events(
         location_label=coinbase.name,
         group_identifier=create_group_identifier_from_unique_id(
             location=Location.COINBASE,
-            unique_id='txid-2',
+            unique_id='id11',
         ),
     ), HistoryEvent(
         identifier=5,
@@ -1840,3 +1850,58 @@ def test_ignore_same_asset_same_amount_swap(function_scope_coinbase):
                 unique_id='TEST_ID_1',
             ),
         )]
+
+
+def test_ignore_same_asset_and_amount_conversion(mock_coinbase):
+    """Test that a conversion where the spend/receive asset and amount are the same is ignored."""
+    assert mock_coinbase._process_trades_from_conversion(
+        transaction_pairs={(tx_id := '77c5ad72-764e-414b-8bdb-b5aed20fb4b1'): [{
+            'id': tx_id,
+            'type': 'trade',
+            'status': 'completed',
+            'amount': {
+                'amount': '500',
+                'currency': 'EUR',
+            },
+            'native_amount': {
+                'amount': '500',
+                'currency': 'EUR',
+            },
+            'created_at': '2020-06-08T02:32:15Z',
+            'updated_at': '2021-06-08T02:32:16Z',
+            'resource': 'transaction',
+            'resource_path': f'/v2/accounts/sd5af/transactions/{tx_id}',
+            'trade': {
+                'fee': {
+                    'amount': '1',
+                    'currency': 'XTZ',
+                },
+                'id': '5dceef97-ef34-41e6-9171-3e60cd01639e',
+                'payment_method_name': 'ETH Wallet',
+            },
+        }]},
+    ) == []
+
+
+def test_ignore_asset_and_amount_advancedtrade(mock_coinbase):
+    """Test that if an advanced trade fill where the spend/receive asset and amount are the same
+    is ignored.
+    """
+    assert mock_coinbase._process_coinbase_trade({
+        'id': 'id1',
+        'type': 'advanced_trade_fill',
+        'status': 'completed',
+        'amount': {'amount': '-500', 'currency': 'USDC'},
+        'native_amount': {'amount': '-500', 'currency': 'EUR'},
+        'created_at': '2024-03-07T08:12:51Z',
+        'updated_at': '2024-03-07T08:12:51Z',
+        'resource': 'transaction',
+        'resource_path': '/v2/accounts/REDACTED/transactions/id1',
+        'advanced_trade_fill': {
+            'fill_price': '1',
+            'product_id': 'EUR-EUR',
+            'order_id': 'orderid1',
+            'commission': '0',
+            'order_side': 'sell',
+        },
+    }) == []
