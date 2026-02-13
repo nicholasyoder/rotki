@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal, Optional, TypeAlias, cast, overl
 from solders.solders import Signature
 from sqlcipher3 import dbapi2 as sqlcipher
 
+from rotkehlchen.api.v1.types import IncludeExcludeFilterData
 from rotkehlchen.api.websockets.typedefs import ProgressUpdateSubType, WSMessageType
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.bitcoin.bch.constants import BCH_GROUP_IDENTIFIER_PREFIX
@@ -67,7 +68,7 @@ from rotkehlchen.history.events.structures.onchain_event import OnchainEvent
 from rotkehlchen.history.events.structures.solana_event import SolanaEvent
 from rotkehlchen.history.events.structures.solana_swap import SolanaSwapEvent
 from rotkehlchen.history.events.structures.swap import SwapEvent
-from rotkehlchen.history.events.structures.types import HistoryEventType
+from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.history.price import query_price_or_use_default
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import deserialize_fval
@@ -2051,12 +2052,15 @@ class DBHistoryEvents:
             # - adjust grouped_events_num to include the events from the other side of the movement
             # - skip the event if we have already processed an event from that movement/match group
             already_processed_matches: set[str] = set()
+            events_to_replace, processed_result_idx = {}, 0
+            movement_events_in_result = {}
             for grouped_events_num, event in cast('list[tuple[int, HistoryBaseEntry]]', events_result):  # noqa: E501
                 should_skip, matched_joined_group_count = False, 0
                 if (
                     (match_info_list := movement_group_to_match_info.get(event.group_identifier)) is not None and  # noqa: E501
                     event.group_identifier in match_group_to_movement_info
                 ):  # This is a movement matched with a movement.
+                    movement_events_in_result[event.group_identifier] = event
                     for _, matched_group_identifier, joined_count in match_info_list:
                         matched_joined_group_count += joined_count
                         if len({matched_group_identifier, event.group_identifier} & already_processed_matches) != 0:  # noqa: E501
@@ -2064,6 +2068,7 @@ class DBHistoryEvents:
                         already_processed_matches.add(matched_group_identifier)
                     already_processed_matches.add(event.group_identifier)
                 elif match_info_list is not None:
+                    movement_events_in_result[event.group_identifier] = event
                     for _, matched_group_identifier, joined_count in match_info_list:
                         matched_joined_group_count += joined_count
                         if matched_group_identifier in already_processed_matches:
@@ -2072,7 +2077,11 @@ class DBHistoryEvents:
                             already_processed_matches.add(matched_group_identifier)
                 elif (movement_info := match_group_to_movement_info.get(event.group_identifier)) is not None:  # noqa: E501
                     movement_group_identifier, matched_joined_group_count = movement_info
-                    should_skip = event.group_identifier in already_processed_matches
+                    if not (should_skip := event.group_identifier in already_processed_matches):
+                        # This is a matched event that will not be skipped. It needs to be replaced
+                        # with its associated movement event in the final processed_events_result
+                        events_to_replace[movement_group_identifier] = processed_result_idx
+
                     already_processed_matches.add(event.group_identifier)
                     # also load any other matched events associated with this movement.
                     if (
@@ -2094,6 +2103,28 @@ class DBHistoryEvents:
                 processed_events_result.append(
                     (grouped_events_num + matched_joined_group_count, event),   # type: ignore[arg-type]  # will be a list of tuple[int, HistoryBaseEntry]
                 )
+                processed_result_idx += 1
+
+            # Replace any matched events with their associated movement since frontend requires
+            # the movement to be the header event for matched pairs when aggregating by group id.
+            missing_movement_group_ids: list[str] = []
+            for movement_group_id, idx in events_to_replace.items():
+                if (movement_event := movement_events_in_result.get(movement_group_id)) is not None:  # noqa: E501
+                    processed_events_result[idx] = (processed_events_result[idx][0], movement_event)  # type: ignore  # will be a list of tuple[int, HistoryBaseEntry]  # noqa: E501
+                else:
+                    missing_movement_group_ids.append(movement_group_id)
+
+            if len(missing_movement_group_ids) != 0:
+                for event in self.get_history_events_internal(
+                    cursor=cursor,
+                    filter_query=HistoryEventFilterQuery.make(
+                        group_identifiers=missing_movement_group_ids,
+                        entry_types=IncludeExcludeFilterData([HistoryBaseEntryType.ASSET_MOVEMENT_EVENT]),
+                        exclude_subtypes=[HistoryEventSubType.FEE],
+                    ),
+                ):
+                    idx = events_to_replace[event.group_identifier]
+                    processed_events_result[idx] = (processed_events_result[idx][0], event)  # type: ignore  # will be a list of tuple[int, HistoryBaseEntry]
 
         else:  # Not aggregating. Need to include all associated events in the movement groups.
             events_by_group: dict[str, list[HistoryBaseEntry]] = defaultdict(list)

@@ -925,6 +925,8 @@ def test_get_history_events_with_matched_asset_movements(
     match_asset_movements(database=rotki.data.db)
 
     # Check aggregating by group with several filters that should all get the same groups.
+    # Also check that the group with an evm event returns only the associated asset movement
+    # even when the group_identifier specified is for the evm event.
     for filters in (
         {},
         {'entry_types': {'values': [HistoryBaseEntryType.ASSET_MOVEMENT_EVENT.serialize()]}},
@@ -942,6 +944,7 @@ def test_get_history_events_with_matched_asset_movements(
         assert len(result['entries']) == 2
         assert result['entries'][0]['grouped_events_num'] == 3  # includes both evm events and the matched asset movement  # noqa: E501
         assert result['entries'][0]['entry']['group_identifier'] == movement3.group_identifier
+        assert result['entries'][0]['entry']['entry_type'] == HistoryBaseEntryType.ASSET_MOVEMENT_EVENT.serialize()  # noqa: E501
         assert result['entries'][1]['grouped_events_num'] == 4  # the two matched movements and their fees  # noqa: E501
         assert result['entries'][1]['entry']['group_identifier'] == movement1.group_identifier
 
