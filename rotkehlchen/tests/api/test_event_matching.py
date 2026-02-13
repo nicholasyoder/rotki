@@ -609,6 +609,55 @@ def test_get_unmatched_asset_movements(rotkehlchen_api_server: 'APIServer') -> N
     assert result == [no_match_movement.group_identifier]
 
 
+def test_get_unmatched_excludes_right_match(
+        rotkehlchen_api_server: 'APIServer',
+) -> None:
+    """
+    Regression: right-side matches were still returned because only left_event_id was checked.
+    """
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+    dbevents = DBHistoryEvents(rotki.data.db)
+    with rotki.data.db.conn.write_ctx() as write_cursor:
+        dbevents.add_history_events(
+            write_cursor=write_cursor,
+            history=[(left_movement := AssetMovement(
+                identifier=1,
+                location=Location.KRAKEN,
+                event_subtype=HistoryEventSubType.SPEND,
+                timestamp=TimestampMS(1510000000000),
+                asset=A_ETH,
+                amount=FVal('0.1'),
+                unique_id='1',
+            )), (right_movement := AssetMovement(
+                identifier=2,
+                location=Location.BINANCE,
+                event_subtype=HistoryEventSubType.RECEIVE,
+                timestamp=TimestampMS(1510000000001),
+                asset=A_ETH,
+                amount=FVal('0.1'),
+                unique_id='2',
+            ))],
+        )
+
+    assert set(assert_proper_response_with_result(
+        response=requests.get(api_url_for(rotkehlchen_api_server, 'matchassetmovementsresource')),
+        rotkehlchen_api_server=rotkehlchen_api_server,
+    )) == {left_movement.group_identifier, right_movement.group_identifier}
+
+    assert_simple_ok_response(requests.put(
+        url=api_url_for(rotkehlchen_api_server, 'matchassetmovementsresource'),
+        json={
+            'asset_movement': left_movement.identifier,
+            'matched_events': [right_movement.identifier],
+        },
+    ))
+
+    assert assert_proper_response_with_result(
+        response=requests.get(api_url_for(rotkehlchen_api_server, 'matchassetmovementsresource')),
+        rotkehlchen_api_server=rotkehlchen_api_server,
+    ) == []
+
+
 def test_get_possible_matches(rotkehlchen_api_server: 'APIServer') -> None:
     """Test getting possible matches for an asset movement"""
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
