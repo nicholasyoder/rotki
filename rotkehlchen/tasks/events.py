@@ -679,23 +679,29 @@ def get_unmatched_asset_movements(
     """
     asset_movements: list[AssetMovement] = []
     fee_events: dict[str, AssetMovement] = {}
+    serialized_link_type = HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db()
     with database.conn.read_ctx() as cursor:
         for entry in cursor.execute(
                 f'SELECT {HISTORY_BASE_ENTRY_FIELDS}, {CHAIN_EVENT_FIELDS} FROM history_events '
                 'LEFT JOIN chain_events_info ON history_events.identifier=chain_events_info.identifier '  # noqa: E501
-                'LEFT JOIN history_event_links ON '
-                'history_events.identifier=history_event_links.left_event_id AND '
-                'history_event_links.link_type=? '
+                'LEFT JOIN history_event_links AS left_links ON '
+                'history_events.identifier=left_links.left_event_id AND '
+                'left_links.link_type=? '
+                'LEFT JOIN history_event_links AS right_links ON '
+                'history_events.identifier=right_links.right_event_id AND '
+                'right_links.link_type=? '
                 'LEFT JOIN history_event_link_ignores ON '
                 'history_events.identifier=history_event_link_ignores.event_id AND '
                 'history_event_link_ignores.link_type=? '
                 'WHERE history_events.entry_type=? AND '
-                'history_event_links.left_event_id IS NULL AND '
+                'left_links.left_event_id IS NULL AND '
+                'right_links.right_event_id IS NULL AND '
                 'history_event_link_ignores.event_id IS NULL '
                 'ORDER BY timestamp DESC, sequence_index',
                 (
-                    HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),
-                    HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),
+                    serialized_link_type,
+                    serialized_link_type,
+                    serialized_link_type,
                     HistoryBaseEntryType.ASSET_MOVEMENT_EVENT.serialize_for_db(),
                 ),
         ):
