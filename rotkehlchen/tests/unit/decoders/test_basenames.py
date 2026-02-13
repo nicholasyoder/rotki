@@ -11,9 +11,7 @@ from rotkehlchen.chain.base.modules.basenames.constants import (
 )
 from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.types import (
-    EvmIndexer,
     NodeName,
-    SerializableChainIndexerOrder,
     WeightedNode,
     string_to_evm_address,
 )
@@ -26,7 +24,6 @@ from rotkehlchen.history.events.structures.types import HistoryEventSubType, His
 from rotkehlchen.tests.unit.test_types import LEGACY_TESTS_INDEXER_ORDER
 from rotkehlchen.tests.utils.ethereum import get_decoded_events_of_transaction
 from rotkehlchen.types import (
-    ChainID,
     Location,
     SupportedBlockchain,
     Timestamp,
@@ -478,13 +475,6 @@ def test_basenames_new_owner(
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
-@pytest.mark.parametrize('db_settings', [{
-    'evm_indexers_order': SerializableChainIndexerOrder(
-        order={
-            ChainID.BASE: [EvmIndexer.ROUTESCAN],
-        },
-    ),
-}])
 @pytest.mark.parametrize('base_manager_connect_at_start', [(
     WeightedNode(
         node_info=NodeName(
@@ -499,6 +489,7 @@ def test_basenames_new_owner(
 def test_basenames_ignore_untracked_events(
         base_inquirer: 'BaseInquirer',
         base_accounts: list['ChecksumEvmAddress'],
+        allow_base_routescan: None,
 ) -> None:
     """Regression test for https://github.com/rotki/rotki/issues/11551"""
     tx_hash = deserialize_evm_tx_hash('0x2cb9dcf83b3fd1bbbec4cd5f8d0b688bfc3f6aadd99081f28eaccafcd26c4243')  # noqa: E501

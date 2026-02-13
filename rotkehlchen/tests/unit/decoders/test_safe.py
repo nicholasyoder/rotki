@@ -13,9 +13,7 @@ from rotkehlchen.chain.ethereum.modules.safe.constants import (
 )
 from rotkehlchen.chain.evm.decoding.safe.constants import CPT_SAFE_MULTISIG
 from rotkehlchen.chain.evm.types import (
-    EvmIndexer,
     NodeName,
-    SerializableChainIndexerOrder,
     WeightedNode,
     string_to_evm_address,
 )
@@ -27,7 +25,6 @@ from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.tests.utils.ethereum import get_decoded_events_of_transaction
 from rotkehlchen.types import (
-    ChainID,
     Location,
     SupportedBlockchain,
     Timestamp,
@@ -264,11 +261,6 @@ def test_execution_failure(ethereum_inquirer, ethereum_accounts):
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
-@pytest.mark.parametrize('db_settings', [{
-    'evm_indexers_order': SerializableChainIndexerOrder(
-        order={ChainID.BASE: [EvmIndexer.ROUTESCAN]},
-    ),
-}])
 @pytest.mark.parametrize('base_manager_connect_at_start', [(
     WeightedNode(
         node_info=NodeName(

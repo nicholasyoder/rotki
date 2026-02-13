@@ -1,9 +1,12 @@
 import json
+import warnings as test_warnings
+from unittest.mock import patch
 
 import pytest
 
 from rotkehlchen.db.cache import DBCacheStatic
-from rotkehlchen.types import ExternalService
+from rotkehlchen.externalapis.routescan import ROUTESCAN_SUPPORTED_CHAINS
+from rotkehlchen.types import ChainID, ExternalService
 from rotkehlchen.utils.misc import ts_now
 
 
@@ -34,3 +37,20 @@ def fixture_monerium_credentials(database):
                 'user_email': 'mock@monerium.com',
             }),
         )
+
+
+@pytest.fixture(name='allow_base_routescan')
+def fixture_allow_base_routescan():
+    """Routescan no longer fully indexes Base, so we've removed it from its supported chains to
+    avoid quietly missing new transactions. But as of 2026/02/13 Blockscout (the only other indexer
+    supporting Base on free tier), is in the process of some db migrations, and internal tx queries
+    may result in errors in some cases. So this is a temporary fixture to allow the tests where
+    this internal tx error happens to continue using routescan.
+    # TODO: Remove this once Blockscout is finished with their db migrations.
+    """
+    test_warnings.warn(UserWarning('Temporarily allowing Routescan for Base'))
+    with patch(
+        target='rotkehlchen.externalapis.routescan.ROUTESCAN_SUPPORTED_CHAINS',
+        new=ROUTESCAN_SUPPORTED_CHAINS + (ChainID.BASE,),
+    ):
+        yield

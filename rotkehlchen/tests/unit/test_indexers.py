@@ -51,16 +51,6 @@ def fixture_check_all_indexers(request: pytest.FixtureRequest) -> Iterator[None]
     yield from _patch_indexers(request.param)
 
 
-@pytest.fixture(name='check_all_indexers_excluding_etherscan', params=[
-    [ETHERSCAN_PATCH, ROUTESCAN_PATCH],  # Uses blockscout
-    [ETHERSCAN_PATCH, BLOCKSCOUT_PATCH],  # Uses routescan.
-])
-def fixture_check_all_indexers_excluding_etherscan(request: pytest.FixtureRequest) -> Iterator[None]:  # noqa: E501
-    """Run the test once for each indexer except for etherscan. Used for chains that etherscan
-    doesn't support."""
-    yield from _patch_indexers(request.param)
-
-
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 def test_get_contract_abi(
         ethereum_inquirer: 'EthereumInquirer',
@@ -186,7 +176,6 @@ def test_get_transaction_by_hash(
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 def test_get_transaction_by_hash_l1_fee(
         base_inquirer: 'BaseInquirer',
-        check_all_indexers_excluding_etherscan,
 ) -> None:
     """Check that we can properly retrieve the gas amount for a chain that has an L1 fee."""
     tx, _ = base_inquirer.get_transaction_by_hash(
