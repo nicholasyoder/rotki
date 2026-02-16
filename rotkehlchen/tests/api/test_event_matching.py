@@ -119,11 +119,10 @@ def test_match_asset_movements(rotkehlchen_api_server: 'APIServer') -> None:
     matched_event.event_type = HistoryEventType.EXCHANGE_TRANSFER
     matched_event.event_subtype = HistoryEventSubType.RECEIVE
     matched_event.counterparty = 'kraken'
-    matched_event.notes = f'Receive 0.1 ETH in {user_address} from Kraken 1'
+    matched_event.notes = f'Receive 0.1 ETH in {user_address} from Kraken'
     matched_event.extra_data = {'matched_asset_movement': {
         'group_identifier': asset_movement.group_identifier,
         'exchange': 'kraken',
-        'exchange_name': 'Kraken 1',
     }}
     assert events == [asset_movement, matched_event]
 

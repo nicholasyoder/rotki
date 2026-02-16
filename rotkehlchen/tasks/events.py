@@ -900,14 +900,13 @@ def update_asset_movement_matched_event(
         format_args = {
             'amount': matched_event.amount,
             'asset': matched_event.asset.resolve_to_asset_with_symbol().symbol,
+            'exchange': asset_movement.location.name.capitalize(),
         }
         if matched_event.location_label is not None:
             notes += address_hint
             format_args['location_label'] = matched_event.location_label
-        if asset_movement.location_label is not None:
-            format_args['exchange'] = asset_movement.location_label
-            notes += exchange_hint
 
+        notes += exchange_hint
         matched_event.notes = notes.format(**format_args)
 
     if matched_event.extra_data is None:
@@ -916,7 +915,6 @@ def update_asset_movement_matched_event(
     matched_event.extra_data['matched_asset_movement'] = {
         'group_identifier': asset_movement.group_identifier,
         'exchange': asset_movement.location.serialize(),
-        'exchange_name': asset_movement.location_label,
     }
 
     if allow_adding_adjustments:
@@ -956,7 +954,6 @@ def update_asset_movement_matched_event(
             asset_movement.extra_data['matched_asset_movement'] = {
                 'group_identifier': matched_event.group_identifier,
                 'exchange': matched_event.location.serialize(),
-                'exchange_name': matched_event.location_label,
             }
             events_db.edit_history_event(
                 write_cursor=write_cursor,

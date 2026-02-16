@@ -291,7 +291,7 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
     # Corresponding event for withdrawal1
     assert (withdrawal1_matched_event := events[2]).event_type == HistoryEventType.EXCHANGE_TRANSFER  # noqa: E501
     assert withdrawal1_matched_event.event_subtype == HistoryEventSubType.RECEIVE
-    assert withdrawal1_matched_event.notes == f'Receive 0.2 USDC in {withdrawal1_user_address} from Coinbase 1'  # noqa: E501
+    assert withdrawal1_matched_event.notes == f'Receive 0.2 USDC in {withdrawal1_user_address} from Coinbase'  # noqa: E501
     assert withdrawal1_matched_event.counterparty == Location.COINBASE.name.lower()
     # Second event matching withdrawal1 but with the wrong amount. Unmodified.
     withdrawal1_wrong_amount_event.identifier = events[3].identifier
@@ -307,7 +307,7 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
     assert deposit3_matched_event.event_subtype == HistoryEventSubType.SPEND
     # Check that the note has been updated but doesn't include the 'to {exchange}' part since
     # deposit3 doesn't have a location_label set.
-    assert deposit3_matched_event.notes == f'Send 100 USDC from {deposit3_user_address}'
+    assert deposit3_matched_event.notes == f'Send 100 USDC from {deposit3_user_address} to Bybit'
     assert deposit3_matched_event.counterparty == Location.BYBIT.name.lower()
 
     # Last two events should be withdrawal4's matched event and a new adjustment event to cover the
@@ -318,7 +318,6 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
     withdrawal4_matched_event.extra_data = AssetMovementExtraData(matched_asset_movement={
         'group_identifier': withdrawal4.group_identifier,
         'exchange': 'bitstamp',
-        'exchange_name': 'Bitstamp 1',
     })
     assert asset_movements[-2] == withdrawal4_matched_event
     assert (withdrawal4_adjustment := asset_movements[-1]).event_type == HistoryEventType.EXCHANGE_ADJUSTMENT  # noqa: E501
@@ -373,7 +372,6 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
     withdrawal4.extra_data = AssetMovementExtraData(matched_asset_movement={
         'group_identifier': withdrawal4_matched_event.group_identifier,
         'exchange': 'kraken',
-        'exchange_name': 'Kraken 1',
     })
     withdrawal4.identifier = withdrawal4_identifier
     assert matched_asset_movements[3] == withdrawal4
@@ -977,11 +975,10 @@ def test_exchange_deposit_delayed_credit(database: 'DBHandler') -> None:
     assert matched_event.event_type == HistoryEventType.EXCHANGE_TRANSFER
     assert matched_event.event_subtype == HistoryEventSubType.SPEND
     assert matched_event.counterparty == 'poloniex'  # type: ignore[attr-defined]
-    assert matched_event.notes == f'Send 1 ETH from {user_address} to Poloniex 1'
+    assert matched_event.notes == f'Send 1 ETH from {user_address} to Poloniex'
     assert matched_event.extra_data == {'matched_asset_movement': {
         'group_identifier': asset_movement.group_identifier,
         'exchange': 'poloniex',
-        'exchange_name': 'Poloniex 1',
     }}
 
 
