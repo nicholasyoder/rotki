@@ -892,7 +892,7 @@ def test_get_history_events_with_matched_asset_movements(
                 identifier=5,
                 location=Location.KRAKEN,
                 event_subtype=HistoryEventSubType.SPEND,
-                timestamp=TimestampMS(1500000000002),
+                timestamp=TimestampMS(1500000000003),
                 asset=A_ETH,
                 amount=FVal('0.5'),
                 unique_id='3',
@@ -970,13 +970,13 @@ def test_get_history_events_with_matched_asset_movements(
     # matched events are in a sublist so frontend can easily group them
     assert len(match1_sublist := result[1]) == 2
     assert match1_sublist[0]['entry']['event_type'] == 'exchange transfer'
-    assert match1_sublist[0]['entry']['event_subtype'] == 'receive'
+    assert match1_sublist[0]['entry']['event_subtype'] == 'spend'
     assert match1_sublist[0]['entry']['group_identifier'] == movement3.group_identifier
-    assert match1_sublist[0]['entry']['actual_group_identifier'] == evm_event_1.group_identifier
+    assert match1_sublist[0]['entry']['actual_group_identifier'] == movement3.group_identifier
     assert match1_sublist[1]['entry']['event_type'] == 'exchange transfer'
-    assert match1_sublist[1]['entry']['event_subtype'] == 'spend'
+    assert match1_sublist[1]['entry']['event_subtype'] == 'receive'
     assert match1_sublist[1]['entry']['group_identifier'] == movement3.group_identifier
-    assert match1_sublist[1]['entry']['actual_group_identifier'] == movement3.group_identifier
+    assert match1_sublist[1]['entry']['actual_group_identifier'] == evm_event_1.group_identifier
 
     # Then check the events for the second matched event (movement2)
     result = assert_proper_response_with_result(

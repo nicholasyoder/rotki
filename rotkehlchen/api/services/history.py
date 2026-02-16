@@ -73,6 +73,23 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
+def _sort_matched_group(matched_events_group: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Sorts a joined matched events sublist placing the withdrawals before the deposits,
+    including properly placing any associated fee events with their movements.
+    """
+    try:
+        serialized_type = HistoryEventType.EXCHANGE_TRANSFER.serialize()
+        serialized_subtype = HistoryEventSubType.SPEND.serialize()
+        out_group_ids = {x['entry']['actual_group_identifier'] for x in matched_events_group if (
+            x['entry']['event_type'] == serialized_type and
+            x['entry']['event_subtype'] == serialized_subtype
+        )}
+        return sorted(matched_events_group, key=lambda x: 0 if x['entry']['actual_group_identifier'] in out_group_ids else 1)  # noqa: E501
+    except KeyError as e:  # Shouldn't happen in theory but handle it just in case
+        log.error(f'Failed to sort matched events group due to missing key {e!s}')
+        return matched_events_group
+
+
 class HistoryService:
     def __init__(self, rotkehlchen: Rotkehlchen) -> None:
         self.rotkehlchen = rotkehlchen
@@ -725,7 +742,7 @@ class HistoryService:
                     # This is the beginning of an asset movement group coming immediately after
                     # another asset movement group. Add the current group to entries and reset
                     # to begin a new group.
-                    entries.append(current_matched_group)
+                    entries.append(_sort_matched_group(current_matched_group))
                     current_matched_group = []
 
                 # Append to current_matched_group and set the current_matched_group_id
@@ -758,7 +775,7 @@ class HistoryService:
                     entries.append(current_sequential_group)
                     current_sequential_group, last_subtype_index = [], None
                 if len(current_matched_group) > 0 and replacement_group_id is None:
-                    entries.append(current_matched_group)
+                    entries.append(_sort_matched_group(current_matched_group))
                     current_matched_group, current_matched_group_id = [], None
                 entries.append(serialized)
 
@@ -766,7 +783,7 @@ class HistoryService:
         if len(current_sequential_group) > 0:
             entries.append(current_sequential_group)
         if len(current_matched_group) > 0:
-            entries.append(current_matched_group)
+            entries.append(_sort_matched_group(current_matched_group))
 
         return entries
 
