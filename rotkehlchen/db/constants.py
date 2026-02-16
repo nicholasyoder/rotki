@@ -25,7 +25,7 @@ HISTORY_MAPPING_KEY_STATE: Final = 'state'
 class HistoryMappingState(DBIntEnumMixIn):
     CUSTOMIZED = 1
     PROFIT_ADJUSTMENT = 2  # events auto-created during historical balances processing when withdrawals exceed deposits  # noqa: E501
-    AUTO_MATCHED = 3  # events matched with asset movements, and fees created during matching.
+    MATCHED = 3  # events matched with asset movements and adjustments created during matching.
     IMPORTED_FROM_CSV = 4
 
 

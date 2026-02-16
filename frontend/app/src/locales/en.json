@@ -5363,9 +5363,9 @@
         }
       },
       "event_states": {
-        "auto_matched": "Auto matched",
         "customized": "Customized",
         "imported_from_csv": "Imported from CSV",
+        "matched": "Matched",
         "profit_adjustment": "Profit adjustment"
       },
       "export": {
