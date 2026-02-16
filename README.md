@@ -47,7 +47,7 @@
 <div id="overview"></div>
 
 ## 📖 **Overview**
-[rotki](https://rotki.com/) is an opensource self-hosted portfolio management tool that puts privacy first. Unlike most competitors, which are closed-source SaaS platforms requiring you to hand over sensitive financial data, rotki keeps your data encrypted and stored locally—ensuring you stay in control. Our mission is to bring transparency to the crypto and financial sectors through opensource software, empowering users with a secure, self-sovereign alternative to cloud-based tracking services.
+[rotki](https://rotki.com/) is an opensource self-hosted portfolio management tool that puts privacy first. Unlike most competitors, which are closed-source SaaS platforms requiring you to hand over sensitive financial data, rotki keeps your data encrypted and stored locally ensuring you stay in control. Our mission is to bring transparency to the crypto and financial sectors through opensource software, empowering users with a secure, self-sovereign alternative to cloud-based tracking services.
 
 🔹 **Why choose rotki?**
 - **Open-source & Transparent** 📖  
@@ -185,6 +185,11 @@ Thank you for considering a donation to support our work!
 rotki is open-source and distributed under the **AGPLv3 License**.
 
 📜 **[Read the Full License](https://github.com/rotki/rotki/blob/develop/LICENSE.md)**
+
+### Commercial licensing
+If your intended use of rotki (or parts of it) would trigger AGPL obligations (for example: embedding in a proprietary product, redistributing as part of a commercial offering, or offering a hosted/SaaS version), we can offer a commercial license as an alternative to AGPL compliance.
+
+For inquiries contact us: info@rotki.com
 
 <p align="right">(<a href="#top">🔼 Back to top</a>)</p>
 
