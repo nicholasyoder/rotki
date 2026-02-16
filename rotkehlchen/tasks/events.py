@@ -363,6 +363,17 @@ def _should_auto_ignore_movement(asset_movement: AssetMovement) -> bool:
     To determine if the chain is supported, first check if it is specified in the extra data.
     If not, check if the event's asset (or any asset in its collection) is from a supported chain.
     """
+    if asset_movement.location == Location.COINBASEPRO:
+        return True
+
+    if (
+        asset_movement.location == Location.COINBASE and
+        (notes := asset_movement.notes) is not None
+    ):
+        notes_lower = notes.lower()
+        if 'coinbase pro' in notes_lower or 'coinbasepro' in notes_lower:
+            return True
+
     if asset_movement.asset.is_fiat():
         return True
 

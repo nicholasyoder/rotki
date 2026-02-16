@@ -1309,17 +1309,17 @@ def test_match_by_transaction_id_without_0x_prefix(database: 'DBHandler') -> Non
             write_cursor=write_cursor,
             history=[AssetMovement(
                 identifier=(movement_id := 1),
-                location=Location.COINBASEPRO,
+                location=Location.KRAKEN,
                 event_subtype=HistoryEventSubType.SPEND,
                 timestamp=ts,
                 asset=A_USDC,
                 amount=amount,
-                unique_id='coinbasepro_withdrawal_1',
+                unique_id='kraken_withdrawal_1',
                 extra_data=AssetMovementExtraData(
                     transaction_id=tx_hash_str[2:],
                     address=make_evm_address(),
                 ),
-                location_label='Coinbase Pro 1',
+                location_label='Kraken 1',
             ), EvmEvent(  # Matched by tx hash
                 identifier=(match_id := 2),
                 tx_ref=tx_hash,
@@ -1366,17 +1366,17 @@ def test_reprocess_ambiguous_movement_after_candidate_gets_matched(database: 'DB
                 location_label='Kraken 1',
             ), AssetMovement(  # Processed later, but uniquely matched by tx hash.
                 identifier=(tx_ref_movement_id := 2),
-                location=Location.COINBASEPRO,
+                location=Location.KRAKEN,
                 event_subtype=HistoryEventSubType.SPEND,
                 timestamp=TimestampMS(1700003000000),
                 asset=A_USDC,
                 amount=amount,
-                unique_id='coinbasepro_withdrawal_txref',
+                unique_id='kraken_withdrawal_txref',
                 extra_data=AssetMovementExtraData(
                     transaction_id=tx_ref_str[2:],
                     address=make_evm_address(),
                 ),
-                location_label='Coinbase Pro 1',
+                location_label='Kraken 2',
             ), EvmEvent(  # Candidate 1: tx-ref movement should pick this one.
                 identifier=(tx_ref_match_id := 3),
                 tx_ref=tx_ref,
@@ -1427,17 +1427,17 @@ def test_retry_ambiguous_movement_stays_ambiguous(database: 'DBHandler') -> None
                 location_label='Kraken 1',
             ), AssetMovement(  # Processed second: uniquely matches candidate 1 by tx hash.
                 identifier=(tx_ref_movement_id := 2),
-                location=Location.COINBASEPRO,
+                location=Location.KRAKEN,
                 event_subtype=HistoryEventSubType.SPEND,
                 timestamp=TimestampMS(1700004000000),
                 asset=A_USDC,
                 amount=amount,
-                unique_id='coinbasepro_withdrawal_txref',
+                unique_id='kraken_withdrawal_txref',
                 extra_data=AssetMovementExtraData(
                     transaction_id=str(tx_ref := make_evm_tx_hash())[2:],
                     address=make_evm_address(),
                 ),
-                location_label='Coinbase Pro 1',
+                location_label='Kraken 2',
             ), EvmEvent(  # Candidate 1: matched by tx-ref movement.
                 identifier=(tx_ref_match_id := 3),
                 tx_ref=tx_ref,
@@ -1575,10 +1575,7 @@ def test_retry_ambiguous_movement_loses_all_candidates(database: 'DBHandler') ->
 
 
 def test_match_coinbasepro_coinbase_transfer(database: 'DBHandler') -> None:
-    """Test that we properly match transfers between coinbasepro and coinbase.
-    Regression test for matching exchange to exchange movements even if the asset is
-    for an unsupported chain (ICP in this case).
-    """
+    """CoinbasePro transfers and Coinbase transfer-note movements are auto-ignored."""
     with database.conn.write_ctx() as write_cursor:
         DBHistoryEvents(database).add_history_events(
             write_cursor=write_cursor,
@@ -1619,13 +1616,20 @@ def test_match_coinbasepro_coinbase_transfer(database: 'DBHandler') -> None:
             )],
         )
 
-    # Since these are exchange to exchange movements, there are two entries for each pair,
-    # one entry for every asset movement.
-    _match_and_check(database=database, expected_matches=[(1, 2), (2, 1), (3, 4), (4, 3)])
+    _match_and_check(database=database, expected_matches=[])
+    with database.conn.read_ctx() as cursor:
+        ignored_ids = {
+            row[0] for row in cursor.execute(
+                'SELECT event_id FROM history_event_link_ignores WHERE link_type=?',
+                (HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),),
+            ).fetchall()
+        }
+
+    assert ignored_ids == {1, 2, 3, 4}
 
 
 def test_coinbasepro_transfer_with_onchain_event(database: 'DBHandler') -> None:
-    """Ensure CoinbasePro transfer notes restrict matches to Coinbase/CoinbasePro."""
+    """CoinbasePro and Coinbase transfer-note movements are not matched to onchain events."""
     with database.conn.write_ctx() as write_cursor:
         DBHistoryEvents(database).add_history_events(
             write_cursor=write_cursor,
@@ -1672,18 +1676,21 @@ def test_coinbasepro_transfer_with_onchain_event(database: 'DBHandler') -> None:
             )],
         )
 
-    _match_and_check(
-        database=database,
-        expected_matches=[
-            (movement_id, match_id),
-            (movement_id_2, match_id_2),
-            (match_id_2, movement_id_2),
-        ],
-    )
+    _match_and_check(database=database, expected_matches=[])
+    with database.conn.read_ctx() as cursor:
+        ignored_ids = {
+            row[0] for row in cursor.execute(
+                'SELECT event_id FROM history_event_link_ignores WHERE link_type=?',
+                (HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),),
+            ).fetchall()
+        }
+
+    assert ignored_ids == {movement_id, movement_id_2, match_id_2}
+    assert match_id == 1  # Onchain event should not be ignored.
 
 
 def test_coinbase_unprefixed_hash(database: 'DBHandler') -> None:
-    """Match CoinbasePro->Coinbase transfer and Coinbase withdrawal by unprefixed tx hash."""
+    """Coinbase withdrawal still matches unprefixed tx hash while transfer movements are ignored."""
     tx_hash = make_evm_tx_hash()
     window_offset = ts_sec_to_ms(Timestamp(DEFAULT_ASSET_MOVEMENT_TIME_RANGE + 1))
     with database.conn.write_ctx() as write_cursor:
@@ -1751,7 +1758,6 @@ def test_coinbase_unprefixed_hash(database: 'DBHandler') -> None:
     # Transfer movement pairs are stored bidirectionally, so assert logical (deduplicated) matches.
     logical_matches = {tuple(sorted(link)) for link in links}
     assert logical_matches == {
-        tuple(sorted((coinbasepro_withdrawal_id, coinbase_deposit_id))),
         tuple(sorted((coinbase_withdrawal_id, evm_receive_id))),
     }
 
