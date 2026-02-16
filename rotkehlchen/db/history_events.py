@@ -2055,12 +2055,18 @@ class DBHistoryEvents:
             events_to_replace, processed_result_idx = {}, 0
             movement_events_in_result = {}
             for grouped_events_num, event in cast('list[tuple[int, HistoryBaseEntry]]', events_result):  # noqa: E501
+                if (
+                    event.entry_type == HistoryBaseEntryType.ASSET_MOVEMENT_EVENT and
+                    event.event_subtype != HistoryEventSubType.FEE
+                ):
+                    movement_events_in_result[event.group_identifier] = event
+
                 should_skip, matched_joined_group_count = False, 0
                 if (
                     (match_info_list := movement_group_to_match_info.get(event.group_identifier)) is not None and  # noqa: E501
                     event.group_identifier in match_group_to_movement_info
                 ):  # This is a movement matched with a movement.
-                    movement_events_in_result[event.group_identifier] = event
+
                     for _, matched_group_identifier, joined_count in match_info_list:
                         matched_joined_group_count += joined_count
                         if len({matched_group_identifier, event.group_identifier} & already_processed_matches) != 0:  # noqa: E501
@@ -2068,7 +2074,6 @@ class DBHistoryEvents:
                         already_processed_matches.add(matched_group_identifier)
                     already_processed_matches.add(event.group_identifier)
                 elif match_info_list is not None:
-                    movement_events_in_result[event.group_identifier] = event
                     for _, matched_group_identifier, joined_count in match_info_list:
                         matched_joined_group_count += joined_count
                         if matched_group_identifier in already_processed_matches:
@@ -2077,11 +2082,7 @@ class DBHistoryEvents:
                             already_processed_matches.add(matched_group_identifier)
                 elif (movement_info := match_group_to_movement_info.get(event.group_identifier)) is not None:  # noqa: E501
                     movement_group_identifier, matched_joined_group_count = movement_info
-                    if not (should_skip := event.group_identifier in already_processed_matches):
-                        # This is a matched event that will not be skipped. It needs to be replaced
-                        # with its associated movement event in the final processed_events_result
-                        events_to_replace[movement_group_identifier] = processed_result_idx
-
+                    should_skip = event.group_identifier in already_processed_matches
                     already_processed_matches.add(event.group_identifier)
                     # also load any other matched events associated with this movement.
                     if (
@@ -2099,6 +2100,12 @@ class DBHistoryEvents:
                     entries_found -= 1
                     entries_with_limit -= 1
                     continue
+
+                if (
+                    (movement_group_id := joined_group_ids.get(event.group_identifier)) is not None and  # noqa: E501
+                    event.entry_type != HistoryBaseEntryType.ASSET_MOVEMENT_EVENT
+                ):
+                    events_to_replace[movement_group_id] = processed_result_idx
 
                 processed_events_result.append(
                     (grouped_events_num + matched_joined_group_count, event),   # type: ignore[arg-type]  # will be a list of tuple[int, HistoryBaseEntry]
