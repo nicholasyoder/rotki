@@ -1734,6 +1734,47 @@ def test_coinbasepro_transfer_with_onchain_event(database: 'DBHandler') -> None:
     assert match_id == 1  # Onchain event should not be ignored.
 
 
+def test_auto_ignored_movements_excluded_as_candidates(database: 'DBHandler') -> None:
+    """Auto-ignored movements (e.g. Coinbase Pro) are not considered candidate matches."""
+    with database.conn.write_ctx() as write_cursor:
+        DBHistoryEvents(database).add_history_events(
+            write_cursor=write_cursor,
+            history=[AssetMovement(
+                identifier=(movement_id := 1),
+                location=Location.KRAKEN,
+                event_subtype=HistoryEventSubType.SPEND,
+                timestamp=TimestampMS(1700013000000),
+                asset=A_ETH,
+                amount=ONE,
+                unique_id='kraken_withdrawal_1',
+                location_label='Kraken 1',
+            ), AssetMovement(  # Would be a matching candidate without ignore filtering.
+                identifier=2,
+                location=Location.COINBASEPRO,
+                event_subtype=HistoryEventSubType.RECEIVE,
+                timestamp=TimestampMS(1700013001000),
+                asset=A_ETH,
+                amount=ONE,
+                unique_id='cbpro_deposit_1',
+                location_label='Coinbase Pro 1',
+            ), AssetMovement(
+                identifier=(match_id := 3),
+                location=Location.BITSTAMP,
+                event_subtype=HistoryEventSubType.RECEIVE,
+                timestamp=TimestampMS(1700013002000),
+                asset=A_ETH,
+                amount=ONE,
+                unique_id='bitstamp_deposit_1',
+                location_label='Bitstamp 1',
+            )],
+        )
+
+    _match_and_check(
+        database=database,
+        expected_matches=[(movement_id, match_id), (match_id, movement_id)],
+    )
+
+
 def test_coinbase_unprefixed_hash(database: 'DBHandler') -> None:
     """Coinbase withdrawal still matches unprefixed tx hash while transfer movements are
     ignored.

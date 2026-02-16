@@ -81,10 +81,11 @@ TIMESTAMP_TOLERANCE: Final = HOUR_IN_SECONDS
 LEGACY_EXCHANGE_MATCH_CUTOFF_TS: Final = Timestamp(1514764800)  # 2018-01-01 00:00:00 UTC
 LEGACY_EXCHANGE_MATCH_WINDOW: Final = HOUR_IN_SECONDS * 100
 OLD_REP_ASSET: Final = Asset('eip155:1/erc20:0x48c80F1f4D53D5951e5D5438B54Cba84f29F32a5')
+REP_UPGRADED_ASSET: Final = Asset('eip155:1/erc20:0xE94327D07Fc17907b4DB788E5aDf2ed424adDff6')
 SKY_ASSET: Final = Asset('eip155:1/erc20:0x56072C95FAA701256059aa122697B133aDEd9279')
 OLD_GNT_ASSET: Final = Asset('eip155:1/erc20:0xa74476443119A942dE498590Fe1f2454d7D4aC0d')
 MANUALLY_MATCHABLE_ASSET_GROUPS: Final = (  # assets that we consider the same when matching
-    {A_REP, OLD_REP_ASSET},
+    {A_REP, OLD_REP_ASSET, REP_UPGRADED_ASSET},
     {A_MKR, SKY_ASSET},
     {A_GLM, OLD_GNT_ASSET},
 )
@@ -1022,20 +1023,13 @@ def should_exclude_possible_match(
     - Event identifier is in the list of already matched ids.
     - Gas events
     """
-    if (
-        asset_movement.location in {Location.COINBASE, Location.COINBASEPRO} and
-        asset_movement.notes is not None and
-        asset_movement.notes.startswith('Transfer funds') and
-        asset_movement.notes.endswith('CoinbasePro') and
-        event.location not in {Location.COINBASE, Location.COINBASEPRO}
-    ):
-        return True  # Coinbase/CoinbasePro transfer should only match between those exchanges
+    if isinstance(event, AssetMovement) and _should_auto_ignore_movement(asset_movement=event):
+        return True
 
     if event.location == asset_movement.location:
         return True  # only allow exchange-to-exchange between different exchanges
 
     is_deposit = asset_movement.event_subtype == HistoryEventSubType.RECEIVE
-
     if isinstance(event, OnchainEvent):
         if (
             event.event_type == HistoryEventType.SPEND and
