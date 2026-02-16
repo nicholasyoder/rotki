@@ -6,12 +6,13 @@ from typing import TYPE_CHECKING, Final, Literal
 
 from rotkehlchen.api.v1.types import IncludeExcludeFilterData
 from rotkehlchen.api.websockets.typedefs import WSMessageType
+from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.accounts import BlockchainAccounts
 from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.ethereum.constants import EXCHANGES_CPT
 from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
 from rotkehlchen.constants import HOUR_IN_SECONDS
-from rotkehlchen.constants.assets import A_DAI, A_SAI
+from rotkehlchen.constants.assets import A_DAI, A_GLM, A_MKR, A_REP, A_SAI
 from rotkehlchen.constants.resolver import SOLANA_CHAIN_DIRECTIVE, identifier_to_evm_chain
 from rotkehlchen.constants.timing import SAI_DAI_MIGRATION_TS
 from rotkehlchen.db.cache import DBCacheStatic
@@ -56,7 +57,6 @@ from rotkehlchen.utils.misc import is_valid_ethereum_tx_hash, ts_ms_to_sec, ts_n
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from rotkehlchen.assets.asset import Asset
     from rotkehlchen.chain.aggregator import ChainsAggregator
     from rotkehlchen.db.dbhandler import DBHandler
     from rotkehlchen.db.drivers.gevent import DBCursor
@@ -80,6 +80,21 @@ ENTRY_TYPES_TO_EXCLUDE_FROM_MATCHING: Final = [
 TIMESTAMP_TOLERANCE: Final = HOUR_IN_SECONDS
 LEGACY_EXCHANGE_MATCH_CUTOFF_TS: Final = Timestamp(1514764800)  # 2018-01-01 00:00:00 UTC
 LEGACY_EXCHANGE_MATCH_WINDOW: Final = HOUR_IN_SECONDS * 100
+OLD_REP_ASSET: Final = Asset('eip155:1/erc20:0x48c80F1f4D53D5951e5D5438B54Cba84f29F32a5')
+REP_UPGRADED_ASSET: Final = Asset('eip155:1/erc20:0xE94327D07Fc17907b4DB788E5aDf2ed424adDff6')
+REP_V2_OLD: Final = Asset('eip155:1/erc20:0x1985365e9f78359a9B6AD760e32412f4a445E862')
+SKY_ASSET: Final = Asset('eip155:1/erc20:0x56072C95FAA701256059aa122697B133aDEd9279')
+OLD_GNT_ASSET: Final = Asset('eip155:1/erc20:0xa74476443119A942dE498590Fe1f2454d7D4aC0d')
+MANUALLY_MATCHABLE_ASSET_GROUPS: Final = (  # assets that we consider the same when matching
+    {A_REP, OLD_REP_ASSET, REP_UPGRADED_ASSET, REP_V2_OLD},
+    {A_MKR, SKY_ASSET},
+    {A_GLM, OLD_GNT_ASSET},
+)
+MANUALLY_MATCHABLE_ASSET_MAP: Final = {
+    asset: asset_group
+    for asset_group in MANUALLY_MATCHABLE_ASSET_GROUPS
+    for asset in asset_group
+}
 
 
 @dataclass(frozen=True)
@@ -363,6 +378,17 @@ def _should_auto_ignore_movement(asset_movement: AssetMovement) -> bool:
     To determine if the chain is supported, first check if it is specified in the extra data.
     If not, check if the event's asset (or any asset in its collection) is from a supported chain.
     """
+    if asset_movement.location == Location.COINBASEPRO:
+        return True
+
+    if (
+        asset_movement.location == Location.COINBASE and
+        (notes := asset_movement.notes) is not None
+    ):
+        notes_lower = notes.lower()
+        if 'coinbase pro' in notes_lower or 'coinbasepro' in notes_lower:
+            return True
+
     if asset_movement.asset.is_fiat():
         return True
 
@@ -389,11 +415,18 @@ def _get_assets_in_collection(
         assets_in_collection = GlobalDBHandler.get_assets_in_same_collection(
             identifier=asset_identifier,
         )
+        manually_matchable_assets: set[Asset] = MANUALLY_MATCHABLE_ASSET_MAP.get(
+            asset_movement.asset,
+            set(),
+        )
         if (
             asset_movement.asset in {A_DAI, A_SAI} and
             ts_ms_to_sec(asset_movement.timestamp) >= SAI_DAI_MIGRATION_TS
         ):
-            assets_in_collection = tuple(set(assets_in_collection) | {A_DAI, A_SAI})
+            manually_matchable_assets.update((A_DAI, A_SAI))
+
+        if len(manually_matchable_assets) != 0:
+            assets_in_collection = tuple(set(assets_in_collection) | manually_matchable_assets)
         assets_in_collection_cache[asset_identifier] = assets_in_collection
 
     return assets_in_collection
@@ -734,21 +767,12 @@ def _maybe_add_adjustment_event(
         matched_event: HistoryBaseEntry,
         is_deposit: bool,
 ) -> None:
-    """Adjust the movement amount to mirror the onchain amount and add an adjustment event
-    to reconcile the exchange balance back to what the exchange actually reported.
-
-    The movement amount is set to the onchain amount so the transfer is symmetric for balance
-    tracking. The adjustment event corrects the exchange balance and records the gain/loss
-    for accounting (SPEND if user lost value, RECEIVE if gained).
-
-    Example: deposit, exchange credits 9.96, onchain sent 10
-    - Movement: 9.96 -> 10, adjustment SPEND 0.04, balance = +10 - 0.04 = +9.96
-
+    """Add an event to cover the difference between the amounts of the movement and its match.
     Takes no action if the amounts match or if existing events already cover the difference.
     """
-    # For deposits, include the fee since the onchain amount is amount + fee (fee is deducted
-    # after arrival). For withdrawals, the fee is deducted before the onchain transfer.
-    movement_amount_with_fee = asset_movement.amount + fee_event.amount if (
+    # Include the fee amount only for deposits since for withdrawals the matched event happens
+    # after the fee has already been deducted.
+    movement_amount_with_fee = asset_movement.amount - fee_event.amount if (
         is_deposit and
         fee_event is not None and
         fee_event.asset == asset_movement.asset
@@ -803,17 +827,6 @@ def _maybe_add_adjustment_event(
         if has_correct_adjustment_event:
             return  # An existing adjustment already covers the amount difference.
 
-    # Adjust the movement amount to mirror the onchain amount so the transfer is symmetric for
-    # balance tracking. A backup is saved so that unlinking restores the original amount.
-    asset_movement.amount = matched_event.amount
-    with events_db.db.conn.write_ctx() as write_cursor:
-        events_db.edit_history_event(
-            write_cursor=write_cursor,
-            event=asset_movement,
-            mapping_state=HistoryMappingState.AUTO_MATCHED,
-            save_backup=True,
-        )
-
     # Get the next open sequence index for the adjustment event
     with events_db.db.conn.read_ctx() as cursor:
         next_sequence_index = cursor.execute(
@@ -821,9 +834,7 @@ def _maybe_add_adjustment_event(
             (asset_movement.group_identifier,),
         ).fetchone()[0] + 1
 
-    # Create the adjustment event to reconcile the exchange balance back to the original
-    # exchange-reported amount. The subtype reflects the accounting impact:
-    # SPEND if the user lost value, RECEIVE if the user gained value.
+    # Create the movement's adjustment event
     with events_db.db.conn.write_ctx() as write_cursor:
         events_db.add_history_event(
             write_cursor=write_cursor,
@@ -834,8 +845,8 @@ def _maybe_add_adjustment_event(
                 location=asset_movement.location,
                 event_type=HistoryEventType.EXCHANGE_ADJUSTMENT,
                 event_subtype=HistoryEventSubType.SPEND if (
-                    (is_deposit and movement_amount_with_fee < matched_event.amount) or
-                    (not is_deposit and movement_amount_with_fee > matched_event.amount)
+                    (is_deposit and movement_amount_with_fee > matched_event.amount) or
+                    (not is_deposit and movement_amount_with_fee < matched_event.amount)
                 ) else HistoryEventSubType.RECEIVE,
                 asset=asset_movement.asset,
                 amount=amount_diff,
@@ -991,20 +1002,13 @@ def should_exclude_possible_match(
     - Event identifier is in the list of already matched ids.
     - Gas events
     """
-    if (
-        asset_movement.location in {Location.COINBASE, Location.COINBASEPRO} and
-        asset_movement.notes is not None and
-        asset_movement.notes.startswith('Transfer funds') and
-        asset_movement.notes.endswith('CoinbasePro') and
-        event.location not in {Location.COINBASE, Location.COINBASEPRO}
-    ):
-        return True  # Coinbase/CoinbasePro transfer should only match between those exchanges
+    if isinstance(event, AssetMovement) and _should_auto_ignore_movement(asset_movement=event):
+        return True
 
     if event.location == asset_movement.location:
         return True  # only allow exchange-to-exchange between different exchanges
 
     is_deposit = asset_movement.event_subtype == HistoryEventSubType.RECEIVE
-
     if isinstance(event, OnchainEvent):
         if (
             event.event_type == HistoryEventType.SPEND and

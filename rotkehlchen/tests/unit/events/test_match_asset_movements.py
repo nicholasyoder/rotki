@@ -3,7 +3,6 @@ from unittest.mock import patch
 
 import pytest
 
-from rotkehlchen.api.v1.types import IncludeExcludeFilterData
 from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.decoding.constants import CPT_GAS
@@ -17,7 +16,10 @@ from rotkehlchen.constants.assets import (
     A_BTC,
     A_DAI,
     A_ETH,
+    A_GLM,
     A_GNO,
+    A_MKR,
+    A_REP,
     A_SAI,
     A_USD,
     A_USDC,
@@ -42,7 +44,7 @@ from rotkehlchen.history.events.structures.asset_movement import (
     AssetMovementExtraData,
     AssetMovementSubtype,
 )
-from rotkehlchen.history.events.structures.base import HistoryBaseEntryType, HistoryEvent
+from rotkehlchen.history.events.structures.base import HistoryEvent
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.onchain_event import OnchainEvent
 from rotkehlchen.history.events.structures.solana_event import SolanaEvent
@@ -311,11 +313,8 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
     # Last two events should be withdrawal4's matched event and a new adjustment event to cover the
     # difference between withdrawal4 and its matched event. Note that since the matched event is
     # also an asset movement in this case, the adjustment is actually added to the group of the
-    # matched event since it gets processed first. Its amount was also adjusted to mirror the
-    # Bitstamp withdrawal amount (the matched event from the Kraken deposit's perspective).
-    original_matched_event_amount = withdrawal4_matched_event.amount
+    # matched event since it gets processed first.
     withdrawal4_matched_event.identifier = asset_movements[-2].identifier
-    withdrawal4_matched_event.amount = withdrawal4.amount  # adjusted to mirror the matched event
     withdrawal4_matched_event.extra_data = AssetMovementExtraData(matched_asset_movement={
         'group_identifier': withdrawal4.group_identifier,
         'exchange': 'bitstamp',
@@ -323,9 +322,9 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
     })
     assert asset_movements[-2] == withdrawal4_matched_event
     assert (withdrawal4_adjustment := asset_movements[-1]).event_type == HistoryEventType.EXCHANGE_ADJUSTMENT  # noqa: E501
-    assert withdrawal4_adjustment.event_subtype == HistoryEventSubType.SPEND
+    assert withdrawal4_adjustment.event_subtype == HistoryEventSubType.RECEIVE
     assert withdrawal4_adjustment.group_identifier == withdrawal4_matched_event.group_identifier
-    assert withdrawal4_adjustment.amount == withdrawal4.amount - original_matched_event_amount
+    assert withdrawal4_adjustment.amount == withdrawal4.amount - withdrawal4_matched_event.amount
 
     # Check that matches have been cached and that the cached identifiers
     # refer to the correct asset movements
@@ -803,7 +802,7 @@ def test_match_asset_movements_settings(database: 'DBHandler') -> None:
     assert all_events[0].group_identifier == movement_event.group_identifier
     assert all_events[1].group_identifier == movement_event.group_identifier
     assert all_events[1].event_type == HistoryEventType.EXCHANGE_ADJUSTMENT
-    assert all_events[1].event_subtype == HistoryEventSubType.SPEND
+    assert all_events[1].event_subtype == HistoryEventSubType.RECEIVE
     assert all_events[1].amount == movement_event.amount - matched_event.amount
     assert all_events[2].group_identifier == matched_event.group_identifier
 
@@ -1018,28 +1017,58 @@ def test_exchange_deposit_sai_to_dai_credit(database: 'DBHandler') -> None:
     _match_and_check(database=database, expected_matches=[(movement_id, match_id)])
 
 
+@pytest.mark.parametrize(
+    ('movement_asset', 'expected_related_asset'),
+    [
+        (Asset('eip155:1/erc20:0x48c80F1f4D53D5951e5D5438B54Cba84f29F32a5'), A_REP),  # old REP -> REPv2  # noqa: E501
+        (A_REP, Asset('eip155:1/erc20:0x48c80F1f4D53D5951e5D5438B54Cba84f29F32a5')),  # REPv2 -> old REP  # noqa: E501
+        (A_MKR, Asset('eip155:1/erc20:0x56072C95FAA701256059aa122697B133aDEd9279')),  # MKR -> SKY  # noqa: E501
+        (Asset('eip155:1/erc20:0xa74476443119A942dE498590Fe1f2454d7D4aC0d'), A_GLM),  # GNT -> GLM  # noqa: E501
+        (A_GLM, Asset('eip155:1/erc20:0xa74476443119A942dE498590Fe1f2454d7D4aC0d')),  # GLM -> GNT  # noqa: E501
+    ],
+)
+def test_manual_matchable_asset_pairs(
+        movement_asset: Asset,
+        expected_related_asset: Asset,
+) -> None:
+    """Manually matchable pairs are included even when not in the same collection."""
+    movement = AssetMovement(
+        location=Location.KRAKEN,
+        event_subtype=HistoryEventSubType.SPEND,
+        timestamp=TimestampMS(1700000000000),
+        asset=movement_asset,
+        amount=ONE,
+        unique_id='manual-pair-1',
+    )
+    collection_cache: dict[str, tuple[Asset, ...]] = {}
+    with patch(
+        'rotkehlchen.tasks.events.GlobalDBHandler.get_assets_in_same_collection',
+        return_value=(movement_asset,),
+    ) as get_assets_in_same_collection:
+        assets_in_collection = task_events._get_assets_in_collection(
+            asset_movement=movement,
+            assets_in_collection_cache=collection_cache,
+        )
+        cached_assets_in_collection = task_events._get_assets_in_collection(
+            asset_movement=movement,
+            assets_in_collection_cache=collection_cache,
+        )
+
+    assert set(assets_in_collection) >= {movement_asset, expected_related_asset}
+    assert set(cached_assets_in_collection) == set(assets_in_collection)
+    get_assets_in_same_collection.assert_called_once_with(identifier=movement_asset.identifier)
+
+
 def test_adjustments(database: 'DBHandler') -> None:
-    """Test adjustment events and movement amount changes for all direction combinations.
-
-    Movement amount is set to the onchain amount (symmetric transfer), adjustment event
-    reconciles exchange balance. SPEND if user lost value, RECEIVE if gained.
-
-    Deposit (exchange=9.96, onchain=10): movement -> 10, SPEND 0.04, balance = +10 - 0.04 = +9.96
-    Deposit (exchange=10, onchain=9.96): movement -> 9.96, RECEIVE 0.04, balance = +9.96 + 0.04 = +10
-    Withdrawal (exchange=9.96, onchain=10): movement -> 10, RECEIVE 0.04, balance = -10 + 0.04 = -9.96
-    Withdrawal (exchange=10, onchain=9.96): movement -> 9.96, SPEND 0.04, balance = -9.96 - 0.04 = -10
-    Exchange-to-exchange (Bitstamp=10, Kraken=9.96): Kraken -> 10, SPEND 0.04, Bitstamp unchanged
-    Deposit with fee (amount=9, fee=1, onchain=10): 9 + 1 = 10, exact match, no adjustment
-    Deposit with fee (amount=9, fee=1, onchain=10.04): 9 + 1 = 10 != 10.04, SPEND 0.04
-    """  # noqa: E501
+    """Test that we properly create adjustment events during matching if amounts differ."""
     events_db = DBHistoryEvents(database)
 
-    events_to_add: list[HistoryEvent | AssetMovement | EvmEvent] = []
+    events_to_add = []
     movement_data: list[tuple[Asset, AssetMovementSubtype, float, float]] = [
-        (A_ETH, HistoryEventSubType.RECEIVE, 9.96, 10),
-        (A_BTC, HistoryEventSubType.RECEIVE, 10, 9.96),
-        (A_USDC, HistoryEventSubType.SPEND, 9.96, 10),
-        (A_WSOL, HistoryEventSubType.SPEND, 10, 9.96),
+        (A_ETH, HistoryEventSubType.RECEIVE, 5.49, 5.5),
+        (A_BTC, HistoryEventSubType.RECEIVE, 5.5, 5.49),
+        (A_USDC, HistoryEventSubType.SPEND, 5.49, 5.5),
+        (A_WSOL, HistoryEventSubType.SPEND, 5.5, 5.49),
     ]
     for idx, (asset, movement_subtype, movement_amount, match_amount) in enumerate(movement_data):
         events_to_add.extend([(movement_event := AssetMovement(
@@ -1072,182 +1101,30 @@ def test_adjustments(database: 'DBHandler') -> None:
             amount=FVal(match_amount),
         )])
 
-    # Deposits with fee: exact match (DAI: 9 + 1 = 10) and discrepancy (SAI: 9 + 1 != 10.04)
-    fee_movements: dict[Asset, AssetMovement] = {}
-    for fee_asset, onchain_amount, unique_id, ts in (
-        (A_DAI, FVal('10'), 'fee-exact', TimestampMS(1600000000005)),
-        (A_SAI, FVal('10.04'), 'fee-diff', TimestampMS(1600000000006)),
-    ):
-        movement = AssetMovement(
-            location=Location.KRAKEN,
-            event_subtype=HistoryEventSubType.RECEIVE,
-            timestamp=ts,
-            asset=fee_asset,
-            amount=FVal('9'),
-            unique_id=unique_id,
-            location_label='kraken',
-        )
-        fee_movements[fee_asset] = movement
-        events_to_add.extend([movement, AssetMovement(
-            location=Location.KRAKEN,
-            event_subtype=HistoryEventSubType.FEE,
-            timestamp=ts,
-            asset=fee_asset,
-            amount=ONE,
-            unique_id=unique_id,
-        ), EvmEvent(
-            tx_ref=make_evm_tx_hash(),
-            sequence_index=0,
-            timestamp=ts,
-            location=Location.ETHEREUM,
-            event_type=HistoryEventType.SPEND,
-            event_subtype=HistoryEventSubType.NONE,
-            asset=fee_asset,
-            amount=onchain_amount,
-            location_label=make_evm_address(),
-        )])
-
-    # Exchange-to-exchange: Bitstamp withdrawal matched with Kraken deposit
-    events_to_add.extend([(e2e_withdrawal := AssetMovement(
-        location=Location.BITSTAMP,
-        event_subtype=HistoryEventSubType.SPEND,
-        timestamp=TimestampMS(1600000000010),
-        asset=A_AAVE,
-        amount=FVal('10'),
-        unique_id='e2e-1',
-        location_label='Bitstamp 1',
-    )), (e2e_deposit := AssetMovement(
-        location=Location.KRAKEN,
-        event_subtype=HistoryEventSubType.RECEIVE,
-        timestamp=TimestampMS(1600000000011),
-        asset=A_AAVE,
-        amount=FVal('9.96'),
-        unique_id='e2e-2',
-        location_label='Kraken 1',
-    ))])
-
     with database.conn.write_ctx() as write_cursor:
         events_db.add_history_events(
             write_cursor=write_cursor,
             history=events_to_add,
         )
 
+    # Run matching and check that the adjustment events were created with proper subtypes
     match_asset_movements(database=database)
     with database.conn.read_ctx() as cursor:
-        # Check exchange-to-onchain cases
-        for asset, expected_adjustment_subtype, original_movement_amount, expected_movement_amount in (  # noqa: E501
-            (A_ETH, HistoryEventSubType.SPEND, FVal('9.96'), FVal('10')),
-            (A_BTC, HistoryEventSubType.RECEIVE, FVal('10'), FVal('9.96')),
-            (A_USDC, HistoryEventSubType.RECEIVE, FVal('9.96'), FVal('10')),
-            (A_WSOL, HistoryEventSubType.SPEND, FVal('10'), FVal('9.96')),
+        for asset, expected_adjustment_subtype in (
+            (A_ETH, HistoryEventSubType.RECEIVE),
+            (A_BTC, HistoryEventSubType.SPEND),
+            (A_USDC, HistoryEventSubType.SPEND),
+            (A_WSOL, HistoryEventSubType.RECEIVE),
         ):
-            assert len(adjustments := events_db.get_history_events_internal(
+            assert len(events := events_db.get_history_events_internal(
                 cursor=cursor,
                 filter_query=HistoryEventFilterQuery.make(
                     assets=(asset,),
                     event_types=[HistoryEventType.EXCHANGE_ADJUSTMENT],
                 ),
             )) == 1
-            assert adjustments[0].event_subtype == expected_adjustment_subtype
-            assert adjustments[0].amount == FVal('0.04')
-
-            assert len(movements := events_db.get_history_events_internal(
-                cursor=cursor,
-                filter_query=HistoryEventFilterQuery.make(
-                    assets=(asset,),
-                    entry_types=IncludeExcludeFilterData(
-                        values=[HistoryBaseEntryType.ASSET_MOVEMENT_EVENT],
-                    ),
-                    event_subtypes=[HistoryEventSubType.RECEIVE, HistoryEventSubType.SPEND],
-                ),
-            )) == 1
-            assert movements[0].amount == expected_movement_amount
-            assert cursor.execute(
-                'SELECT amount FROM history_events_backup WHERE identifier = ?',
-                (movements[0].identifier,),
-            ).fetchone()[0] == str(original_movement_amount)
-
-        # Check exchange-to-exchange case: only one adjustment (under the Kraken deposit's group)
-        assert len(e2e_adjustments := events_db.get_history_events_internal(
-            cursor=cursor,
-            filter_query=HistoryEventFilterQuery.make(
-                assets=(A_AAVE,),
-                event_types=[HistoryEventType.EXCHANGE_ADJUSTMENT],
-            ),
-        )) == 1
-        assert e2e_adjustments[0].event_subtype == HistoryEventSubType.SPEND
-        assert e2e_adjustments[0].amount == FVal('0.04')
-        assert e2e_adjustments[0].group_identifier == e2e_deposit.group_identifier
-
-        # The Kraken deposit amount was adjusted to mirror the Bitstamp withdrawal (5.5)
-        e2e_movements = events_db.get_history_events_internal(
-            cursor=cursor,
-            filter_query=HistoryEventFilterQuery.make(
-                assets=(A_AAVE,),
-                entry_types=IncludeExcludeFilterData(
-                    values=[HistoryBaseEntryType.ASSET_MOVEMENT_EVENT],
-                ),
-                event_subtypes=[HistoryEventSubType.RECEIVE, HistoryEventSubType.SPEND],
-            ),
-        )
-        assert len(e2e_movements) == 2
-        kraken_deposit = next(m for m in e2e_movements if m.location == Location.KRAKEN)
-        bitstamp_withdrawal = next(m for m in e2e_movements if m.location == Location.BITSTAMP)
-        assert kraken_deposit.amount == e2e_withdrawal.amount  # adjusted to 5.5
-        assert bitstamp_withdrawal.amount == e2e_withdrawal.amount  # unchanged at 5.5
-        assert cursor.execute(
-            'SELECT amount FROM history_events_backup WHERE identifier = ?',
-            (kraken_deposit.identifier,),
-        ).fetchone()[0] == str(e2e_deposit.amount)  # backup has original 9.96
-
-        # Deposit with fee, exact match: no adjustment, amount unchanged
-        assert len(events_db.get_history_events_internal(
-            cursor=cursor,
-            filter_query=HistoryEventFilterQuery.make(
-                assets=(A_DAI,),
-                event_types=[HistoryEventType.EXCHANGE_ADJUSTMENT],
-            ),
-        )) == 0
-        fee_exact_movements = events_db.get_history_events_internal(
-            cursor=cursor,
-            filter_query=HistoryEventFilterQuery.make(
-                assets=(A_DAI,),
-                entry_types=IncludeExcludeFilterData(
-                    values=[HistoryBaseEntryType.ASSET_MOVEMENT_EVENT],
-                ),
-                event_subtypes=[HistoryEventSubType.RECEIVE],
-            ),
-        )
-        assert len(fee_exact_movements) == 1
-        assert fee_exact_movements[0].amount == fee_movements[A_DAI].amount  # unchanged at 9
-
-        # Deposit with fee, discrepancy: amount(9) + fee(1) = 10, onchain = 10.04
-        # adjustment SPEND 0.04, movement -> 10.04
-        assert len(fee_diff_adjustments := events_db.get_history_events_internal(
-            cursor=cursor,
-            filter_query=HistoryEventFilterQuery.make(
-                assets=(A_SAI,),
-                event_types=[HistoryEventType.EXCHANGE_ADJUSTMENT],
-            ),
-        )) == 1
-        assert fee_diff_adjustments[0].event_subtype == HistoryEventSubType.SPEND
-        assert fee_diff_adjustments[0].amount == FVal('0.04')
-        fee_diff_movements = events_db.get_history_events_internal(
-            cursor=cursor,
-            filter_query=HistoryEventFilterQuery.make(
-                assets=(A_SAI,),
-                entry_types=IncludeExcludeFilterData(
-                    values=[HistoryBaseEntryType.ASSET_MOVEMENT_EVENT],
-                ),
-                event_subtypes=[HistoryEventSubType.RECEIVE],
-            ),
-        )
-        assert len(fee_diff_movements) == 1
-        assert fee_diff_movements[0].amount == FVal('10.04')  # adjusted to onchain
-        assert cursor.execute(
-            'SELECT amount FROM history_events_backup WHERE identifier = ?',
-            (fee_diff_movements[0].identifier,),
-        ).fetchone()[0] == str(fee_movements[A_SAI].amount)  # backup has original 9
+            assert events[0].event_subtype == expected_adjustment_subtype
+            assert events[0].amount == FVal('0.01')
 
 
 def test_deposit_withdrawal_direction(database: 'DBHandler') -> None:
@@ -1309,17 +1186,17 @@ def test_match_by_transaction_id_without_0x_prefix(database: 'DBHandler') -> Non
             write_cursor=write_cursor,
             history=[AssetMovement(
                 identifier=(movement_id := 1),
-                location=Location.COINBASEPRO,
+                location=Location.KRAKEN,
                 event_subtype=HistoryEventSubType.SPEND,
                 timestamp=ts,
                 asset=A_USDC,
                 amount=amount,
-                unique_id='coinbasepro_withdrawal_1',
+                unique_id='kraken_withdrawal_1',
                 extra_data=AssetMovementExtraData(
                     transaction_id=tx_hash_str[2:],
                     address=make_evm_address(),
                 ),
-                location_label='Coinbase Pro 1',
+                location_label='Kraken 1',
             ), EvmEvent(  # Matched by tx hash
                 identifier=(match_id := 2),
                 tx_ref=tx_hash,
@@ -1366,17 +1243,17 @@ def test_reprocess_ambiguous_movement_after_candidate_gets_matched(database: 'DB
                 location_label='Kraken 1',
             ), AssetMovement(  # Processed later, but uniquely matched by tx hash.
                 identifier=(tx_ref_movement_id := 2),
-                location=Location.COINBASEPRO,
+                location=Location.KRAKEN,
                 event_subtype=HistoryEventSubType.SPEND,
                 timestamp=TimestampMS(1700003000000),
                 asset=A_USDC,
                 amount=amount,
-                unique_id='coinbasepro_withdrawal_txref',
+                unique_id='kraken_withdrawal_txref',
                 extra_data=AssetMovementExtraData(
                     transaction_id=tx_ref_str[2:],
                     address=make_evm_address(),
                 ),
-                location_label='Coinbase Pro 1',
+                location_label='Kraken 2',
             ), EvmEvent(  # Candidate 1: tx-ref movement should pick this one.
                 identifier=(tx_ref_match_id := 3),
                 tx_ref=tx_ref,
@@ -1427,17 +1304,17 @@ def test_retry_ambiguous_movement_stays_ambiguous(database: 'DBHandler') -> None
                 location_label='Kraken 1',
             ), AssetMovement(  # Processed second: uniquely matches candidate 1 by tx hash.
                 identifier=(tx_ref_movement_id := 2),
-                location=Location.COINBASEPRO,
+                location=Location.KRAKEN,
                 event_subtype=HistoryEventSubType.SPEND,
                 timestamp=TimestampMS(1700004000000),
                 asset=A_USDC,
                 amount=amount,
-                unique_id='coinbasepro_withdrawal_txref',
+                unique_id='kraken_withdrawal_txref',
                 extra_data=AssetMovementExtraData(
                     transaction_id=str(tx_ref := make_evm_tx_hash())[2:],
                     address=make_evm_address(),
                 ),
-                location_label='Coinbase Pro 1',
+                location_label='Kraken 2',
             ), EvmEvent(  # Candidate 1: matched by tx-ref movement.
                 identifier=(tx_ref_match_id := 3),
                 tx_ref=tx_ref,
@@ -1575,10 +1452,7 @@ def test_retry_ambiguous_movement_loses_all_candidates(database: 'DBHandler') ->
 
 
 def test_match_coinbasepro_coinbase_transfer(database: 'DBHandler') -> None:
-    """Test that we properly match transfers between coinbasepro and coinbase.
-    Regression test for matching exchange to exchange movements even if the asset is
-    for an unsupported chain (ICP in this case).
-    """
+    """CoinbasePro transfers and Coinbase transfer-note movements are auto-ignored."""
     with database.conn.write_ctx() as write_cursor:
         DBHistoryEvents(database).add_history_events(
             write_cursor=write_cursor,
@@ -1619,13 +1493,20 @@ def test_match_coinbasepro_coinbase_transfer(database: 'DBHandler') -> None:
             )],
         )
 
-    # Since these are exchange to exchange movements, there are two entries for each pair,
-    # one entry for every asset movement.
-    _match_and_check(database=database, expected_matches=[(1, 2), (2, 1), (3, 4), (4, 3)])
+    _match_and_check(database=database, expected_matches=[])
+    with database.conn.read_ctx() as cursor:
+        ignored_ids = {
+            row[0] for row in cursor.execute(
+                'SELECT event_id FROM history_event_link_ignores WHERE link_type=?',
+                (HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),),
+            ).fetchall()
+        }
+
+    assert ignored_ids == {1, 2, 3, 4}
 
 
 def test_coinbasepro_transfer_with_onchain_event(database: 'DBHandler') -> None:
-    """Ensure CoinbasePro transfer notes restrict matches to Coinbase/CoinbasePro."""
+    """CoinbasePro and Coinbase transfer-note movements are not matched to onchain events."""
     with database.conn.write_ctx() as write_cursor:
         DBHistoryEvents(database).add_history_events(
             write_cursor=write_cursor,
@@ -1672,25 +1553,71 @@ def test_coinbasepro_transfer_with_onchain_event(database: 'DBHandler') -> None:
             )],
         )
 
+    _match_and_check(database=database, expected_matches=[])
+    with database.conn.read_ctx() as cursor:
+        ignored_ids = {
+            row[0] for row in cursor.execute(
+                'SELECT event_id FROM history_event_link_ignores WHERE link_type=?',
+                (HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),),
+            ).fetchall()
+        }
+
+    assert ignored_ids == {movement_id, movement_id_2, match_id_2}
+    assert match_id == 1  # Onchain event should not be ignored.
+
+
+def test_auto_ignored_movements_excluded_as_candidates(database: 'DBHandler') -> None:
+    """Auto-ignored movements (e.g. Coinbase Pro) are not considered candidate matches."""
+    with database.conn.write_ctx() as write_cursor:
+        DBHistoryEvents(database).add_history_events(
+            write_cursor=write_cursor,
+            history=[AssetMovement(
+                identifier=(movement_id := 1),
+                location=Location.KRAKEN,
+                event_subtype=HistoryEventSubType.SPEND,
+                timestamp=TimestampMS(1700013000000),
+                asset=A_ETH,
+                amount=ONE,
+                unique_id='kraken_withdrawal_1',
+                location_label='Kraken 1',
+            ), AssetMovement(  # Would be a matching candidate without ignore filtering.
+                identifier=2,
+                location=Location.COINBASEPRO,
+                event_subtype=HistoryEventSubType.RECEIVE,
+                timestamp=TimestampMS(1700013001000),
+                asset=A_ETH,
+                amount=ONE,
+                unique_id='cbpro_deposit_1',
+                location_label='Coinbase Pro 1',
+            ), AssetMovement(
+                identifier=(match_id := 3),
+                location=Location.BITSTAMP,
+                event_subtype=HistoryEventSubType.RECEIVE,
+                timestamp=TimestampMS(1700013002000),
+                asset=A_ETH,
+                amount=ONE,
+                unique_id='bitstamp_deposit_1',
+                location_label='Bitstamp 1',
+            )],
+        )
+
     _match_and_check(
         database=database,
-        expected_matches=[
-            (movement_id, match_id),
-            (movement_id_2, match_id_2),
-            (match_id_2, movement_id_2),
-        ],
+        expected_matches=[(movement_id, match_id), (match_id, movement_id)],
     )
 
 
 def test_coinbase_unprefixed_hash(database: 'DBHandler') -> None:
-    """Match CoinbasePro->Coinbase transfer and Coinbase withdrawal by unprefixed tx hash."""
+    """Coinbase withdrawal still matches unprefixed tx hash while transfer movements are
+    ignored.
+    """
     tx_hash = make_evm_tx_hash()
     window_offset = ts_sec_to_ms(Timestamp(DEFAULT_ASSET_MOVEMENT_TIME_RANGE + 1))
     with database.conn.write_ctx() as write_cursor:
         DBHistoryEvents(database).add_history_events(
             write_cursor=write_cursor,
             history=[AssetMovement(  # Oldest: Coinbase deposit from CoinbasePro transfer
-                identifier=(coinbase_deposit_id := 1),
+                identifier=1,
                 location=Location.COINBASE,
                 event_subtype=HistoryEventSubType.RECEIVE,
                 timestamp=TimestampMS(1700000000000),
@@ -1700,7 +1627,7 @@ def test_coinbase_unprefixed_hash(database: 'DBHandler') -> None:
                 location_label='Coinbase 1',
                 notes='Transfer funds from CoinbasePro',
             ), AssetMovement(  # CoinbasePro withdrawal should match the transfer deposit above.
-                identifier=(coinbasepro_withdrawal_id := 2),
+                identifier=2,
                 location=Location.COINBASEPRO,
                 event_subtype=HistoryEventSubType.SPEND,
                 timestamp=TimestampMS(1700000010000),
@@ -1751,7 +1678,6 @@ def test_coinbase_unprefixed_hash(database: 'DBHandler') -> None:
     # Transfer movement pairs are stored bidirectionally, so assert logical (deduplicated) matches.
     logical_matches = {tuple(sorted(link)) for link in links}
     assert logical_matches == {
-        tuple(sorted((coinbasepro_withdrawal_id, coinbase_deposit_id))),
         tuple(sorted((coinbase_withdrawal_id, evm_receive_id))),
     }
 

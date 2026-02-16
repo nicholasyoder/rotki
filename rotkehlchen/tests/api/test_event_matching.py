@@ -1017,7 +1017,7 @@ def test_get_history_events_with_matched_asset_movements(
 def test_coinbase_chain_two_groups(
         rotkehlchen_api_server: 'APIServer',
 ) -> None:
-    """Regression reproducer for Coinbase/CoinbasePro/EVM chain grouping."""
+    """Regression reproducer for Coinbase/CoinbasePro/EVM chain grouping with ignores."""
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
     dbevents = DBHistoryEvents(rotki.data.db)
     with rotki.data.db.conn.write_ctx() as write_cursor:
@@ -1089,7 +1089,6 @@ def test_coinbase_chain_two_groups(
     assert evm_receive.identifier is not None
     logical_matches = {tuple(sorted(link)) for link in links}
     assert logical_matches == {
-        tuple(sorted((coinbase_deposit.identifier, coinbasepro_withdrawal.identifier))),
         tuple(sorted((coinbase_withdrawal.identifier, evm_receive.identifier))),
     }
 
@@ -1108,8 +1107,8 @@ def test_coinbase_chain_two_groups(
         ),
         rotkehlchen_api_server=rotkehlchen_api_server,
     )
-    assert result['entries_found'] == 2
-    assert len(result['entries']) == 2
+    assert result['entries_found'] == 3
+    assert len(result['entries']) == 3
 
 
 def test_group_header_event(rotkehlchen_api_server: 'APIServer') -> None:
