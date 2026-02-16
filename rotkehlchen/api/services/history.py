@@ -709,9 +709,10 @@ class HistoryService:
                 ((  # this is a matched event
                      event.extra_data is not None and
                      event.extra_data.get('matched_asset_movement') is not None
-                ) or (  # or this is an asset movement
-                     event.entry_type == HistoryBaseEntryType.ASSET_MOVEMENT_EVENT
-                ))
+                ) or
+                     event.entry_type == HistoryBaseEntryType.ASSET_MOVEMENT_EVENT or
+                     event.event_type == HistoryEventType.EXCHANGE_ADJUSTMENT
+                )
             ):  # This event is part of a matched asset movement group.
                 if len(current_sequential_group) > 0:  # First flush the current sequential group if present  # noqa: E501
                     entries.append(current_sequential_group)

@@ -1177,6 +1177,25 @@ def test_group_header_event(rotkehlchen_api_server: 'APIServer') -> None:
         )['entries']) == 1
         assert result[0]['entry']['entry_type'] == HistoryBaseEntryType.ASSET_MOVEMENT_EVENT.serialize()  # noqa: E501
 
+    # Also verify the non-aggregated view: the adjustment event should appear inside the matched
+    # group sublist, not as a standalone entry.
+    result = assert_proper_response_with_result(
+        response=requests.post(
+            api_url_for(rotkehlchen_api_server, 'historyeventresource'),
+            json={'aggregate_by_group_ids': False},
+        ),
+        rotkehlchen_api_server=rotkehlchen_api_server,
+    )['entries']
+    assert len(result) == 2  # other evm event + matched group sublist
+    sublists = [entry for entry in result if isinstance(entry, list)]
+    assert len(sublists) == 1
+    sublist = sublists[0]
+    assert len(sublist) == 3  # movement + matched event + adjustment
+    assert any(
+        x['entry']['event_type'] == HistoryEventType.EXCHANGE_ADJUSTMENT.serialize()
+        for x in sublist
+    )
+
 
 def test_trigger_matching_task(rotkehlchen_api_server: 'APIServer') -> None:
     """Test that triggering the matching task works as expected."""
