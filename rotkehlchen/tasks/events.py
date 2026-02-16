@@ -845,8 +845,8 @@ def _maybe_add_adjustment_event(
                 location=asset_movement.location,
                 event_type=HistoryEventType.EXCHANGE_ADJUSTMENT,
                 event_subtype=HistoryEventSubType.SPEND if (
-                    (is_deposit and movement_amount_with_fee > matched_event.amount) or
-                    (not is_deposit and movement_amount_with_fee < matched_event.amount)
+                    (is_deposit and movement_amount_with_fee < matched_event.amount) or
+                    (not is_deposit and movement_amount_with_fee > matched_event.amount)
                 ) else HistoryEventSubType.RECEIVE,
                 asset=asset_movement.asset,
                 amount=amount_diff,

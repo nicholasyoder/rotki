@@ -59,6 +59,7 @@ def get_event_direction(
     affect location-specific balances/matching return IN or OUT instead.
 
     for_balance_tracking special cases:
+    - EXCHANGE_ADJUSTMENT/SPEND & EXCHANGE_ADJUSTMENT/RECEIVE -> NEUTRAL
     - DEPOSIT/DEPOSIT_ASSET -> IN
     - WITHDRAWAL/REMOVE_ASSET -> OUT
     - DEPOSIT/DEPOSIT_TO_PROTOCOL -> OUT
@@ -90,25 +91,31 @@ def get_event_direction(
     else:
         direction = category_mapping[DEFAULT].direction
 
-    if (for_balance_tracking or for_movement_matching) and direction == EventDirection.NEUTRAL:
-        if (event_type, event_subtype) == (HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_ASSET):  # noqa: E501
-            return EventDirection.OUT if for_movement_matching else EventDirection.IN
-        if (event_type, event_subtype) == (HistoryEventType.WITHDRAWAL, HistoryEventSubType.REMOVE_ASSET):  # noqa: E501
-            return EventDirection.IN if for_movement_matching else EventDirection.OUT
-        if (event_type, event_subtype) == (HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_TO_PROTOCOL):  # noqa: E501
-            return EventDirection.OUT
-        if (event_type, event_subtype) == (HistoryEventType.WITHDRAWAL, HistoryEventSubType.WITHDRAW_FROM_PROTOCOL):  # noqa: E501
-            return EventDirection.IN
-        if (event_type, event_subtype) == (HistoryEventType.TRANSFER, HistoryEventSubType.NONE):
-            return EventDirection.OUT
+    if for_balance_tracking or for_movement_matching:
+        if event_type == HistoryEventType.EXCHANGE_ADJUSTMENT:
+            # The movement amounts already properly indicate the actual balance. These adjustment
+            # events are only for accounting.
+            return EventDirection.NEUTRAL
 
-        if event_type == HistoryEventType.EXCHANGE_TRANSFER:
-            if event_subtype == HistoryEventSubType.SPEND:
+        if direction == EventDirection.NEUTRAL:
+            if (event_type, event_subtype) == (HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_ASSET):  # noqa: E501
+                return EventDirection.OUT if for_movement_matching else EventDirection.IN
+            if (event_type, event_subtype) == (HistoryEventType.WITHDRAWAL, HistoryEventSubType.REMOVE_ASSET):  # noqa: E501
+                return EventDirection.IN if for_movement_matching else EventDirection.OUT
+            if (event_type, event_subtype) == (HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_TO_PROTOCOL):  # noqa: E501
                 return EventDirection.OUT
-            if event_subtype == HistoryEventSubType.RECEIVE:
+            if (event_type, event_subtype) == (HistoryEventType.WITHDRAWAL, HistoryEventSubType.WITHDRAW_FROM_PROTOCOL):  # noqa: E501
                 return EventDirection.IN
-            if event_subtype == HistoryEventSubType.FEE:
+            if (event_type, event_subtype) == (HistoryEventType.TRANSFER, HistoryEventSubType.NONE):  # noqa: E501
                 return EventDirection.OUT
+
+            if event_type == HistoryEventType.EXCHANGE_TRANSFER:
+                if event_subtype == HistoryEventSubType.SPEND:
+                    return EventDirection.OUT
+                if event_subtype == HistoryEventSubType.RECEIVE:
+                    return EventDirection.IN
+                if event_subtype == HistoryEventSubType.FEE:
+                    return EventDirection.OUT
 
     return direction
 

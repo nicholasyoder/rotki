@@ -321,7 +321,7 @@ def test_match_asset_movements(database: 'DBHandler') -> None:
     })
     assert asset_movements[-2] == withdrawal4_matched_event
     assert (withdrawal4_adjustment := asset_movements[-1]).event_type == HistoryEventType.EXCHANGE_ADJUSTMENT  # noqa: E501
-    assert withdrawal4_adjustment.event_subtype == HistoryEventSubType.RECEIVE
+    assert withdrawal4_adjustment.event_subtype == HistoryEventSubType.SPEND
     assert withdrawal4_adjustment.group_identifier == withdrawal4_matched_event.group_identifier
     assert withdrawal4_adjustment.amount == withdrawal4.amount - withdrawal4_matched_event.amount
 
@@ -800,7 +800,7 @@ def test_match_asset_movements_settings(database: 'DBHandler') -> None:
     assert all_events[0].group_identifier == movement_event.group_identifier
     assert all_events[1].group_identifier == movement_event.group_identifier
     assert all_events[1].event_type == HistoryEventType.EXCHANGE_ADJUSTMENT
-    assert all_events[1].event_subtype == HistoryEventSubType.RECEIVE
+    assert all_events[1].event_subtype == HistoryEventSubType.SPEND
     assert all_events[1].amount == movement_event.amount - matched_event.amount
     assert all_events[2].group_identifier == matched_event.group_identifier
 
@@ -1108,10 +1108,10 @@ def test_adjustments(database: 'DBHandler') -> None:
     match_asset_movements(database=database)
     with database.conn.read_ctx() as cursor:
         for asset, expected_adjustment_subtype in (
-            (A_ETH, HistoryEventSubType.RECEIVE),
-            (A_BTC, HistoryEventSubType.SPEND),
-            (A_USDC, HistoryEventSubType.SPEND),
-            (A_WSOL, HistoryEventSubType.RECEIVE),
+            (A_ETH, HistoryEventSubType.SPEND),
+            (A_BTC, HistoryEventSubType.RECEIVE),
+            (A_USDC, HistoryEventSubType.RECEIVE),
+            (A_WSOL, HistoryEventSubType.SPEND),
         ):
             assert len(events := events_db.get_history_events_internal(
                 cursor=cursor,
