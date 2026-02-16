@@ -78,4 +78,11 @@ def migrate_to_v15(connection: 'DBConnection', progress_handler: 'DBUpgradeProgr
             updates,
         )
 
+    @progress_step('Create underlying token parent index.')
+    def _create_underlying_token_parent_index(write_cursor: 'DBCursor') -> None:
+        write_cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_underlying_tokens_parent_entry '
+            'ON underlying_tokens_list (parent_token_entry);',
+        )
+
     perform_globaldb_upgrade_steps(connection, progress_handler)

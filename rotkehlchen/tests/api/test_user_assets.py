@@ -11,7 +11,7 @@ import requests
 
 from rotkehlchen.accounting.structures.balance import BalanceType
 from rotkehlchen.api.server import APIServer
-from rotkehlchen.assets.asset import Asset, CustomAsset, EvmToken
+from rotkehlchen.assets.asset import Asset, CustomAsset, EvmToken, SolanaToken
 from rotkehlchen.assets.types import ASSET_TYPES_EXCLUDED_FOR_USERS, AssetType
 from rotkehlchen.balances.manual import ManuallyTrackedBalance
 from rotkehlchen.constants.assets import A_BCH, A_BTC, A_DAI, A_DOT, A_EUR, A_USDC
@@ -20,6 +20,7 @@ from rotkehlchen.constants.resolver import (
     ChainID,
     ethaddress_to_identifier,
     evm_address_to_identifier,
+    solana_address_to_identifier,
     strethaddress_to_identifier,
 )
 from rotkehlchen.fval import FVal
@@ -33,7 +34,7 @@ from rotkehlchen.tests.utils.api import (
     assert_simple_ok_response,
     wait_for_async_task,
 )
-from rotkehlchen.tests.utils.factories import make_evm_address
+from rotkehlchen.tests.utils.factories import make_evm_address, make_solana_address
 from rotkehlchen.types import Location, TokenKind
 
 
@@ -988,6 +989,16 @@ def test_exporting_user_assets_list(
         name='my house',
         custom_asset_type='property',
     ))
+    solana_address = make_solana_address()
+    globaldb.add_asset(SolanaToken.initialize(
+        address=solana_address,
+        token_kind=TokenKind.SPL_TOKEN,
+        decimals=9,
+        name='My Solana Token',
+        symbol='MST',
+        coingecko='my-solana-token',
+        cryptocompare='MST',
+    ))
     with tempfile.TemporaryDirectory(
             ignore_cleanup_errors=True,  # needed on windows, see https://tinyurl.com/tmp-win-err
     ) as path:
@@ -1015,7 +1026,7 @@ def test_exporting_user_assets_list(
         zip_file = ZipFile(zip_path)
         data = json.loads(zip_file.read('assets.json'))
         assert int(data['version']) == GLOBAL_DB_VERSION
-        assert len(data['assets']) == 2
+        assert len(data['assets']) == 3
         assert {
             'identifier': identifier,
             'name': 'yabirtoken',
@@ -1039,6 +1050,24 @@ def test_exporting_user_assets_list(
             'name': 'my house',
             'custom_asset_type': 'property',
             'notes': None,
+        } in data['assets']
+        assert {
+            'identifier': solana_address_to_identifier(
+                address=solana_address,
+                token_type=TokenKind.SPL_TOKEN,
+            ),
+            'asset_type': 'solana token',
+            'name': 'My Solana Token',
+            'symbol': 'MST',
+            'started': None,
+            'forked': None,
+            'swapped_for': None,
+            'cryptocompare': 'MST',
+            'coingecko': 'my-solana-token',
+            'address': solana_address,
+            'token_kind': TokenKind.SPL_TOKEN.serialize(),
+            'decimals': 9,
+            'protocol': None,
         } in data['assets']
 
         # try to download again to see if the database is properly detached

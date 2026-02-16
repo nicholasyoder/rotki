@@ -1552,6 +1552,10 @@ def test_upgrade_v14_v15(
     assert globaldb.get_setting_value('version', 0) == 15
     with globaldb.conn.read_ctx() as cursor:
         assert cursor.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?",
+            ('idx_underlying_tokens_parent_entry',),
+        ).fetchone()[0] == 1
+        assert cursor.execute(
             "SELECT COUNT(*) FROM unique_cache WHERE key LIKE 'AURA_POOLS%' "
             "OR key LIKE 'MORPHO_VAULTS%' OR key LIKE 'STAKEDAO_V2_VAULTS%' "
             "OR key LIKE 'BEEFY_VAULTS%' OR key LIKE 'PENDLE_YIELD_TOKENS%'",
