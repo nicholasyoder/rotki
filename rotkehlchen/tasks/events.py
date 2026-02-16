@@ -6,12 +6,13 @@ from typing import TYPE_CHECKING, Final, Literal
 
 from rotkehlchen.api.v1.types import IncludeExcludeFilterData
 from rotkehlchen.api.websockets.typedefs import WSMessageType
+from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.accounts import BlockchainAccounts
 from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.ethereum.constants import EXCHANGES_CPT
 from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
 from rotkehlchen.constants import HOUR_IN_SECONDS
-from rotkehlchen.constants.assets import A_DAI, A_SAI
+from rotkehlchen.constants.assets import A_DAI, A_GLM, A_MKR, A_REP, A_SAI
 from rotkehlchen.constants.resolver import SOLANA_CHAIN_DIRECTIVE, identifier_to_evm_chain
 from rotkehlchen.constants.timing import SAI_DAI_MIGRATION_TS
 from rotkehlchen.db.cache import DBCacheStatic
@@ -56,7 +57,6 @@ from rotkehlchen.utils.misc import is_valid_ethereum_tx_hash, ts_ms_to_sec, ts_n
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from rotkehlchen.assets.asset import Asset
     from rotkehlchen.chain.aggregator import ChainsAggregator
     from rotkehlchen.db.dbhandler import DBHandler
     from rotkehlchen.db.drivers.gevent import DBCursor
@@ -80,6 +80,19 @@ ENTRY_TYPES_TO_EXCLUDE_FROM_MATCHING: Final = [
 TIMESTAMP_TOLERANCE: Final = HOUR_IN_SECONDS
 LEGACY_EXCHANGE_MATCH_CUTOFF_TS: Final = Timestamp(1514764800)  # 2018-01-01 00:00:00 UTC
 LEGACY_EXCHANGE_MATCH_WINDOW: Final = HOUR_IN_SECONDS * 100
+OLD_REP_ASSET: Final = Asset('eip155:1/erc20:0x48c80F1f4D53D5951e5D5438B54Cba84f29F32a5')
+SKY_ASSET: Final = Asset('eip155:1/erc20:0x56072C95FAA701256059aa122697B133aDEd9279')
+OLD_GNT_ASSET: Final = Asset('eip155:1/erc20:0xa74476443119A942dE498590Fe1f2454d7D4aC0d')
+MANUALLY_MATCHABLE_ASSET_GROUPS: Final = (  # assets that we consider the same when matching
+    {A_REP, OLD_REP_ASSET},
+    {A_MKR, SKY_ASSET},
+    {A_GLM, OLD_GNT_ASSET},
+)
+MANUALLY_MATCHABLE_ASSET_MAP: Final = {
+    asset: asset_group
+    for asset_group in MANUALLY_MATCHABLE_ASSET_GROUPS
+    for asset in asset_group
+}
 
 
 @dataclass(frozen=True)
@@ -400,11 +413,18 @@ def _get_assets_in_collection(
         assets_in_collection = GlobalDBHandler.get_assets_in_same_collection(
             identifier=asset_identifier,
         )
+        manually_matchable_assets: set[Asset] = MANUALLY_MATCHABLE_ASSET_MAP.get(
+            asset_movement.asset,
+            set(),
+        )
         if (
             asset_movement.asset in {A_DAI, A_SAI} and
             ts_ms_to_sec(asset_movement.timestamp) >= SAI_DAI_MIGRATION_TS
         ):
-            assets_in_collection = tuple(set(assets_in_collection) | {A_DAI, A_SAI})
+            manually_matchable_assets.update((A_DAI, A_SAI))
+
+        if len(manually_matchable_assets) != 0:
+            assets_in_collection = tuple(set(assets_in_collection) | manually_matchable_assets)
         assets_in_collection_cache[asset_identifier] = assets_in_collection
 
     return assets_in_collection

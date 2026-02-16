@@ -17,7 +17,10 @@ from rotkehlchen.constants.assets import (
     A_BTC,
     A_DAI,
     A_ETH,
+    A_GLM,
     A_GNO,
+    A_MKR,
+    A_REP,
     A_SAI,
     A_USD,
     A_USDC,
@@ -1018,6 +1021,48 @@ def test_exchange_deposit_sai_to_dai_credit(database: 'DBHandler') -> None:
     _match_and_check(database=database, expected_matches=[(movement_id, match_id)])
 
 
+@pytest.mark.parametrize(
+    ('movement_asset', 'expected_related_asset'),
+    [
+        (Asset('eip155:1/erc20:0x48c80F1f4D53D5951e5D5438B54Cba84f29F32a5'), A_REP),  # old REP -> REPv2  # noqa: E501
+        (A_REP, Asset('eip155:1/erc20:0x48c80F1f4D53D5951e5D5438B54Cba84f29F32a5')),  # REPv2 -> old REP  # noqa: E501
+        (A_MKR, Asset('eip155:1/erc20:0x56072C95FAA701256059aa122697B133aDEd9279')),  # MKR -> SKY  # noqa: E501
+        (Asset('eip155:1/erc20:0xa74476443119A942dE498590Fe1f2454d7D4aC0d'), A_GLM),  # GNT -> GLM  # noqa: E501
+        (A_GLM, Asset('eip155:1/erc20:0xa74476443119A942dE498590Fe1f2454d7D4aC0d')),  # GLM -> GNT  # noqa: E501
+    ],
+)
+def test_manual_matchable_asset_pairs(
+        movement_asset: Asset,
+        expected_related_asset: Asset,
+) -> None:
+    """Manually matchable pairs are included even when not in the same collection."""
+    movement = AssetMovement(
+        location=Location.KRAKEN,
+        event_subtype=HistoryEventSubType.SPEND,
+        timestamp=TimestampMS(1700000000000),
+        asset=movement_asset,
+        amount=ONE,
+        unique_id='manual-pair-1',
+    )
+    collection_cache: dict[str, tuple[Asset, ...]] = {}
+    with patch(
+        'rotkehlchen.tasks.events.GlobalDBHandler.get_assets_in_same_collection',
+        return_value=(movement_asset,),
+    ) as get_assets_in_same_collection:
+        assets_in_collection = task_events._get_assets_in_collection(
+            asset_movement=movement,
+            assets_in_collection_cache=collection_cache,
+        )
+        cached_assets_in_collection = task_events._get_assets_in_collection(
+            asset_movement=movement,
+            assets_in_collection_cache=collection_cache,
+        )
+
+    assert set(assets_in_collection) >= {movement_asset, expected_related_asset}
+    assert set(cached_assets_in_collection) == set(assets_in_collection)
+    get_assets_in_same_collection.assert_called_once_with(identifier=movement_asset.identifier)
+
+
 def test_adjustments(database: 'DBHandler') -> None:
     """Test adjustment events and movement amount changes for all direction combinations.
 
@@ -1690,14 +1735,16 @@ def test_coinbasepro_transfer_with_onchain_event(database: 'DBHandler') -> None:
 
 
 def test_coinbase_unprefixed_hash(database: 'DBHandler') -> None:
-    """Coinbase withdrawal still matches unprefixed tx hash while transfer movements are ignored."""
+    """Coinbase withdrawal still matches unprefixed tx hash while transfer movements are
+    ignored.
+    """
     tx_hash = make_evm_tx_hash()
     window_offset = ts_sec_to_ms(Timestamp(DEFAULT_ASSET_MOVEMENT_TIME_RANGE + 1))
     with database.conn.write_ctx() as write_cursor:
         DBHistoryEvents(database).add_history_events(
             write_cursor=write_cursor,
             history=[AssetMovement(  # Oldest: Coinbase deposit from CoinbasePro transfer
-                identifier=(coinbase_deposit_id := 1),
+                identifier=1,
                 location=Location.COINBASE,
                 event_subtype=HistoryEventSubType.RECEIVE,
                 timestamp=TimestampMS(1700000000000),
@@ -1707,7 +1754,7 @@ def test_coinbase_unprefixed_hash(database: 'DBHandler') -> None:
                 location_label='Coinbase 1',
                 notes='Transfer funds from CoinbasePro',
             ), AssetMovement(  # CoinbasePro withdrawal should match the transfer deposit above.
-                identifier=(coinbasepro_withdrawal_id := 2),
+                identifier=2,
                 location=Location.COINBASEPRO,
                 event_subtype=HistoryEventSubType.SPEND,
                 timestamp=TimestampMS(1700000010000),
