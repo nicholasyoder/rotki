@@ -73,7 +73,7 @@ def test_purge_exchange_restores_matched_events(database: 'DBHandler') -> None:
         assert cursor.execute(
             'SELECT 1 FROM history_events_mappings '
             'WHERE parent_identifier = ? AND name = ? AND value = ?',
-            (matched_event_id, HISTORY_MAPPING_KEY_STATE, HistoryMappingState.AUTO_MATCHED.serialize_for_db()),  # noqa: E501
+            (matched_event_id, HISTORY_MAPPING_KEY_STATE, HistoryMappingState.MATCHED.serialize_for_db()),  # noqa: E501
         ).fetchone() is not None
 
         # the onchain event should have been modified by matching
@@ -92,7 +92,7 @@ def test_purge_exchange_restores_matched_events(database: 'DBHandler') -> None:
         ).fetchone() is None
         assert cursor.execute(
             'SELECT 1 FROM history_events_mappings WHERE name = ? AND value = ?',
-            (HISTORY_MAPPING_KEY_STATE, HistoryMappingState.AUTO_MATCHED.serialize_for_db()),
+            (HISTORY_MAPPING_KEY_STATE, HistoryMappingState.MATCHED.serialize_for_db()),
         ).fetchone() is None
         assert cursor.execute(
             'SELECT 1 FROM history_events_backup WHERE identifier = ?',

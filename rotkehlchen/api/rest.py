@@ -3743,7 +3743,7 @@ class RestAPI:
                         asset_movement_identifier,
                         matched_event_identifier,
                         HISTORY_MAPPING_KEY_STATE,
-                        HistoryMappingState.AUTO_MATCHED.serialize_for_db(),
+                        HistoryMappingState.MATCHED.serialize_for_db(),
                     ) for matched_event_identifier in matched_event_identifiers],
                 )
                 # Restore events from the backup created before matching
@@ -3760,7 +3760,7 @@ class RestAPI:
                         *matched_event_identifiers,
                         asset_movement_identifier,
                         HISTORY_MAPPING_KEY_STATE,
-                        HistoryMappingState.AUTO_MATCHED.serialize_for_db(),
+                        HistoryMappingState.MATCHED.serialize_for_db(),
                     ),
                 )
 

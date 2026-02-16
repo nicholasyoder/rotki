@@ -65,7 +65,7 @@ def _check_all_unlinked(
         # Check that the auto-matched mapping states have been removed.
         assert cursor.execute(
             'SELECT COUNT(*) FROM history_events_mappings WHERE name=? AND value=?',
-            (HISTORY_MAPPING_KEY_STATE, HistoryMappingState.AUTO_MATCHED.serialize_for_db()),
+            (HISTORY_MAPPING_KEY_STATE, HistoryMappingState.MATCHED.serialize_for_db()),
         ).fetchone()[0] == 0
 
 
@@ -487,7 +487,7 @@ def test_unlink_matched_asset_movements(rotkehlchen_api_server: 'APIServer') -> 
         # Check that the auto-matched mapping states have been set.
         assert cursor.execute(
             'SELECT COUNT(*) FROM history_events_mappings WHERE name=? AND value=?',
-            (HISTORY_MAPPING_KEY_STATE, HistoryMappingState.AUTO_MATCHED.serialize_for_db()),
+            (HISTORY_MAPPING_KEY_STATE, HistoryMappingState.MATCHED.serialize_for_db()),
         ).fetchone()[0] == 4  # 3 matched events + 1 adjustment event
 
     for method, key, value, expected_links, expected_ignored in [

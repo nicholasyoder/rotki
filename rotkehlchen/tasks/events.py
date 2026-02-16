@@ -856,7 +856,7 @@ def _maybe_add_adjustment_event(
                     f'to account for the difference between exchange and onchain amounts.'
                 ),
             ),
-            mapping_values={HISTORY_MAPPING_KEY_STATE: HistoryMappingState.AUTO_MATCHED},
+            mapping_values={HISTORY_MAPPING_KEY_STATE: HistoryMappingState.MATCHED},
         )
 
 
@@ -931,7 +931,7 @@ def update_asset_movement_matched_event(
         events_db.edit_history_event(
             write_cursor=write_cursor,
             event=matched_event,
-            mapping_state=HistoryMappingState.AUTO_MATCHED,
+            mapping_state=HistoryMappingState.MATCHED,
             save_backup=True,
         )
         write_cursor.execute(
@@ -958,7 +958,7 @@ def update_asset_movement_matched_event(
             events_db.edit_history_event(
                 write_cursor=write_cursor,
                 event=asset_movement,
-                mapping_state=HistoryMappingState.AUTO_MATCHED,
+                mapping_state=HistoryMappingState.MATCHED,
                 save_backup=True,
             )
             write_cursor.execute(

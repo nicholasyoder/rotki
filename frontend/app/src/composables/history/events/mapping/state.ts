@@ -17,10 +17,10 @@ export const useHistoryEventStateMapping = createSharedComposable(() => {
   const { t } = useI18n({ useScope: 'global' });
 
   const stateConfigs: Record<HistoryEventState, EventStateConfig> = {
-    [HistoryEventState.AUTO_MATCHED]: {
+    [HistoryEventState.MATCHED]: {
       icon: 'lu-link',
       color: 'info',
-      label: t('transactions.events.event_states.auto_matched'),
+      label: t('transactions.events.event_states.matched'),
     },
     [HistoryEventState.CUSTOMIZED]: {
       icon: 'lu-square-pen',

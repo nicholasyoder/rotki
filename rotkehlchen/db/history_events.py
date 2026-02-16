@@ -325,7 +325,7 @@ class DBHistoryEvents:
         This restores them from backup and removes any auto-created adjustment events.
         """
         link_type_db = HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db()
-        auto_matched_db = HistoryMappingState.AUTO_MATCHED.serialize_for_db()
+        matched_db = HistoryMappingState.MATCHED.serialize_for_db()
         location_db = location.serialize_for_db()
         events_to_restore: set[int] = set()
 
@@ -365,7 +365,7 @@ class DBHistoryEvents:
                     HistoryEventType.EXCHANGE_ADJUSTMENT.serialize(),
                     *chunk,
                     HISTORY_MAPPING_KEY_STATE,
-                    auto_matched_db,
+                    matched_db,
                 ),
             )
 
@@ -375,13 +375,13 @@ class DBHistoryEvents:
             identifiers=list(events_to_restore),
         )
 
-        # and drop their AUTO_MATCHED mappings in one go
+        # and drop their MATCHED mappings in one go
         for chunk, placeholders in get_query_chunks(list(events_to_restore)):
             write_cursor.execute(
                 f'DELETE FROM history_events_mappings '
                 f'WHERE parent_identifier IN ({placeholders}) '
                 f'AND name = ? AND value = ?',
-                (*chunk, HISTORY_MAPPING_KEY_STATE, auto_matched_db),
+                (*chunk, HISTORY_MAPPING_KEY_STATE, matched_db),
             )
 
     def edit_history_event(
@@ -598,7 +598,7 @@ class DBHistoryEvents:
             (customized_bindings := (
                 HISTORY_MAPPING_KEY_STATE,
                 HistoryMappingState.CUSTOMIZED.serialize_for_db(),
-                HistoryMappingState.AUTO_MATCHED.serialize_for_db(),
+                HistoryMappingState.MATCHED.serialize_for_db(),
             )),
         ).fetchone()[0]
         if location.is_bitcoin():

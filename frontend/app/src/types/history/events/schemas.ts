@@ -311,7 +311,7 @@ export enum HistoryEventAccountingRuleStatus {
 const HistoryEventAccountingRuleStatusEnum = z.enum(HistoryEventAccountingRuleStatus);
 
 export enum HistoryEventState {
-  AUTO_MATCHED = 'auto matched',
+  MATCHED = 'matched',
   CUSTOMIZED = 'customized',
   IMPORTED_FROM_CSV = 'imported from csv',
   PROFIT_ADJUSTMENT = 'profit adjustment',

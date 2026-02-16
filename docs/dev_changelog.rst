@@ -42,7 +42,7 @@ The history events filter now uses a ``state_markers`` list parameter instead of
 * **Modified Endpoint**: ``POST /api/(version)/history/events``
 
   - Removed ``customized_events_only`` boolean parameter.
-  - Added ``state_markers`` list parameter that accepts any combination of marker values: ``"customized"``, ``"profit adjustment"``, ``"auto matched"``, ``"imported from csv"``.
+  - Added ``state_markers`` list parameter that accepts any combination of marker values: ``"customized"``, ``"profit adjustment"``, ``"matched"``, ``"imported from csv"``.
   - Events matching any of the specified markers are returned (OR logic).
   - If ``state_markers`` is not provided or is empty, no marker filtering is applied.
   - Example: ``{"state_markers": ["customized", "imported from csv"]}`` returns events with either marker.
@@ -126,7 +126,7 @@ Exchange asset movement events may now be manually matched with specific onchain
 
   - New optional ``actual_group_identifier`` field in the response, containing the actual group identifier of the event as stored in the DB.
     This preserves the actual group identifier when asset movements are combined with the group of their matched event for display as a single unit in the frontend.
-  - Replaced the ``customized`` flag with a ``states`` list. Valid states are ``customized``, ``profit_adjustment``, ``auto_matched``, ``imported_from_csv``.
+  - Replaced the ``customized`` flag with a ``states`` list. Valid states are ``customized``, ``profit adjustment``, ``matched``, ``imported from csv``.
 
 * **New Settings** (new fields in both ``PUT`` and ``POST`` on ``/api/(version)/settings``)
   - ``asset_movement_amount_tolerance`` The tolerance value used when matching asset movement amounts with onchain events. Must be a positive decimal number. Default is ``"0.000001"``.
