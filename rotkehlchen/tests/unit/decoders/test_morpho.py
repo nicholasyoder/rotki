@@ -593,7 +593,11 @@ def test_morpho_deposit_eth_and_weth_base(
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('base_accounts', [['0x21f2a9b5F420245d86E8Faa753022dA01946B13F']])
-def test_vault_withdrawal_deposit_with_wallet_tokens(base_inquirer: 'BaseInquirer', base_accounts: list['ChecksumEvmAddress']) -> None:  # noqa: E501
+def test_vault_withdrawal_deposit_with_wallet_tokens(
+        base_inquirer: 'BaseInquirer',
+        base_accounts: list['ChecksumEvmAddress'],
+        allow_base_routescan: None,
+) -> None:
     """Regression test for morpho transaction where a user withdraws from one vault and
     deposits into another vault, combining it with additional tokens from their wallet.
     """

@@ -5,9 +5,7 @@ from rotkehlchen.chain.base.modules.mintclub.constants import CPT_MINTCLUB
 from rotkehlchen.chain.base.transactions import BaseTransactions
 from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.types import (
-    EvmIndexer,
     NodeName,
-    SerializableChainIndexerOrder,
     WeightedNode,
     string_to_evm_address,
 )
@@ -18,7 +16,6 @@ from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.tests.utils.ethereum import get_decoded_events_of_transaction
 from rotkehlchen.types import (
-    ChainID,
     Location,
     SupportedBlockchain,
     Timestamp,
@@ -28,11 +25,6 @@ from rotkehlchen.types import (
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
-@pytest.mark.parametrize('db_settings', [{
-    'evm_indexers_order': SerializableChainIndexerOrder(
-        order={ChainID.BASE: [EvmIndexer.ROUTESCAN]},
-    ),
-}])
 @pytest.mark.parametrize('base_manager_connect_at_start', [(
     WeightedNode(  # give some open RPC for Base to get the data from
         node_info=NodeName(
@@ -46,7 +38,7 @@ from rotkehlchen.types import (
     ),
 )])
 @pytest.mark.parametrize('base_accounts', [['0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12']])
-def test_mintclub_claim(base_inquirer, base_accounts) -> None:
+def test_mintclub_claim(base_inquirer, base_accounts, allow_base_routescan) -> None:
     tx_hash = deserialize_evm_tx_hash('0xfaa51ffecb5388ef59808d4f3f5e6e07b8a47d4a7d195c467bf77c24ee77b287')  # noqa: E501
     transactions = BaseTransactions(base_inquirer, base_inquirer.database)
     transactions.single_address_query_transactions(  # temporary hack at the time of writing get_decoded_events_of_transaction does not respect the `evm_indexers_order` so we do this here to use the given order  # noqa: E501

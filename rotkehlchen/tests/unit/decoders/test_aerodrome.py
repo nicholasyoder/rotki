@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING
+
 import pytest
 
 from rotkehlchen.assets.asset import Asset, EvmToken
@@ -7,9 +9,7 @@ from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
 from rotkehlchen.chain.evm.decoding.velodrome.constants import CPT_AERODROME
 from rotkehlchen.chain.evm.decoding.zerox.constants import CPT_ZEROX
 from rotkehlchen.chain.evm.types import (
-    EvmIndexer,
     NodeName,
-    SerializableChainIndexerOrder,
     WeightedNode,
     string_to_evm_address,
 )
@@ -34,6 +34,9 @@ from rotkehlchen.types import (
     TokenKind,
     deserialize_evm_tx_hash,
 )
+
+if TYPE_CHECKING:
+    from rotkehlchen.chain.base.decoding.decoder import BaseTransactionDecoder
 
 A_AERO = Asset('eip155:8453/erc20:0x940181a94A35A4569E4529A3CDfB74e38FD98631')
 WETH_BASE_ADDRESS = string_to_evm_address('0x4200000000000000000000000000000000000006')
@@ -72,12 +75,14 @@ def _add_aerodrome_pool(pool: ChecksumEvmAddress) -> None:
         ), active=True, weight=ONE,
     ),
 )])
-@pytest.mark.parametrize('db_settings', [{
-    'evm_indexers_order': SerializableChainIndexerOrder({ChainID.BASE: [EvmIndexer.ROUTESCAN]}),
-}])
 @pytest.mark.parametrize('load_global_caches', [[CPT_AERODROME]])
 @pytest.mark.parametrize('base_accounts', [['0x514c4BA193c698100DdC998F17F24bDF59c7b6fB']])
-def test_add_liquidity(base_transaction_decoder, base_accounts, load_global_caches):
+def test_add_liquidity(
+        base_transaction_decoder: 'BaseTransactionDecoder',
+        base_accounts: list['ChecksumEvmAddress'],
+        load_global_caches: list[str],
+        allow_base_routescan: None,
+) -> None:
     _add_aerodrome_pool(pool := string_to_evm_address('0xA6385c73961dd9C58db2EF0c4EB98cE4B60651e8'))  # noqa: E501
     GlobalDBHandler.delete_asset_by_identifier(
         identifier=evm_address_to_identifier(address=pool, chain_id=ChainID.BASE),
@@ -172,9 +177,6 @@ def test_add_liquidity(base_transaction_decoder, base_accounts, load_global_cach
         ), active=True, weight=ONE,
     ),
 )])
-@pytest.mark.parametrize('db_settings', [{
-    'evm_indexers_order': SerializableChainIndexerOrder({ChainID.BASE: [EvmIndexer.ROUTESCAN]}),
-}])
 @pytest.mark.parametrize('load_global_caches', [[CPT_AERODROME]])
 @pytest.mark.parametrize('base_accounts', [['0x514c4BA193c698100DdC998F17F24bDF59c7b6fB']])
 def test_stake_lp_token_to_gauge(base_accounts, base_transaction_decoder, load_global_caches):
@@ -246,9 +248,6 @@ def test_stake_lp_token_to_gauge(base_accounts, base_transaction_decoder, load_g
         ), active=True, weight=ONE,
     ),
 )])
-@pytest.mark.parametrize('db_settings', [{
-    'evm_indexers_order': SerializableChainIndexerOrder({ChainID.BASE: [EvmIndexer.ROUTESCAN]}),
-}])
 @pytest.mark.parametrize('load_global_caches', [[CPT_AERODROME]])
 @pytest.mark.parametrize('base_accounts', [['0x61D90de4fa8cfbBD7A7650Ae01A39fD1B1863503']])
 def test_remove_liquidity(base_accounts, base_transaction_decoder, load_global_caches):
@@ -676,7 +675,11 @@ def test_swap(base_transaction_decoder, base_accounts, load_global_caches):
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('base_accounts', [['0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12']])
-def test_swap_via_settler_router_on_base(base_transaction_decoder, base_accounts):
+def test_swap_via_settler_router_on_base(
+        base_transaction_decoder: 'BaseTransactionDecoder',
+        base_accounts: list['ChecksumEvmAddress'],
+        allow_base_routescan: None,
+) -> None:
     tx_hash = deserialize_evm_tx_hash('0x3a02a2df62ec9d633e73771b48806c2fc8a47f64bf97058cc561e20c6fe037c4')  # noqa: E501
     events, _ = get_decoded_events_of_transaction(
         evm_inquirer=base_transaction_decoder.evm_inquirer,
