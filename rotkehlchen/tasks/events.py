@@ -95,6 +95,18 @@ MANUALLY_MATCHABLE_ASSET_MAP: Final = {
     for asset_group in MANUALLY_MATCHABLE_ASSET_GROUPS
     for asset in asset_group
 }
+AMOUNT_DIFFERENCE_THRESHOLD: Final = FVal('0.1')  # 10% threshold for duplicate detection
+
+
+def _amounts_within_threshold(amount_a: FVal, amount_b: FVal) -> bool:
+    """Return True if amounts differ by less than 10% relative to the larger amount."""
+    if amount_a == amount_b:
+        return True
+
+    if (max_amount := max(amount_a, amount_b)) == 0:
+        return True
+
+    return abs(amount_a - amount_b) / max_amount < AMOUNT_DIFFERENCE_THRESHOLD
 
 
 @dataclass(frozen=True)
@@ -107,7 +119,7 @@ class CustomizedEventCandidate:
     location: str
     location_label: str | None
     asset: str
-    amount: str
+    amount: FVal
     notes: str | None
     event_type: str
     event_subtype: str
@@ -217,6 +229,7 @@ def _load_customized_event_candidates(
         'WHERE he2.group_identifier=he.group_identifier '
         f'AND he2.entry_type IN ({entry_type_placeholders})) '
         f'AND he.entry_type IN ({entry_type_placeholders}) '
+        f'AND he.subtype != ?'
     )
     bindings_base = (
         HISTORY_MAPPING_KEY_STATE,
@@ -225,6 +238,7 @@ def _load_customized_event_candidates(
         HistoryMappingState.CUSTOMIZED.serialize_for_db(),
         *entry_type_values,
         *entry_type_values,
+        HistoryEventSubType.FEE.serialize(),
     )
     with database.conn.read_ctx() as cursor:
         if group_identifiers:
@@ -242,7 +256,7 @@ def _load_customized_event_candidates(
                         location=entry[4],
                         location_label=entry[5],
                         asset=entry[6],
-                        amount=entry[7],
+                        amount=FVal(entry[7]),
                         notes=entry[8],
                         event_type=entry[9],
                         event_subtype=entry[10],
@@ -266,7 +280,7 @@ def _load_customized_event_candidates(
                     location=entry[4],
                     location_label=entry[5],
                     asset=entry[6],
-                    amount=entry[7],
+                    amount=FVal(entry[7]),
                     notes=entry[8],
                     event_type=entry[9],
                     event_subtype=entry[10],
@@ -321,13 +335,10 @@ def find_customized_event_duplicate_groups(
         signatures: dict[tuple, tuple[set[int], set[int]]] = defaultdict(
             lambda: (set(), set()),
         )
-        has_customized_gas = False
         for event in events:
             customized_ids, non_customized_ids = signatures[event.signature()]
             if event.customized:
                 customized_ids.add(event.identifier)
-                if event.counterparty == CPT_GAS:
-                    has_customized_gas = True
             else:
                 non_customized_ids.add(event.identifier)
 
@@ -343,26 +354,29 @@ def find_customized_event_duplicate_groups(
             exact_duplicate_ids.update(group_exact_ids)
 
         # build asset+direction+event_type pairs for manual review detection.
-        # gas events can only be duplicates of other gas events
-        # and not of events in the same direction
-        customized_pairs: set[tuple[str, EventDirection, str]] = set()
-        non_customized_pairs: set[tuple[str, EventDirection, str]] = set()
+        # Only flag as manual review if a customized and non-customized event share
+        # asset+direction+event_type AND their amounts are within 10% of each other.
+        customized_amounts: dict[tuple[str, EventDirection, str], list[FVal]] = defaultdict(list)
+        non_customized_amounts: dict[tuple[str, EventDirection, str], list[FVal]] = defaultdict(list)  # noqa: E501
         for event in events:
             if (direction := event.direction()) is None:
                 continue
             pair = (event.asset, direction, event.event_type)
             if event.customized:
-                customized_pairs.add(pair)
-            elif (
-                event.identifier not in group_exact_ids and
-                (event.counterparty != CPT_GAS or has_customized_gas)
-            ):
-                non_customized_pairs.add(pair)
+                customized_amounts[pair].append(event.amount)
+            elif event.identifier not in group_exact_ids:
+                non_customized_amounts[pair].append(event.amount)
 
-        # Flag groups where customized/non-customized share asset+direction but are not exact.
-        shared_pairs = customized_pairs & non_customized_pairs
-        if len(customized_pairs) > 0 and len(non_customized_pairs) > 0 and len(shared_pairs) > 0:
-            manual_review_group_ids.add(group_id)
+        # Flag groups where customized/non-customized share asset+direction and similar amounts.
+        shared_keys = customized_amounts.keys() & non_customized_amounts.keys()
+        for key in shared_keys:
+            if any(
+                _amounts_within_threshold(c_amount, nc_amount)
+                for c_amount in customized_amounts[key]
+                for nc_amount in non_customized_amounts[key]
+            ):
+                manual_review_group_ids.add(group_id)
+                break
 
     return (
         list(auto_fix_group_ids - manual_review_group_ids),  # Don't include groups in auto fix if they also have pairs that need manual review  # noqa: E501
