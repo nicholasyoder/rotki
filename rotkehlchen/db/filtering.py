@@ -23,6 +23,7 @@ from rotkehlchen.db.constants import (
     HISTORY_BASE_ENTRY_FIELDS,
     HISTORY_MAPPING_KEY_STATE,
     TX_DECODED,
+    HistoryEventLinkType,
     HistoryMappingState,
 )
 from rotkehlchen.errors.serialization import DeserializationError
@@ -721,15 +722,36 @@ class HistoryEventStateMarkersJoinsFilter(DBFilter):
 
     def prepare(self) -> tuple[list[str], list[Any]]:
         placeholders = ','.join('?' * len(self.state_markers))
-        query = (
-            'INNER JOIN history_events_mappings '
-            'ON history_events_mappings.parent_identifier = history_events_identifier '
-            f'WHERE history_events_mappings.name = ? AND history_events_mappings.value IN ({placeholders})'  # noqa: E501
-        )
         bindings: list[str | int] = [
             HISTORY_MAPPING_KEY_STATE,
             *[m.serialize_for_db() for m in self.state_markers],
         ]
+        if HistoryMappingState.MATCHED in self.state_markers:
+            auto_matched_value = HistoryMappingState.MATCHED.serialize_for_db()
+            query = (
+                'WHERE history_events_identifier IN ('
+                'SELECT hem.parent_identifier FROM history_events_mappings hem '
+                f'WHERE hem.name = ? AND hem.value IN ({placeholders})'
+                ' AND NOT EXISTS ('
+                'SELECT 1 FROM history_event_links hel '
+                'WHERE hel.right_event_id = hem.parent_identifier AND hel.link_type = ?'
+                ')'
+                ' UNION '
+                'SELECT hel.left_event_id FROM history_event_links hel '
+                'JOIN history_events_mappings hem ON hem.parent_identifier = hel.right_event_id '
+                'WHERE hem.name = ? AND hem.value = ?'
+                ')'
+            )
+            bindings.extend([
+                HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),
+                HISTORY_MAPPING_KEY_STATE, auto_matched_value,
+            ])
+        else:
+            query = (
+                'INNER JOIN history_events_mappings '
+                'ON history_events_mappings.parent_identifier = history_events_identifier '
+                f'WHERE history_events_mappings.name = ? AND history_events_mappings.value IN ({placeholders})'  # noqa: E501
+            )
         return [query], bindings
 
 

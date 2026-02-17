@@ -80,3 +80,4 @@ datas = "datas"  # used in packaging
 requeried = "requeried"
 othere = "othere"  # other exception
 queriable = "queriable"  # https://en.wiktionary.org/wiki/queriable
+hel = "hel"  # sql alias for history_event_links table

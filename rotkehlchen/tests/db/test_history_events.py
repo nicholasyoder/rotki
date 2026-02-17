@@ -14,7 +14,11 @@ from rotkehlchen.constants.assets import A_BTC, A_DAI, A_ETH, A_USDC, A_USDT, A_
 from rotkehlchen.constants.limits import FREE_HISTORY_EVENTS_LIMIT
 from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.db.cache import DBCacheStatic
-from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HistoryMappingState
+from rotkehlchen.db.constants import (
+    HISTORY_MAPPING_KEY_STATE,
+    HistoryEventLinkType,
+    HistoryMappingState,
+)
 from rotkehlchen.db.dbhandler import DBHandler
 from rotkehlchen.db.filtering import (
     EthDepositEventFilterQuery,
@@ -1167,3 +1171,155 @@ def test_get_history_event_group_position_with_same_timestamp(database: 'DBHandl
     assert db.get_history_event_group_position('GROUP_A', filter_query) == 0
     assert db.get_history_event_group_position('GROUP_B', filter_query) == 1
     assert db.get_history_event_group_position('GROUP_C', filter_query) == 2
+
+
+def test_matched_filter_returns_canonical_entries(database: 'DBHandler') -> None:
+    """Test that filtering by MATCHED returns only the canonical (movement) side per group.
+
+    When matching, the MATCHED marker is placed on the matched_event (right_event_id in
+    history_event_links). The filter should return only the movement side (left_event_id)
+    so that process_matched_asset_movements can fetch the linked events in post-processing.
+    This prevents page_size=N from returning fewer than N results.
+
+    Setup:
+    - Group A: movement (COINBASE, id=1) -> onchain event (ETHEREUM, id=2), MATCHED on id=2
+    - Group B: movement (KRAKEN, id=3) -> onchain event (ETHEREUM, id=4), MATCHED on id=4
+    - Group C: adjustment event (id=5) with MATCHED marker, no link (standalone)
+    - Group D: unrelated event (COINBASE), no marker, no link
+
+    Expected:
+    - markers=[MATCHED]: returns movements (1, 3) + standalone adjustment (5), not onchain (2, 4)
+    - markers=[MATCHED] + location=COINBASE: returns only movement 1
+    - markers=[MATCHED] + limit=2: returns exactly 2 results (not fewer due to dedup)
+    - markers=[CUSTOMIZED]: returns nothing
+    """
+    db = DBHistoryEvents(database)
+    link_type = HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db()
+    matched = HistoryMappingState.MATCHED.serialize_for_db()
+
+    with database.user_write() as write_cursor:
+        db.add_history_events(
+            write_cursor=write_cursor,
+            history=[
+                AssetMovement(  # group A movement (left side of link)
+                    identifier=(movement_a_id := 1),
+                    group_identifier='GROUP_A',
+                    timestamp=TimestampMS(1000),
+                    location=Location.COINBASE,
+                    event_subtype=HistoryEventSubType.SPEND,
+                    asset=A_ETH,
+                    amount=ONE,
+                ), HistoryEvent(  # group A onchain event (right side of link, gets MATCHED)
+                    identifier=(onchain_a_id := 2),
+                    group_identifier='GROUP_A_ONCHAIN',
+                    sequence_index=0,
+                    timestamp=TimestampMS(1000),
+                    location=Location.ETHEREUM,
+                    event_type=HistoryEventType.SPEND,
+                    event_subtype=HistoryEventSubType.NONE,
+                    asset=A_ETH,
+                    amount=ONE,
+                ), AssetMovement(  # group B movement (left side of link)
+                    identifier=(movement_b_id := 3),
+                    group_identifier='GROUP_B',
+                    timestamp=TimestampMS(2000),
+                    location=Location.KRAKEN,
+                    event_subtype=HistoryEventSubType.RECEIVE,
+                    asset=A_ETH,
+                    amount=FVal(2),
+                ), HistoryEvent(  # group B onchain event (right side of link, gets MATCHED)
+                    identifier=(onchain_b_id := 4),
+                    group_identifier='GROUP_B_ONCHAIN',
+                    sequence_index=0,
+                    timestamp=TimestampMS(2000),
+                    location=Location.ETHEREUM,
+                    event_type=HistoryEventType.RECEIVE,
+                    event_subtype=HistoryEventSubType.NONE,
+                    asset=A_ETH,
+                    amount=FVal(2),
+                ), HistoryEvent(  # group C: standalone adjustment with MATCHED, no link
+                    identifier=(adjustment_id := 5),
+                    group_identifier='GROUP_C',
+                    sequence_index=0,
+                    timestamp=TimestampMS(3000),
+                    location=Location.COINBASE,
+                    event_type=HistoryEventType.EXCHANGE_ADJUSTMENT,
+                    event_subtype=HistoryEventSubType.SPEND,
+                    asset=A_ETH,
+                    amount=FVal('0.001'),
+                ), HistoryEvent(  # group D: unrelated event, no marker, no link
+                    group_identifier='GROUP_D',
+                    sequence_index=0,
+                    timestamp=TimestampMS(4000),
+                    location=Location.COINBASE,
+                    event_type=HistoryEventType.SPEND,
+                    event_subtype=HistoryEventSubType.NONE,
+                    asset=A_ETH,
+                    amount=FVal(3),
+                ),
+            ],
+        )
+        # MATCHED markers on the right (matched) side of each link + standalone adjustment
+        write_cursor.executemany(
+            'INSERT OR IGNORE INTO history_events_mappings(parent_identifier, name, value) '
+            'VALUES(?, ?, ?)',
+            [
+                (onchain_a_id, HISTORY_MAPPING_KEY_STATE, matched),
+                (onchain_b_id, HISTORY_MAPPING_KEY_STATE, matched),
+                (adjustment_id, HISTORY_MAPPING_KEY_STATE, matched),
+            ],
+        )
+        # links: movement (left) -> onchain (right)
+        write_cursor.executemany(
+            'INSERT INTO history_event_links(left_event_id, right_event_id, link_type) '
+            'VALUES(?, ?, ?)',
+            [(movement_a_id, onchain_a_id, link_type), (movement_b_id, onchain_b_id, link_type)],
+        )
+
+    with database.conn.read_ctx() as cursor:
+        # MATCHED filter returns only movements + standalone adjustment (not onchain events)
+        all_matched = db.get_history_events(
+            cursor=cursor,
+            filter_query=HistoryEventFilterQuery.make(
+                state_markers=[HistoryMappingState.MATCHED],
+            ),
+            entries_limit=None,
+            aggregate_by_group_ids=False,
+        )
+        assert {e.identifier for e in all_matched} == {movement_a_id, movement_b_id, adjustment_id}
+
+        # MATCHED + location=COINBASE returns only coinbase movement + coinbase adjustment
+        coinbase_matched = db.get_history_events(
+            cursor=cursor,
+            filter_query=HistoryEventFilterQuery.make(
+                state_markers=[HistoryMappingState.MATCHED],
+                location=Location.COINBASE,
+            ),
+            entries_limit=None,
+            aggregate_by_group_ids=False,
+        )
+        assert {e.identifier for e in coinbase_matched} == {movement_a_id, adjustment_id}
+
+        # MATCHED + limit=2 returns exactly 2 results (pagination not halved by linked events)
+        paginated = db.get_history_events(
+            cursor=cursor,
+            filter_query=HistoryEventFilterQuery.make(
+                state_markers=[HistoryMappingState.MATCHED],
+                limit=2,
+                offset=0,
+            ),
+            entries_limit=None,
+            aggregate_by_group_ids=False,
+        )
+        assert len(paginated) == 2
+
+        # CUSTOMIZED returns nothing
+        customized = db.get_history_events(
+            cursor=cursor,
+            filter_query=HistoryEventFilterQuery.make(
+                state_markers=[HistoryMappingState.CUSTOMIZED],
+            ),
+            entries_limit=None,
+            aggregate_by_group_ids=False,
+        )
+        assert len(customized) == 0
