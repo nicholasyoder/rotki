@@ -6,6 +6,7 @@ from marshmallow.exceptions import ValidationError
 from rotkehlchen.accounting.structures.balance import BalanceType
 from rotkehlchen.api.v1.fields import BlockchainField
 from rotkehlchen.api.v1.schemas import HistoryEventsDeletionSchema
+from rotkehlchen.assets.asset import EvmToken, UnderlyingToken
 from rotkehlchen.balances.manual import ManuallyTrackedBalance, add_manually_tracked_balances
 from rotkehlchen.constants import ONE
 from rotkehlchen.constants.assets import A_BTC, A_ETH
@@ -24,6 +25,7 @@ from rotkehlchen.types import (
     Location,
     SupportedBlockchain,
     Timestamp,
+    TokenKind,
     deserialize_evm_tx_hash,
 )
 from rotkehlchen.utils.serialization import rlk_jsondumps
@@ -141,6 +143,30 @@ def test_exported_assets_schema_accepts_empty_symbol():
     data = '{"version": "15", "assets": [{"asset_type": "own chain", "name": "Test Asset", "symbol": "", "identifier": "TEST123"}]}'  # noqa: E501
     result = ExportedAssetsSchema().loads(data)
     assert result['assets'][0]['asset'].symbol is None
+
+
+def test_evm_token_serialization_normalizes_underlying_token_weights() -> None:
+    token = EvmToken.initialize(
+        address=deserialize_evm_address('0x5a0b54d5dc17e0aadc383d2db43b0a0d3e029c4c'),
+        chain_id=ChainID.ETHEREUM,
+        token_kind=TokenKind.ERC20,
+        name='Pool Token',
+        symbol='POOL',
+        decimals=18,
+        underlying_tokens=[UnderlyingToken(
+            address=deserialize_evm_address('0x5a0b54d5dc17e0aadc383d2db43b0a0d3e029c4d'),
+            token_kind=TokenKind.ERC20,
+            weight=FVal('0.4'),
+        ), UnderlyingToken(
+            address=deserialize_evm_address('0x5a0b54d5dc17e0aadc383d2db43b0a0d3e029c4e'),
+            token_kind=TokenKind.ERC20,
+            weight=FVal('0.599999999999999999999999999999999999999999999999999999999999999999999999999999'),
+        )],
+    )
+    serialized = token.to_dict()
+    assert serialized['underlying_tokens'] is not None
+    normalized_weights = [FVal(entry['weight']) / FVal(100) for entry in serialized['underlying_tokens']]  # noqa: E501
+    assert normalized_weights == [FVal('0.4'), FVal('0.6')]
 
 
 def test_history_events_deletion_schema_field_coverage() -> None:

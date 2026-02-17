@@ -10,7 +10,7 @@ from rotkehlchen.assets.resolver import AssetResolver
 from rotkehlchen.chain.evm.decoding.aave.constants import CPT_AAVE_V3
 from rotkehlchen.chain.evm.decoding.aave.v3.constants import DEBT_TOKEN_SYMBOL_REGEX
 from rotkehlchen.chain.evm.decoding.spark.constants import CPT_SPARK
-from rotkehlchen.constants.misc import NFT_DIRECTIVE
+from rotkehlchen.constants.misc import NFT_DIRECTIVE, ONE, ZERO
 from rotkehlchen.constants.resolver import (
     ChainID,
     evm_address_to_identifier,
@@ -68,6 +68,31 @@ class UnderlyingToken(NamedTuple):
             chain_id=parent_chain,
             token_type=self.token_kind,
         )
+
+
+def normalize_underlying_token_weights(
+        underlying_tokens: list[UnderlyingToken],
+) -> list[UnderlyingToken]:
+    """Normalize underlying token weights to sum to exactly 100%"""
+    normalized_tokens = []
+    weight_sum = ZERO
+    last_idx = len(underlying_tokens) - 1
+    for idx, token in enumerate(underlying_tokens):
+        normalized_tokens.append(UnderlyingToken(
+            address=token.address,
+            token_kind=token.token_kind,
+            weight=ONE - weight_sum if idx == last_idx else token.weight,
+        ))
+        weight_sum += token.weight
+
+    return normalized_tokens
+
+
+def _serialize_underlying_tokens(
+        underlying_tokens: list[UnderlyingToken],
+) -> list[dict[str, Any]]:
+    """Serialize underlying tokens while ensuring exported weights sum to exactly 100%."""
+    return [x.serialize() for x in normalize_underlying_token_weights(underlying_tokens)]
 
 
 @total_ordering
@@ -618,7 +643,11 @@ class EvmToken(CryptoAsset):
         )
 
     def to_dict(self) -> dict[str, Any]:
-        underlying_tokens = [x.serialize() for x in self.underlying_tokens] if self.underlying_tokens is not None else None  # noqa: E501
+        underlying_tokens = (
+            _serialize_underlying_tokens(self.underlying_tokens)
+            if self.underlying_tokens is not None
+            else None
+        )
         result = super().to_dict() | {
             'address': self.evm_address,
             'evm_chain': self.chain_id.to_name(),
