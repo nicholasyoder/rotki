@@ -53,16 +53,17 @@ class Oneinchv6Decoder(Oneinchv3n4DecoderBase):
         out_event, in_event = None, None
         for event in context.decoded_events:
             if (
-                    out_event is None and
-                    event.event_type == HistoryEventType.SPEND and
-                    event.event_subtype == HistoryEventSubType.NONE and
-                    event.counterparty != CPT_GAS
+                out_event is None and (
+                    (event.event_type == HistoryEventType.SPEND and event.event_subtype == HistoryEventSubType.NONE) or  # noqa: E501
+                    (event.event_type == HistoryEventType.TRADE and event.event_subtype == HistoryEventSubType.SPEND)  # noqa: E501
+                ) and event.counterparty != CPT_GAS
             ):
                 out_event = event
             elif (
-                    in_event is None and
-                    event.event_type == HistoryEventType.RECEIVE and
-                    event.event_subtype == HistoryEventSubType.NONE
+                in_event is None and (
+                    (event.event_type == HistoryEventType.RECEIVE and event.event_subtype == HistoryEventSubType.NONE) or  # noqa: E501
+                    (event.event_type == HistoryEventType.TRADE and event.event_subtype == HistoryEventSubType.RECEIVE)  # noqa: E501
+                )
             ):
                 in_event = event
 
