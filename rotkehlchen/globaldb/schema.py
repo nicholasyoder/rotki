@@ -364,6 +364,7 @@ CREATE INDEX IF NOT EXISTS idx_common_assets_identifier ON common_asset_details 
 CREATE INDEX IF NOT EXISTS idx_price_history_identifier ON price_history (from_asset, to_asset);
 CREATE INDEX IF NOT EXISTS idx_location_mappings_identifier ON location_asset_mappings (local_id);
 CREATE INDEX IF NOT EXISTS idx_underlying_tokens_lists_identifier ON underlying_tokens_list (identifier, parent_token_entry);
+CREATE INDEX IF NOT EXISTS idx_underlying_tokens_parent_entry ON underlying_tokens_list (parent_token_entry);
 CREATE INDEX IF NOT EXISTS idx_binance_pairs_identifier ON binance_pairs (base_asset, quote_asset);
 CREATE INDEX IF NOT EXISTS idx_multiasset_mappings_identifier ON multiasset_mappings (asset);
 CREATE INDEX IF NOT EXISTS idx_solana_tokens_identifier ON solana_tokens (identifier, protocol);

@@ -113,7 +113,7 @@ def _add_spam_asset(
         detected_spam_assets: list[str],
         globaldb: GlobalDBHandler,
         user_db: DBHandler,
-        user_db_write_cursor: DBCursor,
+        user_db_cursor: DBCursor,
 ) -> None:
     """Updates the protocol to SPAM_PROTOCOL for the list of assets
     provided and also ignores it
@@ -126,7 +126,7 @@ def _add_spam_asset(
         )
 
     user_db.ignore_multiple_assets(
-        write_cursor=user_db_write_cursor,
+        write_cursor=user_db_cursor,
         assets=detected_spam_assets,
     )
 
@@ -180,7 +180,7 @@ def autodetect_spam_assets_in_db(user_db: DBHandler) -> None:
             detected_spam_assets=detected_spam_assets,
             globaldb=globaldb,
             user_db=user_db,
-            user_db_write_cursor=write_cursor,
+            user_db_cursor=write_cursor,
         )
         write_cursor.execute(  # remember last time spam detection ran
             'INSERT OR REPLACE INTO key_value_cache (name, value) VALUES (?, ?)',

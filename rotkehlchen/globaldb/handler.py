@@ -1,7 +1,8 @@
 import logging
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from time import perf_counter
 from typing import TYPE_CHECKING, Any, Literal, Optional, Union, cast, overload
 
 import rsqlite
@@ -20,7 +21,10 @@ from rotkehlchen.assets.asset import (
 )
 from rotkehlchen.assets.ignored_assets_handling import IgnoredAssetsHandling
 from rotkehlchen.assets.resolver import AssetResolver
-from rotkehlchen.assets.types import AssetData, AssetType
+from rotkehlchen.assets.types import (
+    AssetData,
+    AssetType,
+)
 from rotkehlchen.chain.evm.constants import DEFAULT_TOKEN_DECIMALS
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.chain.structures import EvmTokenDetectionData
@@ -1911,7 +1915,7 @@ class GlobalDBHandler:
             with user_db.user_write() as user_db_cursor:
                 diff_ids = self.get_user_added_assets(
                     cursor=read_cursor,
-                    user_db_write_cursor=user_db_cursor,
+                    user_db_cursor=user_db_cursor,
                     user_db=user_db,
                     only_owned=True,
                 )
@@ -2033,7 +2037,7 @@ class GlobalDBHandler:
     @staticmethod
     def get_user_added_assets(
             cursor: DBCursor,
-            user_db_write_cursor: DBCursor,
+            user_db_cursor: DBCursor,
             user_db: 'DBHandler',
             only_owned: bool = False,
     ) -> set[str]:
@@ -2046,9 +2050,10 @@ class GlobalDBHandler:
         May raise:
         - sqlite3.Error if the user_db couldn't be correctly attached
         """
-        # Update the list of owned assets
-        user_db.update_owned_assets_in_globaldb(user_db_write_cursor)
         if only_owned:
+            # Update the list of owned assets only when the owned-assets subset is requested.
+            # This is expensive and not needed when computing all user-added assets.
+            user_db.update_owned_assets_in_globaldb(user_db_cursor)
             query = cursor.execute('SELECT asset_id from user_owned_assets;')
         else:
             query = cursor.execute('SELECT identifier from assets;')
@@ -2060,6 +2065,98 @@ class GlobalDBHandler:
             shipped_ids = {tup[0] for tup in query}
 
         return user_ids - shipped_ids
+
+    @staticmethod
+    def retrieve_assets_optimized(
+            asset_ids: list[str],
+            use_packaged_db: bool = False,
+    ) -> Iterator[AssetWithNameAndType]:
+        """Retrieve assets in chunks and deserialize them.
+
+        This is optimized for bulk reads and avoids running one query per asset.
+        """
+        if len(asset_ids) == 0:
+            return
+
+        unique_asset_ids = list(dict.fromkeys(asset_ids))
+        chunks = get_query_chunks(unique_asset_ids, chunk_size=500)
+        total_chunks = len(chunks)
+        log.debug(f'Starting optimized assets retrieval for {len(unique_asset_ids)} ids in {total_chunks} chunks')  # noqa: E501
+        retrieval_start = perf_counter()
+        connection = GlobalDBHandler().packaged_db_conn() if use_packaged_db is True else GlobalDBHandler().conn  # noqa: E501
+        yielded_assets = 0
+        with connection.read_ctx() as cursor:
+            for chunk_index, (ids_chunk, placeholders) in enumerate(chunks, start=1):
+                chunk_start = perf_counter()
+                query = f"""
+                SELECT A.identifier, A.type, B.address, B.decimals, A.name, C.symbol, C.started, null, C.swapped_for, C.coingecko, C.cryptocompare, B.protocol, B.chain, B.token_kind, null, null FROM assets as A JOIN evm_tokens as B
+                ON B.identifier = A.identifier JOIN common_asset_details AS C ON C.identifier = B.identifier WHERE A.type = ? AND A.identifier IN ({placeholders})
+                UNION ALL
+                SELECT A.identifier, A.type, B.address, B.decimals, A.name, C.symbol, C.started, null, C.swapped_for, C.coingecko, C.cryptocompare, B.protocol, null, B.token_kind, null, null FROM assets as A JOIN solana_tokens as B
+                ON B.identifier = A.identifier JOIN common_asset_details AS C ON C.identifier = B.identifier WHERE A.type = ? AND A.identifier IN ({placeholders})
+                UNION ALL
+                SELECT A.identifier, A.type, null, null, A.name, B.symbol, B.started, B.forked, B.swapped_for, B.coingecko, B.cryptocompare, null, null, null, null, null from assets as A JOIN common_asset_details as B
+                ON B.identifier = A.identifier WHERE A.type != ? AND A.type != ? AND A.type != ? AND A.identifier IN ({placeholders})
+                UNION ALL
+                SELECT A.identifier, A.type, null, null, A.name, null, null, null, null, null, null, null, null, null, B.notes, B.type FROM assets AS A JOIN custom_assets AS B on A.identifier=B.identifier WHERE A.type = ? AND A.identifier IN ({placeholders})
+                """  # noqa: E501
+                cursor.execute(
+                    query,
+                    (
+                        AssetType.EVM_TOKEN.serialize_for_db(),
+                        *ids_chunk,
+                        AssetType.SOLANA_TOKEN.serialize_for_db(),
+                        *ids_chunk,
+                        AssetType.EVM_TOKEN.serialize_for_db(),
+                        AssetType.SOLANA_TOKEN.serialize_for_db(),
+                        AssetType.CUSTOM_ASSET.serialize_for_db(),
+                        *ids_chunk,
+                        AssetType.CUSTOM_ASSET.serialize_for_db(),
+                        *ids_chunk,
+                    ),
+                )
+                rows: list[tuple[Any, ...]] = []
+                evm_parent_ids: list[str] = []
+                for row in cursor:
+                    rows.append(row)
+                    if AssetType.deserialize_from_db(row[1]) == AssetType.EVM_TOKEN:
+                        evm_parent_ids.append(row[0])
+
+                if len(rows) == 0:
+                    log.debug(f'Chunk {chunk_index}/{total_chunks} returned 0 rows in {perf_counter() - chunk_start:.3f}s')  # noqa: E501
+                    continue
+
+                underlying_tokens_map: dict[str, list[UnderlyingToken]] = {}
+                for evm_ids_chunk, evm_placeholders in get_query_chunks(evm_parent_ids, chunk_size=500):  # noqa: E501
+                    cursor.execute(
+                        'SELECT U.parent_token_entry, B.address, B.token_kind, U.weight '
+                        'FROM ('
+                        '    SELECT identifier, parent_token_entry, weight '
+                        '    FROM underlying_tokens_list '
+                        '    INDEXED BY idx_underlying_tokens_parent_entry '
+                        f'    WHERE parent_token_entry IN ({evm_placeholders})'
+                        ') AS U '
+                        'JOIN evm_tokens AS B INDEXED BY sqlite_autoindex_evm_tokens_1 '
+                        'ON B.identifier = U.identifier',
+                        tuple(evm_ids_chunk),
+                    )
+                    for parent_id, address, token_kind, weight in cursor:
+                        underlying_tokens_map.setdefault(parent_id, []).append(
+                            UnderlyingToken.deserialize_from_db((address, token_kind, weight)),
+                        )
+
+                for row in rows:
+                    asset_type = AssetType.deserialize_from_db(row[1])
+                    yielded_assets += 1
+                    yield deserialize_generic_asset_from_db(
+                        asset_type=asset_type,
+                        asset_data=list(row),
+                        underlying_tokens=underlying_tokens_map.get(row[0]),
+                    )
+
+                log.debug(f'Chunk {chunk_index}/{total_chunks} resolved {len(rows)} assets in {perf_counter() - chunk_start:.3f}s')  # noqa: E501
+
+        log.debug(f'Optimized assets retrieval completed: yielded {yielded_assets} assets in {perf_counter() - retrieval_start:.3f}s')  # noqa: E501
 
     @staticmethod
     def resolve_asset(

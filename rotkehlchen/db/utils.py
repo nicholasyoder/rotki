@@ -417,13 +417,18 @@ def update_table_schema(
 T = TypeVar('T')
 
 
-def get_query_chunks(data: Sequence[T]) -> list[tuple[Sequence[T], str]]:
+def get_query_chunks(
+        data: Sequence[T],
+        chunk_size: int = SQL_VARIABLE_CHUNK_SIZE,
+) -> list[tuple[Sequence[T], str]]:
     """Chunk data to be included in a query as placeholder variables.
     Returns a list of tuples containing the bindings and string of placeholders for each chunk.
     """
+    assert chunk_size > 0, f'chunk_size should be > 0. Got {chunk_size}'
+
     return [
-        ((chunk := data[i:i + SQL_VARIABLE_CHUNK_SIZE]), ','.join(['?'] * len(chunk)))
-        for i in range(0, len(data), SQL_VARIABLE_CHUNK_SIZE)
+        ((chunk := data[i:i + chunk_size]), ','.join(['?'] * len(chunk)))
+        for i in range(0, len(data), chunk_size)
     ]
 
 
