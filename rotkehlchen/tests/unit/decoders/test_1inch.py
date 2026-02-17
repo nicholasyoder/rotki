@@ -1197,3 +1197,50 @@ def test_limit_order_swap(
         counterparty=CPT_ONEINCH_V6,
         address=string_to_evm_address('0x3Ea8d8E835fA597D9AB64E10f4fA33EC9Bc261f9'),
     )]
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('ethereum_accounts', [['0xbcb36149cC4C4d142842957Ad316E40EEA0BCDd2']])
+def test_limit_order_swap_via_uniswap(ethereum_inquirer, ethereum_accounts):
+    """Test that a 1inch limit order executed via Uniswap is correctly decoded when the uniswap
+    decoder already partially decodes the swap.
+    """
+    tx_hash = deserialize_evm_tx_hash('0xfb5fed9f9e3991cdd1b56fe64a76e4c27e780a4bd8fe7c9897bced23d98d087d')  # noqa: E501
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
+    assert events == [EvmEvent(
+        tx_ref=tx_hash,
+        sequence_index=1,
+        timestamp=(timestamp := TimestampMS(1752224819000)),
+        location=Location.ETHEREUM,
+        event_type=HistoryEventType.INFORMATIONAL,
+        event_subtype=HistoryEventSubType.APPROVE,
+        asset=(a_ai2027 := Asset('eip155:1/erc20:0xC0138Db8a5eB4EB9885bc7a30501C8C79ea0ffbf')),
+        amount=FVal(approve_amount := '115792089237316195423570985008687907853269984665640564039457580394609.129639935'),  # noqa: E501
+        location_label=(user_address := ethereum_accounts[0]),
+        notes=f'Set AI2027 spending approval of {user_address} by 0x111111125421cA6dc452d289314280a0f8842A65 to {approve_amount}',  # noqa: E501
+        address=string_to_evm_address('0x111111125421cA6dc452d289314280a0f8842A65'),
+    ), EvmSwapEvent(
+        tx_ref=tx_hash,
+        sequence_index=2,
+        timestamp=timestamp,
+        location=Location.ETHEREUM,
+        event_subtype=HistoryEventSubType.SPEND,
+        asset=a_ai2027,
+        amount=FVal('2000000'),
+        location_label=user_address,
+        notes='Swap 2000000 AI2027 in a 1inch limit order',
+        counterparty=CPT_ONEINCH_V6,
+        address=string_to_evm_address('0xfC2c6B1952B55F1380c4b502a79748Ec009872EB'),
+    ), EvmSwapEvent(
+        tx_ref=tx_hash,
+        sequence_index=3,
+        timestamp=timestamp,
+        location=Location.ETHEREUM,
+        event_subtype=HistoryEventSubType.RECEIVE,
+        asset=A_ETH,
+        amount=FVal('0.131625268022102434'),
+        location_label=user_address,
+        notes='Receive 0.131625268022102434 ETH as the result of a 1inch limit order',
+        counterparty=CPT_ONEINCH_V6,
+        address=string_to_evm_address('0xfC2c6B1952B55F1380c4b502a79748Ec009872EB'),
+    )]
