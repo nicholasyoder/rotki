@@ -1,10 +1,10 @@
 import logging
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from operator import itemgetter
+from time import perf_counter
 from typing import TYPE_CHECKING, Final, Literal
 
-from rotkehlchen.api.v1.types import IncludeExcludeFilterData
 from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.accounts import BlockchainAccounts
@@ -23,7 +23,7 @@ from rotkehlchen.db.constants import (
     HistoryEventLinkType,
     HistoryMappingState,
 )
-from rotkehlchen.db.filtering import HistoryEventFilterQuery
+from rotkehlchen.db.filtering import AssetMovementMatchFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.db.utils import get_query_chunks
@@ -51,8 +51,9 @@ from rotkehlchen.types import (
     Location,
     SupportedBlockchain,
     Timestamp,
+    TimestampMS,
 )
-from rotkehlchen.utils.misc import is_valid_ethereum_tx_hash, ts_ms_to_sec, ts_now
+from rotkehlchen.utils.misc import is_valid_ethereum_tx_hash, ts_ms_to_sec, ts_now, ts_sec_to_ms
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -78,6 +79,7 @@ ENTRY_TYPES_TO_EXCLUDE_FROM_MATCHING: Final = [
 ]
 # Tolerance for the matched event to be on the wrong side of an asset movement during auto matching
 TIMESTAMP_TOLERANCE: Final = HOUR_IN_SECONDS
+TIMESTAMP_TOLERANCE_MS: Final = ts_sec_to_ms(Timestamp(TIMESTAMP_TOLERANCE))
 LEGACY_EXCHANGE_MATCH_CUTOFF_TS: Final = Timestamp(1514764800)  # 2018-01-01 00:00:00 UTC
 LEGACY_EXCHANGE_MATCH_WINDOW: Final = HOUR_IN_SECONDS * 100
 OLD_REP_ASSET: Final = Asset('eip155:1/erc20:0x48c80F1f4D53D5951e5D5438B54Cba84f29F32a5')
@@ -107,6 +109,17 @@ def _amounts_within_threshold(amount_a: FVal, amount_b: FVal) -> bool:
         return True
 
     return abs(amount_a - amount_b) / max_amount < AMOUNT_DIFFERENCE_THRESHOLD
+
+
+MOVEMENT_MATCHING_BATCH_SIZE: Final = 50
+
+
+@dataclass(frozen=True)
+class MovementBatchRequest:
+    movement_id: int
+    assets_in_collection: tuple[Asset, ...]
+    from_ts_ms: TimestampMS
+    to_ts_ms: TimestampMS
 
 
 @dataclass(frozen=True)
@@ -161,12 +174,14 @@ class CustomizedEventCandidate:
 class MovementMatchingState:
     """Shared mutable state for asset movement matching and retry processing."""
     already_matched_event_ids: set[int]
-    unresolved_ambiguous_movements: dict[int, AssetMovement]
-    ambiguous_movement_candidate_ids: dict[int, set[int]]
-    candidate_to_ambiguous_movement_ids: dict[int, set[int]]
-    movements_to_retry: set[int]
-    movement_ids_to_ignore: list[int]
-    unmatched_asset_movements: list[AssetMovement]
+    unresolved_ambiguous_movements: dict[int, AssetMovement] = field(default_factory=dict)
+    ambiguous_movement_candidate_ids: dict[int, set[int]] = field(default_factory=dict)
+    candidate_to_ambiguous_movement_ids: defaultdict[int, set[int]] = field(
+        default_factory=lambda: defaultdict(set),
+    )
+    movements_to_retry: set[int] = field(default_factory=set)
+    movement_ids_to_ignore: list[int] = field(default_factory=list)
+    unmatched_asset_movements: list[AssetMovement] = field(default_factory=list)
 
 
 def process_eth2_events(
@@ -458,6 +473,109 @@ def _get_movement_match_window(asset_movement: AssetMovement, default_match_wind
     return default_match_window
 
 
+def _get_movement_timestamp_range_ms(
+        asset_movement: AssetMovement,
+        time_range_seconds: int,
+) -> tuple[TimestampMS, TimestampMS]:
+    """Compute movement candidate search window in milliseconds."""
+    time_range_ms = ts_sec_to_ms(Timestamp(time_range_seconds))
+    if asset_movement.event_subtype == HistoryEventSubType.RECEIVE:
+        return (
+            TimestampMS(asset_movement.timestamp - time_range_ms),
+            TimestampMS(asset_movement.timestamp + TIMESTAMP_TOLERANCE_MS),
+        )
+
+    return (
+        TimestampMS(asset_movement.timestamp - TIMESTAMP_TOLERANCE_MS),
+        TimestampMS(asset_movement.timestamp + time_range_ms),
+    )
+
+
+def _build_movement_batch_possible_matches(
+        events_db: DBHistoryEvents,
+        asset_movements: list[AssetMovement],
+        settings: 'DBSettings',
+        assets_in_collection_cache: dict[str, tuple[Asset, ...]],
+        cursor: 'DBCursor',
+) -> dict[int, list[HistoryBaseEntry]]:
+    """Build candidate match lists for a chunk of asset movements using one DB fetch.
+
+    For each eligible movement in ``asset_movements`` that has an identifier and is not
+    auto ignored, this computes the movement specific asset set and timestamp window.
+    It then executes one batched ``AssetMovementMatchFilterQuery`` for all movements in
+    the chunk and filters the returned events for each movement.
+
+    Returns:
+        A dictionary keyed by asset movement identifier. Each value is the list of
+        ``HistoryBaseEntry`` candidates that satisfy that movement specific asset
+        collection and timestamp range.
+    """
+    batch_requests: list[MovementBatchRequest] = []
+    for movement in asset_movements:
+        if movement.identifier is None or _should_auto_ignore_movement(asset_movement=movement):
+            continue
+
+        assets_in_collection = _get_assets_in_collection(
+            asset_movement=movement,
+            assets_in_collection_cache=assets_in_collection_cache,
+        )
+        from_ts_ms, to_ts_ms = _get_movement_timestamp_range_ms(
+            asset_movement=movement,
+            time_range_seconds=_get_movement_match_window(
+                asset_movement=movement,
+                default_match_window=settings.asset_movement_time_range,
+            ),
+        )
+        batch_requests.append(MovementBatchRequest(
+            movement_id=movement.identifier,
+            assets_in_collection=assets_in_collection,
+            from_ts_ms=from_ts_ms,
+            to_ts_ms=to_ts_ms,
+        ))
+
+    if len(batch_requests) == 0:
+        return {}
+
+    batch_candidates = _query_asset_movement_candidates(
+        events_db=events_db,
+        cursor=cursor,
+        asset_timestamp_ranges=[
+            (
+                request.assets_in_collection,
+                request.from_ts_ms,
+                request.to_ts_ms,
+            ) for request in batch_requests
+        ],
+    )
+
+    possible_matches_by_movement_id: dict[int, list[HistoryBaseEntry]] = {}
+    for request in batch_requests:
+        possible_matches_by_movement_id[request.movement_id] = [
+            event for event in batch_candidates
+            if (
+                request.from_ts_ms <= event.timestamp <= request.to_ts_ms and
+                event.asset in request.assets_in_collection
+            )
+        ]
+
+    return possible_matches_by_movement_id
+
+
+def _query_asset_movement_candidates(
+        events_db: DBHistoryEvents,
+        cursor: 'DBCursor',
+        asset_timestamp_ranges: list[tuple[tuple[Asset, ...], TimestampMS, TimestampMS]],
+) -> list[HistoryBaseEntry]:
+    """Fetch candidate events for one or more movement ranges with shared query logic."""
+    return events_db.get_history_events_internal(
+        cursor=cursor,
+        filter_query=AssetMovementMatchFilterQuery.make(
+            asset_timestamp_ranges=asset_timestamp_ranges,
+            entry_types_to_exclude=ENTRY_TYPES_TO_EXCLUDE_FROM_MATCHING,
+        ),
+    )
+
+
 def _assets_are_only_unsupported_chains(assets_in_collection: tuple['Asset', ...]) -> bool:
     """Return True if none of the assets belong to chains we can query txs for."""
     return not any(
@@ -530,9 +648,10 @@ def _process_movement_candidate_set(
         assets_in_collection_cache: dict[str, tuple['Asset', ...]],
         cursor: 'DBCursor',
         blockchain_accounts: BlockchainAccounts,
-        all_asset_movements: list[AssetMovement],
+        asset_movements_by_asset: dict[Asset, list[AssetMovement]],
         matching_state: MovementMatchingState,
         from_retry: bool,
+        preloaded_possible_matches: list[HistoryBaseEntry] | None = None,
 ) -> None:
     """Process one movement and update retry/ignore/unmatched collections."""
     movement_id = asset_movement.identifier
@@ -578,10 +697,11 @@ def _process_movement_candidate_set(
         blockchain_accounts=blockchain_accounts,
         already_matched_event_ids=matching_state.already_matched_event_ids,
         tolerance=settings.asset_movement_amount_tolerance,
+        preloaded_possible_matches=preloaded_possible_matches,
     )
     if len(matched_events) > 1 and _has_related_movement(
         asset_movement=asset_movement,
-        other_movements=all_asset_movements,
+        other_movements=asset_movements_by_asset.get(asset_movement.asset, []),
         match_window_ms=match_window * 1000,
         tolerance=settings.asset_movement_amount_tolerance,
     ):
@@ -660,76 +780,95 @@ def match_asset_movements(database: 'DBHandler') -> None:
     events with proper event_type, counterparty, etc and cache the matched identifiers.
     """
     log.debug('Analyzing asset movements for corresponding onchain events...')
+    started_at = perf_counter()
     events_db = DBHistoryEvents(database=database)
     asset_movements, fee_events = get_unmatched_asset_movements(database)
     settings = CachedSettings().get_settings()
+    asset_movements_by_asset: dict[Asset, list[AssetMovement]] = defaultdict(list)
+    for movement in asset_movements:
+        asset_movements_by_asset[movement.asset].append(movement)
+
     assets_in_collection_cache: dict[str, tuple[Asset, ...]] = {}
-    with events_db.db.conn.read_ctx() as cursor:
-        blockchain_accounts = events_db.db.get_blockchain_accounts(cursor=cursor)
-        matching_state = MovementMatchingState(
-            already_matched_event_ids=get_already_matched_event_ids(cursor=cursor),
-            unresolved_ambiguous_movements={},
-            ambiguous_movement_candidate_ids={},
-            candidate_to_ambiguous_movement_ids=defaultdict(set),
-            movements_to_retry=set(),
-            movement_ids_to_ignore=[],
-            unmatched_asset_movements=[],
-        )
-        for asset_movement in asset_movements:
-            _process_movement_candidate_set(
-                events_db=events_db,
-                asset_movement=asset_movement,
-                fee_events=fee_events,
-                settings=settings,
-                assets_in_collection_cache=assets_in_collection_cache,
-                cursor=cursor,
-                blockchain_accounts=blockchain_accounts,
-                all_asset_movements=asset_movements,
-                matching_state=matching_state,
-                from_retry=False,
+    try:
+        with events_db.db.conn.read_ctx() as cursor:
+            blockchain_accounts = events_db.db.get_blockchain_accounts(cursor=cursor)
+            already_matched_event_ids = get_already_matched_event_ids(cursor=cursor)
+
+            matching_state = MovementMatchingState(
+                already_matched_event_ids=already_matched_event_ids,
+            )
+            for idx in range(0, len(asset_movements), MOVEMENT_MATCHING_BATCH_SIZE):
+                movement_chunk_list = asset_movements[idx:idx + MOVEMENT_MATCHING_BATCH_SIZE]
+
+                possible_matches_by_movement_id = _build_movement_batch_possible_matches(
+                    events_db=events_db,
+                    asset_movements=movement_chunk_list,
+                    settings=settings,
+                    assets_in_collection_cache=assets_in_collection_cache,
+                    cursor=cursor,
+                )
+                for asset_movement in movement_chunk_list:
+                    movement_id = asset_movement.identifier
+                    _process_movement_candidate_set(
+                        events_db=events_db,
+                        asset_movement=asset_movement,
+                        fee_events=fee_events,
+                        settings=settings,
+                        assets_in_collection_cache=assets_in_collection_cache,
+                        cursor=cursor,
+                        blockchain_accounts=blockchain_accounts,
+                        asset_movements_by_asset=asset_movements_by_asset,
+                        matching_state=matching_state,
+                        from_retry=False,
+                        preloaded_possible_matches=possible_matches_by_movement_id.get(movement_id),  # type: ignore[arg-type]
+                    )
+
+            # Retry previously ambiguous movements when any of their candidate events gets matched.
+            while len(matching_state.movements_to_retry) > 0:
+                movement_id = matching_state.movements_to_retry.pop()
+                if movement_id not in matching_state.unresolved_ambiguous_movements:
+                    continue
+
+                asset_movement = matching_state.unresolved_ambiguous_movements[movement_id]
+                _process_movement_candidate_set(
+                    events_db=events_db,
+                    asset_movement=asset_movement,
+                    fee_events=fee_events,
+                    settings=settings,
+                    assets_in_collection_cache=assets_in_collection_cache,
+                    cursor=cursor,
+                    blockchain_accounts=blockchain_accounts,
+                    asset_movements_by_asset=asset_movements_by_asset,
+                    matching_state=matching_state,
+                    from_retry=True,
+                )
+
+            matching_state.unmatched_asset_movements.extend(
+                matching_state.unresolved_ambiguous_movements.values(),
             )
 
-        # Retry previously ambiguous movements when any of their candidate events gets matched.
-        while len(matching_state.movements_to_retry) > 0:
-            movement_id = matching_state.movements_to_retry.pop()
-            if movement_id not in matching_state.unresolved_ambiguous_movements:
-                continue
+        if len(matching_state.movement_ids_to_ignore) > 0:
+            with events_db.db.conn.write_ctx() as write_cursor:
+                write_cursor.executemany(
+                    'INSERT OR IGNORE INTO history_event_link_ignores(event_id, link_type) '
+                    'VALUES(?, ?)',
+                    [
+                        (
+                            movement_id,
+                            HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),
+                        )
+                        for movement_id in matching_state.movement_ids_to_ignore
+                    ],
+                )
 
-            asset_movement = matching_state.unresolved_ambiguous_movements[movement_id]
-            _process_movement_candidate_set(
-                events_db=events_db,
-                asset_movement=asset_movement,
-                fee_events=fee_events,
-                settings=settings,
-                assets_in_collection_cache=assets_in_collection_cache,
-                cursor=cursor,
-                blockchain_accounts=blockchain_accounts,
-                all_asset_movements=asset_movements,
-                matching_state=matching_state,
-                from_retry=True,
+        if (unmatched_count := len(matching_state.unmatched_asset_movements)) > 0:
+            log.warning(f'Failed to match {unmatched_count} asset movements')
+            database.msg_aggregator.add_message(
+                message_type=WSMessageType.UNMATCHED_ASSET_MOVEMENTS,
+                data={'count': unmatched_count},
             )
-
-        matching_state.unmatched_asset_movements.extend(
-            matching_state.unresolved_ambiguous_movements.values(),
-        )
-
-    if len(matching_state.movement_ids_to_ignore) > 0:
-        with events_db.db.conn.write_ctx() as write_cursor:
-            write_cursor.executemany(
-                'INSERT OR IGNORE INTO history_event_link_ignores(event_id, link_type) '
-                'VALUES(?, ?)',
-                [
-                    (movement_id, HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db())
-                    for movement_id in matching_state.movement_ids_to_ignore
-                ],
-            )
-
-    if (unmatched_count := len(matching_state.unmatched_asset_movements)) > 0:
-        log.warning(f'Failed to match {unmatched_count} asset movements')
-        database.msg_aggregator.add_message(
-            message_type=WSMessageType.UNMATCHED_ASSET_MOVEMENTS,
-            data={'count': unmatched_count},
-        )
+    finally:
+        log.debug(f'Asset movement matching finished in {perf_counter() - started_at:.4f}s')
 
 
 def get_unmatched_asset_movements(
@@ -984,10 +1123,6 @@ def update_asset_movement_matched_event(
                     HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db(),
                 ),
             )
-        log.debug(
-            'MATCH_DEBUG: cached match movement_id='
-            f'{asset_movement.identifier} matched_id={matched_event.identifier}',
-        )
 
 
 def should_exclude_possible_match(
@@ -1137,38 +1272,27 @@ def find_asset_movement_matches(
         already_matched_event_ids: set[int],
         exclude_protocol_counterparty: bool = True,
         tolerance: FVal | None = None,
+        preloaded_possible_matches: list[HistoryBaseEntry] | None = None,
 ) -> list[HistoryBaseEntry]:
     """Find events that closely match what the corresponding event for the given asset movement
     should look like. Returns a list of events that match.
     """
-    asset_movement_timestamp = ts_ms_to_sec(asset_movement.timestamp)
-    if is_deposit:
-        from_ts = asset_movement_timestamp - match_window
-        to_ts = asset_movement_timestamp + TIMESTAMP_TOLERANCE
-    else:
-        from_ts = asset_movement_timestamp - TIMESTAMP_TOLERANCE
-        to_ts = asset_movement_timestamp + match_window
-
     if tolerance is None:
         tolerance = CachedSettings().get_settings().asset_movement_amount_tolerance
 
-    possible_matches = events_db.get_history_events_internal(
-        cursor=cursor,
-        filter_query=HistoryEventFilterQuery.make(
-            assets=assets_in_collection,
-            from_ts=Timestamp(from_ts),
-            to_ts=Timestamp(to_ts),
-            entry_types=IncludeExcludeFilterData(
-                values=ENTRY_TYPES_TO_EXCLUDE_FROM_MATCHING,
-                operator='NOT IN',
-            ),
-        ),
-    )
-    log.debug(
-        f'MATCH_DEBUG: possible_matches={len(possible_matches)} '
-        f'movement_id={asset_movement.identifier} is_deposit={is_deposit} '
-        f'movement_amount={asset_movement.amount}',
-    )
+    possible_matches: list[HistoryBaseEntry]
+    if preloaded_possible_matches is None:
+        from_ts_ms, to_ts_ms = _get_movement_timestamp_range_ms(
+            asset_movement=asset_movement,
+            time_range_seconds=match_window,
+        )
+        possible_matches = _query_asset_movement_candidates(
+            events_db=events_db,
+            cursor=cursor,
+            asset_timestamp_ranges=[(assets_in_collection, from_ts_ms, to_ts_ms)],
+        )
+    else:
+        possible_matches = preloaded_possible_matches
 
     expected_amounts = _get_expected_amounts(
         asset_movement=asset_movement,
@@ -1206,7 +1330,6 @@ def find_asset_movement_matches(
             already_matched_event_ids=already_matched_event_ids,
             exclude_protocol_counterparty=exclude_protocol_counterparty,
         )
-
     if len(close_matches) == 0:
         log.debug(
             f'No close matches found for asset movement {asset_movement.group_identifier} '
@@ -1259,11 +1382,6 @@ def _find_close_matches(
             exclude_protocol_counterparty=exclude_protocol_counterparty,
             exclude_unexpected_direction=True,
         ):
-            log.debug(
-                f'MATCH_DEBUG: excluded {label} id={event.identifier} '
-                f'type={event.event_type.name} subtype={event.event_subtype.name} '
-                f'amount={event.amount} location={event.location}',
-            )
             continue
 
         # Check for matching amount, or matching amount + fee for deposits. The fee doesn't need  # noqa: E501
@@ -1280,20 +1398,11 @@ def _find_close_matches(
             for expected_amount in expected_amounts
         ):
             log.debug(
-                f'MATCH_DEBUG: amount mismatch {label} id={event.identifier} '
-                f'movement={asset_movement.amount} event={event.amount} '
-                f'fee={fee_event.amount if fee_event is not None else None}',
-            )
-            log.debug(
                 f'Excluding possible match for asset movement {asset_movement.group_identifier} '
                 f'due to differing amount. Expected {asset_movement.amount} got {event.amount}',
             )
             continue
 
-        log.debug(
-            f'MATCH_DEBUG: close match {label} id={event.identifier} '
-            f'type={event.event_type.name} amount={event.amount}',
-        )
         close_matches.append(event)
 
     if len(close_matches) == 0:

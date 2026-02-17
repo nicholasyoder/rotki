@@ -46,6 +46,7 @@ from rotkehlchen.types import (
     SolanaAddress,
     SupportedBlockchain,
     Timestamp,
+    TimestampMS,
 )
 from rotkehlchen.utils.misc import ts_now
 
@@ -604,6 +605,32 @@ class DBMultiIntegerFilter(DBMultiValueFilter[int]):
 
 
 @dataclass(init=True, repr=True, eq=True, order=False, unsafe_hash=False, frozen=False)
+class DBAssetMovementsMatchFilter(DBFilter):
+    """Batch matching filter for multiple (assets, from_ts_ms, to_ts_ms) tuples."""
+    asset_timestamp_ranges: list[tuple[tuple[Asset, ...], TimestampMS, TimestampMS]]
+
+    def prepare(self) -> tuple[list[str], list[Any]]:
+        or_conditions: list[str] = []
+        bindings: list[Any] = []
+
+        for assets_in_collection, from_ts, to_ts in self.asset_timestamp_ranges:
+            if len(assets_in_collection) == 0:
+                continue
+
+            asset_placeholders = ', '.join(['?'] * len(assets_in_collection))
+            or_conditions.append(
+                f'(asset IN ({asset_placeholders}) AND timestamp >= ? AND timestamp <= ?)',
+            )
+            bindings.extend(asset.identifier for asset in assets_in_collection)
+            bindings.extend((from_ts, to_ts))
+
+        if len(or_conditions) == 0:
+            return [], []
+
+        return [' OR '.join(or_conditions)], bindings
+
+
+@dataclass(init=True, repr=True, eq=True, order=False, unsafe_hash=False, frozen=False)
 class DBOptionalChainAddressesFilter(DBFilter):
     """Filter the address column by a selection of optional chain addresses"""
     optional_chain_addresses: (
@@ -966,6 +993,76 @@ class HistoryEventFilterQuery(HistoryBaseEntryFilterQuery):
     @staticmethod
     def get_columns() -> str:
         return HISTORY_BASE_ENTRY_FIELDS
+
+
+class AssetMovementMatchFilterQuery(HistoryEventFilterQuery):
+    """Filter query used to fetch candidate events for multiple asset movements."""
+
+    @classmethod
+    def make(
+            cls,
+            and_op: bool = True,
+            order_by_rules: list[tuple[str, bool]] | None = None,
+            limit: int | None = None,
+            offset: int | None = None,
+            from_ts: Timestamp | None = None,
+            to_ts: Timestamp | None = None,
+            assets: tuple[Asset, ...] | None = None,
+            event_types: list[HistoryEventType] | None = None,
+            event_subtypes: list[HistoryEventSubType] | None = None,
+            type_and_subtype_combinations: Iterable[tuple[HistoryEventType, HistoryEventSubType]] | None = None,  # noqa: E501
+            exclude_subtypes: list[HistoryEventSubType] | None = None,
+            location: Location | None = None,
+            location_labels: list[str] | None = None,
+            excluded_locations: list[Location] | None = None,
+            ignored_ids: list[int] | None = None,
+            null_columns: list[str] | None = None,
+            identifiers: list[int] | None = None,
+            group_identifiers: list[str] | None = None,
+            entry_types: IncludeExcludeFilterData | None = None,
+            exclude_ignored_assets: bool = False,
+            state_markers: list[HistoryMappingState] | None = None,
+            notes_substring: str | None = None,
+            asset_timestamp_ranges: list[tuple[tuple[Asset, ...], TimestampMS, TimestampMS]] | None = None,  # noqa: E501
+            entry_types_to_exclude: list[HistoryBaseEntryType] | None = None,
+    ) -> Self:
+        if asset_timestamp_ranges is None:
+            asset_timestamp_ranges = []
+        if entry_types_to_exclude is None:
+            entry_types_to_exclude = []
+
+        filter_query = super().make(
+            and_op=and_op,
+            order_by_rules=order_by_rules,
+            limit=limit,
+            offset=offset,
+            from_ts=from_ts,
+            to_ts=to_ts,
+            assets=assets,
+            event_types=event_types,
+            event_subtypes=event_subtypes,
+            type_and_subtype_combinations=type_and_subtype_combinations,
+            exclude_subtypes=exclude_subtypes,
+            location=location,
+            location_labels=location_labels,
+            excluded_locations=excluded_locations,
+            ignored_ids=ignored_ids,
+            null_columns=null_columns,
+            identifiers=identifiers,
+            group_identifiers=group_identifiers,
+            entry_types=entry_types if entry_types is not None else IncludeExcludeFilterData(
+                values=entry_types_to_exclude,
+                operator='NOT IN',
+            ),
+            exclude_ignored_assets=exclude_ignored_assets,
+            state_markers=state_markers,
+            notes_substring=notes_substring,
+        )
+        filter_query.filters.append(DBAssetMovementsMatchFilter(
+            and_op=True,
+            asset_timestamp_ranges=asset_timestamp_ranges,
+        ))
+        return filter_query
 
 
 class HistoryEventWithTxRefFilterQuery(HistoryBaseEntryFilterQuery):
