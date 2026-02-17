@@ -93,6 +93,54 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
+
+def _build_matched_movement_exclusion(
+        filter_query: 'HistoryBaseEntryFilterQuery',
+) -> tuple[str, list[Any]]:
+    """Exclude the non-movement side of matched pairs from aggregated pagination.
+
+    Matched pairs have two distinct group_identifiers that would each take a pagination
+    slot, causing duplicates across pages. This hides the non-movement side (or the
+    larger-ID side for movement-to-movement matches) only when the movement side exists
+    in the filtered results. If it doesn't, the matched side remains visible.
+
+    Returns a tuple of the SQL fragment and its bindings.
+    """
+    link_type_value = HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db()
+    exclusion_core = (
+        'group_identifier NOT IN ('
+        'SELECT he_match.group_identifier FROM history_event_links hel '
+        'JOIN history_events he_match ON he_match.identifier = hel.right_event_id '
+        'JOIN history_events he_move ON he_move.identifier = hel.left_event_id '
+        'WHERE hel.link_type = ? '
+        'AND (he_move.entry_type != he_match.entry_type '
+        'OR hel.left_event_id < hel.right_event_id)'
+    )
+    base_filters, base_bindings = filter_query.prepare(
+        with_pagination=False,
+        with_order=False,
+        with_group_by=False,
+        without_ignored_asset_filter=True,
+    )
+    if not base_filters:
+        # Unfiltered: every movement is visible, so always exclude the non-movement side.
+        # No need for the expensive IN check against all group_identifiers.
+        return f'{exclusion_core})', [link_type_value]
+
+    # Filtered: only exclude when the movement side exists in the filtered results.
+    # Wrap in a subquery so that column aliases (e.g. history_events_identifier)
+    # defined in get_columns() are available for the filter predicates.
+    movement_check = (
+        f'SELECT DISTINCT group_identifier '
+        f'FROM (SELECT {filter_query.get_columns()} {filter_query.get_join_query()}) '
+        f'{base_filters}'
+    )
+    return (
+        f'{exclusion_core} AND he_move.group_identifier IN ({movement_check}))',
+        [link_type_value] + base_bindings,
+    )
+
+
 HistoryEventsReturnType: TypeAlias = list[HistoryBaseEntry] | list[tuple[int, HistoryBaseEntry]]
 
 
@@ -800,11 +848,13 @@ class DBHistoryEvents:
         # those rows are filtered out by exclude_ignored_assets.
         base_suffix = f'{HISTORY_BASE_ENTRY_FIELDS}, {chain_fields}, {staking_fields}, {GROUP_HAS_IGNORED_ASSETS_FIELD} {join_clause}'  # noqa: E501
         if aggregate_by_group_ids:
+            exclusion_sql, exclusion_bindings = _build_matched_movement_exclusion(filter_query)
             filters, query_bindings = filter_query.prepare(
                 with_group_by=True,
                 with_pagination=False,
                 with_order=match_exact_events is True and include_order is True,  # skip order when we want the whole group of events since we order in an outer part of the query later  # noqa: E501
                 without_ignored_asset_filter=True,
+                extra_conditions=[(exclusion_sql, exclusion_bindings)],
             )
             prefix = 'SELECT COUNT(*), *'
         else:
@@ -829,12 +879,27 @@ class DBHistoryEvents:
             else:
                 order_by = ''
 
+            # The inner GROUP BY query only needs group_identifier for filtering,
+            # not the full JOINs and window function that base_suffix provides.
+            # Use a lightweight query (like the count query) for the inner part.
+            if entries_limit is None:
+                inner_suffix = f'{filter_query.get_columns()} {filter_query.get_join_query()}'
+                inner_limit: list = []
+            else:
+                inner_suffix = (
+                    f'* FROM (SELECT {filter_query.get_columns()} {filter_query.get_join_query()}) '  # noqa: E501
+                    'WHERE group_identifier IN ('
+                    'SELECT DISTINCT group_identifier FROM history_events '
+                    'ORDER BY timestamp DESC, sequence_index ASC LIMIT ?)'
+                )
+                inner_limit = [entries_limit]
+
             return (
                 (
                     f'{prefix} FROM (SELECT {base_suffix} WHERE group_identifier IN '
-                    f'(SELECT group_identifier FROM (SELECT {suffix}) {filters}) {order_by})'
+                    f'(SELECT group_identifier FROM (SELECT {inner_suffix}) {filters}) {order_by})'
                 ),
-                limit + query_bindings,
+                inner_limit + query_bindings,
             )
 
         return f'{prefix} FROM (SELECT {suffix}) {filters}', limit + query_bindings
@@ -896,11 +961,28 @@ class DBHistoryEvents:
         """Returns a lightweight sql query for counting history events."""
         base_suffix = f'{filter_query.get_columns()} {filter_query.get_join_query()}'
         if aggregate_by_group_ids:
+            exclusion_sql, exclusion_bindings = _build_matched_movement_exclusion(filter_query)
+            # Check if there are actual user filters (location, asset, etc.)
+            base_filters, _ = filter_query.prepare(
+                with_group_by=False,
+                with_pagination=False,
+                with_order=False,
+                without_ignored_asset_filter=True,
+            )
+            if not base_filters and entries_limit is None:
+                # Unfiltered: query group_identifier directly so SQLite can use the
+                # covering index without fetching full rows from the table.
+                return (
+                    f'SELECT group_identifier FROM history_events WHERE ({exclusion_sql}) GROUP BY group_identifier',  # noqa: E501
+                    exclusion_bindings,
+                )
+
             filters, query_bindings = filter_query.prepare(
                 with_group_by=True,
                 with_pagination=False,
                 with_order=False,
                 without_ignored_asset_filter=True,
+                extra_conditions=[(exclusion_sql, exclusion_bindings)],
             )
         else:
             filters, query_bindings = filter_query.prepare(

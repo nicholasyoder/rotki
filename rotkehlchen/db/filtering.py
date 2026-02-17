@@ -322,6 +322,7 @@ class DBFilterQuery(ABC):
             with_order: bool = True,
             with_group_by: bool = False,
             without_ignored_asset_filter: bool = False,
+            extra_conditions: list[tuple[str, list[Any]]] | None = None,
     ) -> tuple[str, list[Any]]:
         """Prepares a filter by converting the filters to a query string
 
@@ -334,6 +335,9 @@ class DBFilterQuery(ABC):
         is no need to rerun the ignored assets filter as it's already part of the inner
         query in order to not count ignored/spam assets in the limit of free events.
         TODO: Quite hacky. Improve this.
+        - extra_conditions: Additional SQL conditions (with bindings) to inject into the
+        WHERE clause. Each entry is a (sql_fragment, bindings) tuple. These are appended
+        after the normal filters but before GROUP BY / ORDER BY / PAGINATION.
         """
         query_parts = []
         bindings: list[Any] = []
@@ -355,6 +359,11 @@ class DBFilterQuery(ABC):
             operator = ' AND ' if fil.and_op else ' OR '
             filterstrings.append(f'({operator.join(filters)})')
             bindings.extend(single_bindings)
+
+        if extra_conditions is not None:
+            for condition_sql, condition_bindings in extra_conditions:
+                filterstrings.append(f'({condition_sql})')
+                bindings.extend(condition_bindings)
 
         if len(filterstrings) != 0:
             operator = ' AND ' if self.and_op else ' OR '
@@ -2513,6 +2522,7 @@ class HistoricalBalancesFilterQuery(DBFilterQuery, FilterWithTimestamp):
             with_order: bool = False,
             with_group_by: bool = False,
             without_ignored_asset_filter: bool = False,
+            extra_conditions: list[tuple[str, list[Any]]] | None = None,
     ) -> tuple[str, list[Any]]:
         """Prepare filters for the event_metrics query.
 
@@ -2524,6 +2534,7 @@ class HistoricalBalancesFilterQuery(DBFilterQuery, FilterWithTimestamp):
             with_order=with_order,
             with_group_by=with_group_by,
             without_ignored_asset_filter=without_ignored_asset_filter,
+            extra_conditions=extra_conditions,
         )
         if filter_str.startswith('WHERE '):
             filter_str = 'AND ' + filter_str[6:]

@@ -137,6 +137,10 @@ def upgrade_v50_to_v51(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
             'ON history_event_links(right_event_id);',
         )
         write_cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_history_event_links_composite '
+            'ON history_event_links(link_type, left_event_id, right_event_id);',
+        )
+        write_cursor.execute(
             'CREATE INDEX IF NOT EXISTS idx_history_event_link_ignores_type '
             'ON history_event_link_ignores(link_type);',
         )

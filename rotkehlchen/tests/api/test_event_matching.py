@@ -1195,6 +1195,116 @@ def test_group_header_event(rotkehlchen_api_server: 'APIServer') -> None:
     )
 
 
+def test_get_history_events_with_matched_asset_movements_pagination_no_duplicates(
+        rotkehlchen_api_server: 'APIServer',
+) -> None:
+    """Regression test for matched movement groups duplicating across adjacent pages.
+
+    The non-movement side of matched groups is excluded at the SQL level via a conditional
+    NOT IN subquery so each matched pair occupies a single pagination slot. Tests that:
+    - paginating one-by-one never produces duplicate groups
+    - entries_found reflects logical groups (matched pairs count as one)
+    - filtering by a location that only the non-movement side matches still shows results
+    - filtering by a location that only the movement side matches works correctly
+    """
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+    dbevents = DBHistoryEvents(rotki.data.db)
+    with rotki.data.db.conn.write_ctx() as write_cursor:
+        dbevents.add_history_events(
+            write_cursor=write_cursor,
+            history=[(movement := AssetMovement(
+                identifier=1,
+                location=Location.KRAKEN,
+                event_subtype=HistoryEventSubType.SPEND,
+                timestamp=TimestampMS(1500000000000),
+                asset=A_ETH,
+                amount=FVal('0.1'),
+                unique_id='1',
+                location_label='Kraken 1',
+            )), (matched_event := EvmEvent(
+                identifier=2,
+                tx_ref=make_evm_tx_hash(),
+                sequence_index=0,
+                timestamp=TimestampMS(1500000000002),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=FVal('0.1'),
+                location_label=make_evm_address(),
+            )), (older_event := HistoryEvent(
+                identifier=3,
+                group_identifier='older_group',
+                sequence_index=0,
+                location=Location.EXTERNAL,
+                event_type=HistoryEventType.SPEND,
+                event_subtype=HistoryEventSubType.NONE,
+                timestamp=TimestampMS(1500000000000 - HOUR_IN_MILLISECONDS),
+                asset=A_BTC,
+                amount=FVal('0.01'),
+            )), HistoryEvent(
+                identifier=4,
+                group_identifier='oldest_group',
+                sequence_index=0,
+                location=Location.EXTERNAL,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                timestamp=TimestampMS(1500000000000 - 2 * HOUR_IN_MILLISECONDS),
+                asset=A_BTC,
+                amount=FVal('0.02'),
+            )],
+        )
+
+    assert_simple_ok_response(requests.put(
+        url=api_url_for(rotkehlchen_api_server, 'matchassetmovementsresource'),
+        json={'asset_movement': movement.identifier, 'matched_events': [matched_event.identifier]},
+    ))
+
+    # 4 events / 4 SQL groups, but 3 logical groups (matched pair = 1).
+    # Paginate one-by-one: entries_found must be 3 on every page with no duplicates.
+    all_group_ids: list[str] = []
+    for offset in range(3):
+        result = assert_proper_response_with_result(
+            response=requests.post(
+                api_url_for(rotkehlchen_api_server, 'historyeventresource'),
+                json={'aggregate_by_group_ids': True, 'limit': 1, 'offset': offset},
+            ),
+            rotkehlchen_api_server=rotkehlchen_api_server,
+        )
+        assert result['entries_found'] == 3, f'wrong entries_found at offset={offset}'
+        assert len(result['entries']) == 1, f'wrong page size at offset={offset}'
+        all_group_ids.append(result['entries'][0]['entry']['group_identifier'])
+
+    assert len(all_group_ids) == len(set(all_group_ids)), 'duplicate groups across pages'
+    assert all_group_ids[0] == movement.group_identifier
+    assert all_group_ids[1] == older_event.group_identifier
+
+    # Filter by location=ethereum. The movement (location=kraken) doesn't pass the filter,
+    # so the EvmEvent side must NOT be excluded. It stays visible as the entry point.
+    result = assert_proper_response_with_result(
+        response=requests.post(
+            api_url_for(rotkehlchen_api_server, 'historyeventresource'),
+            json={'aggregate_by_group_ids': True, 'location': Location.ETHEREUM.serialize()},
+        ),
+        rotkehlchen_api_server=rotkehlchen_api_server,
+    )
+    assert result['entries_found'] == 1
+    assert len(result['entries']) == 1
+    assert result['entries'][0]['entry']['group_identifier'] == movement.group_identifier
+
+    # Filter by location=kraken. The movement matches, so the EvmEvent side IS excluded.
+    result = assert_proper_response_with_result(
+        response=requests.post(
+            api_url_for(rotkehlchen_api_server, 'historyeventresource'),
+            json={'aggregate_by_group_ids': True, 'location': Location.KRAKEN.serialize()},
+        ),
+        rotkehlchen_api_server=rotkehlchen_api_server,
+    )
+    assert result['entries_found'] == 1
+    assert len(result['entries']) == 1
+    assert result['entries'][0]['entry']['group_identifier'] == movement.group_identifier
+
+
 def test_trigger_matching_task(rotkehlchen_api_server: 'APIServer') -> None:
     """Test that triggering the matching task works as expected."""
     for async_query in (True, False):
