@@ -1090,6 +1090,7 @@ class EVMTransactionDecoder(TransactionDecoder['EvmTransaction', EvmDecodingRule
             found_token = token
 
         check_token_impersonates_dangerous_tokens(
+            database=self.database,
             token=found_token,
             native_token=self.evm_inquirer.native_token,
         )

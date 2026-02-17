@@ -120,6 +120,7 @@ def _get_dangerous_token_collection_members(
 
 
 def check_token_impersonates_dangerous_tokens(
+        database: 'DBHandler',
         token: 'EvmToken',
         native_token: 'CryptoAsset',
 ) -> None:
@@ -175,6 +176,12 @@ def check_token_impersonates_dangerous_tokens(
                 write_cursor=write_cursor,
                 token=token,
                 is_spam=True,
+            )
+
+        with database.user_write() as write_cursor:
+            database.add_to_ignored_assets(
+                write_cursor=write_cursor,
+                asset=token,
             )
 
         log.debug(f'Flagged {token} as spam trying to impersonate {impersonated_symbol}')

@@ -20,6 +20,11 @@ def test_receive_poison(ethereum_inquirer: 'EthereumInquirer'):
     events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     assert events[0].notes == 'Receive 2.12507748 ETH from 0x7eb7b44A10B7af2b9e79eADD813c04Ba6D422bBB to 0x223EE48E2A9A786FD061e8273D078a4451FAf76B'  # fake ETH  # noqa: E501
     assert events[1].notes == 'Receive 44794.000506 USDC from 0x8845F09D88EEFfeD9B197c8a92cDd36A9dD72c05 to 0x929a6225A5012316aF9d36386b243911ad6df9DF'  # fake USDC  # noqa: E501
-    # Both fake ETH and fake USDC should be marked as spam
+    # Both fake ETH and fake USDC should be marked as spam and ignored
     assert events[0].asset.resolve_to_evm_token().protocol == SPAM_PROTOCOL
     assert events[1].asset.resolve_to_evm_token().protocol == SPAM_PROTOCOL
+    with ethereum_inquirer.database.conn.read_ctx() as cursor:
+        assert cursor.execute(
+            'SELECT COUNT(*) FROM multisettings WHERE name=? AND value in (?, ?)',
+            ('ignored_asset', events[0].asset.identifier, events[1].asset.identifier),
+        ).fetchone()[0] == 2
