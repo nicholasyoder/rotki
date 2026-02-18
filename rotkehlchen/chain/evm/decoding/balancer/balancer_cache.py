@@ -1,14 +1,14 @@
 import logging
 from typing import TYPE_CHECKING, Literal
 
-from rotkehlchen.assets.asset import UnderlyingToken
+from rotkehlchen.assets.asset import UnderlyingToken, normalize_underlying_token_weights
 from rotkehlchen.assets.utils import TokenEncounterInfo, get_or_create_evm_token
 from rotkehlchen.chain.evm.decoding.balancer.utils import (
     query_balancer_pools,
     query_balancer_pools_count,
 )
 from rotkehlchen.chain.evm.types import string_to_evm_address
-from rotkehlchen.constants.misc import ONE, ZERO
+from rotkehlchen.constants.misc import ONE
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.cache import (
@@ -99,24 +99,8 @@ def query_balancer_data(
                     f'{inquirer.chain_name} has no underlying tokens. Skipping...',
                 )
                 continue
-            underlying_tokens_list, default_weight, weight_sum = [], ONE / (num_tokens := len(underlying_tokens)), ZERO  # noqa: E501
-            for idx, token in enumerate(underlying_tokens):
-                weight = FVal(raw_weight) if (raw_weight := token.get('weight')) is not None else default_weight  # noqa: E501
-                if idx == num_tokens - 1:
-                    weight = ONE - weight_sum  # Last token absorbs any difference to ensure weights sum to exactly 1  # noqa: E501
-                else:
-                    weight_sum += weight
-                underlying_tokens_list.append(UnderlyingToken(
-                    address=get_or_create_evm_token(
-                        userdb=inquirer.database,
-                        chain_id=inquirer.chain_id,
-                        evm_address=deserialize_evm_address(token['address']),
-                        encounter=token_encounter_info,
-                    ).evm_address,
-                    token_kind=TokenKind.ERC20,
-                    weight=weight,
-                ))
 
+            default_weight = ONE / len(underlying_tokens)
             pool_token = get_or_create_evm_token(
                 userdb=inquirer.database,
                 chain_id=inquirer.chain_id,
@@ -129,7 +113,16 @@ def query_balancer_data(
                 ),
                 evm_address=deserialize_evm_address(pool['address']),
                 encounter=token_encounter_info,
-                underlying_tokens=underlying_tokens_list,
+                underlying_tokens=normalize_underlying_token_weights([UnderlyingToken(
+                    address=get_or_create_evm_token(
+                        userdb=inquirer.database,
+                        chain_id=inquirer.chain_id,
+                        evm_address=deserialize_evm_address(token['address']),
+                        encounter=token_encounter_info,
+                    ).evm_address,
+                    token_kind=TokenKind.ERC20,
+                    weight=FVal(raw_weight) if (raw_weight := token.get('weight')) is not None else default_weight,  # noqa: E501
+                ) for token in underlying_tokens]),
             )
             pools.add(pool_token.evm_address)
             if (gauge_address := ((pool.get('staking') or {}).get('gauge') or {}).get('gaugeAddress')) is not None:  # noqa: E501

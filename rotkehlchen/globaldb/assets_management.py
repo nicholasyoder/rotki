@@ -3,7 +3,7 @@ import logging
 import tempfile
 from pathlib import Path
 from time import perf_counter
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from rotkehlchen.assets.asset import Asset, AssetWithNameAndType
@@ -20,6 +20,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
+
+
+def _normalize_asset_data_for_export(asset_data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize serialized asset entries so exported files can always be imported back."""
+    if asset_data.get('name') != '':
+        return asset_data
+
+    # Old/broken user entries may contain an empty name, but the import schema rejects it.
+    # Fall back to symbol when present, else to the identifier.
+    if isinstance(symbol := asset_data.get('symbol'), str) and symbol != '':
+        asset_data['name'] = symbol
+    else:
+        asset_data['name'] = asset_data['identifier']
+
+    return asset_data
 
 
 def import_assets_from_file(
@@ -105,7 +120,7 @@ def export_assets_from_file(
     serialized = []
     found_assets: set[str] = set()
     for asset in globaldb.retrieve_assets_optimized(list(assets)):
-        serialized.append(asset.to_dict())
+        serialized.append(_normalize_asset_data_for_export(asset.to_dict()))
         found_assets.add(asset.identifier)
     log.debug(f'Optimized serialization wrote {len(serialized)} assets in {perf_counter() - serialization_start:.3f}s')  # noqa: E501
 
@@ -113,7 +128,7 @@ def export_assets_from_file(
     missing_assets = assets - found_assets
     for missing_asset in missing_assets:
         try:
-            serialized.append(Asset(missing_asset).resolve().to_dict())
+            serialized.append(_normalize_asset_data_for_export(Asset(missing_asset).resolve().to_dict()))
         except UnknownAsset as e:
             log.error(e)
     if len(missing_assets) != 0:

@@ -18,6 +18,7 @@ from rotkehlchen.assets.asset import (
     Nft,
     SolanaToken,
     UnderlyingToken,
+    _serialize_underlying_tokens,
 )
 from rotkehlchen.assets.ignored_assets_handling import IgnoredAssetsHandling
 from rotkehlchen.assets.resolver import AssetResolver
@@ -395,12 +396,14 @@ class GlobalDBHandler:
                 f'WHERE parent_token_entry IN ({",".join(["?"] * len(assets_info))})'
             )
             # populate all underlying tokens
+            underlying_tokens_map: dict[str, list[UnderlyingToken]] = {}
             for entry in cursor.execute(underlying_tokens_query, list(assets_info.keys())):
-                if assets_info[entry[0]]['underlying_tokens'] is None:
-                    assets_info[entry[0]]['underlying_tokens'] = []
-                assets_info[entry[0]]['underlying_tokens'].append(
-                    UnderlyingToken.deserialize_from_db((entry[1], entry[2], entry[3])).serialize(),  # noqa: E501
+                underlying_tokens_map.setdefault(entry[0], []).append(
+                    UnderlyingToken.deserialize_from_db((entry[1], entry[2], entry[3])),
                 )
+            for parent_token_entry, underlying_tokens in underlying_tokens_map.items():
+                serialized_underlying_tokens = _serialize_underlying_tokens(underlying_tokens)
+                assets_info[parent_token_entry]['underlying_tokens'] = serialized_underlying_tokens
 
             # get `entries_found`. In the case of handling the ignored assets we need to manually
             # count the assets found since the information needed is both in the

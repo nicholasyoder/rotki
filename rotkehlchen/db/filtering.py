@@ -1067,10 +1067,11 @@ class AssetMovementMatchFilterQuery(HistoryEventFilterQuery):
             state_markers=state_markers,
             notes_substring=notes_substring,
         )
-        filter_query.filters.append(DBAssetMovementsMatchFilter(
-            and_op=True,
-            asset_timestamp_ranges=asset_timestamp_ranges,
-        ))
+        if len(asset_timestamp_ranges) != 0:
+            filter_query.filters.append(DBAssetMovementsMatchFilter(
+                and_op=True,
+                asset_timestamp_ranges=asset_timestamp_ranges,
+            ))
         return filter_query
 
 

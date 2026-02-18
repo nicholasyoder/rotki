@@ -192,6 +192,7 @@ def test_adding_user_tokens(
         ],
     )
     serialized_token = bad_token.to_dict()
+    serialized_token['underlying_tokens'][1]['weight'] = '70.55'
     del serialized_token['identifier']
     del serialized_token['forked']
     response = requests.put(
@@ -223,6 +224,7 @@ def test_adding_user_tokens(
         ],
     )
     serialized_token = bad_token.to_dict()
+    serialized_token['underlying_tokens'][1]['weight'] = '20.55'
     del serialized_token['identifier']
     del serialized_token['forked']
     response = requests.put(
