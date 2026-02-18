@@ -133,12 +133,9 @@ class CustomizedEventCandidate:
     location_label: str | None
     asset: str
     amount: FVal
-    notes: str | None
     event_type: str
     event_subtype: str
-    extra_data: str | None
     entry_type: int
-    counterparty: str | None
     address: str | None
     customized: bool
 
@@ -149,11 +146,7 @@ class CustomizedEventCandidate:
             self.location_label,
             self.asset,
             self.amount,
-            self.notes,
-            self.event_type,
-            self.event_subtype,
-            self.extra_data,
-            self.counterparty,
+            self.direction(),
             self.address,
             self.entry_type,
         )
@@ -272,12 +265,9 @@ def _load_customized_event_candidates(
                         location_label=entry[5],
                         asset=entry[6],
                         amount=FVal(entry[7]),
-                        notes=entry[8],
                         event_type=entry[9],
                         event_subtype=entry[10],
-                        extra_data=entry[11],
                         entry_type=entry[12],
-                        counterparty=entry[13],
                         address=entry[14],
                         customized=bool(entry[15]),
                     )
@@ -296,12 +286,9 @@ def _load_customized_event_candidates(
                     location_label=entry[5],
                     asset=entry[6],
                     amount=FVal(entry[7]),
-                    notes=entry[8],
                     event_type=entry[9],
                     event_subtype=entry[10],
-                    extra_data=entry[11],
                     entry_type=entry[12],
-                    counterparty=entry[13],
                     address=entry[14],
                     customized=bool(entry[15]),
                 )
