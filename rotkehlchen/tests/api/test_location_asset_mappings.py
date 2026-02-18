@@ -13,7 +13,7 @@ from rotkehlchen.types import Location
 if TYPE_CHECKING:
     from rotkehlchen.api.server import APIServer
 
-NUM_PACKAGED_ASSETS_MAPPINGS: Final = 3500
+NUM_PACKAGED_ASSETS_MAPPINGS: Final = 3690
 
 
 def _get_all_location_mappings(rotkehlchen_api_server: 'APIServer') -> Any:
@@ -42,7 +42,7 @@ def test_location_asset_mappings_query(rotkehlchen_api_server: 'APIServer') -> N
         json={'location': None},
     )
     result = assert_proper_sync_response_with_result(response)
-    assert len(result['entries']) == result['entries_found'] == 296
+    assert len(result['entries']) == result['entries_found'] == 357
 
     # query all kraken mappings
     response = requests.post(
@@ -53,7 +53,7 @@ def test_location_asset_mappings_query(rotkehlchen_api_server: 'APIServer') -> N
         json={'location': 'kraken'},
     )
     result = assert_proper_sync_response_with_result(response)
-    assert len(result['entries']) == result['entries_found'] == 319
+    assert len(result['entries']) == result['entries_found'] == 337
 
     # query by symbol all the kraken mappings
     response = requests.post(
