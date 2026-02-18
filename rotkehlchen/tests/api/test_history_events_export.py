@@ -12,9 +12,15 @@ import requests
 from rotkehlchen.api.server import APIServer
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.constants.misc import ONE
+from rotkehlchen.db.constants import (
+    HISTORY_MAPPING_KEY_STATE,
+    HistoryEventLinkType,
+    HistoryMappingState,
+)
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.db.settings import DEFAULT_DATE_DISPLAY_FORMAT
 from rotkehlchen.fval import FVal
+from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.base import HistoryEvent
 from rotkehlchen.history.events.structures.types import (
     HistoryEventSubType,
@@ -334,3 +340,73 @@ def test_history_export_csv_free_limit(
             expected_count=3 if start_with_valid_premium else 1,
             includes_extra_headers=False,
         )
+
+
+@pytest.mark.freeze_time('2025-04-30')
+def test_history_export_csv_includes_matched_asset_movement_events(
+        rotkehlchen_api_server_with_exchanges: APIServer,
+        tmpdir_factory: pytest.TempdirFactory,
+) -> None:
+    """Export should include both sides of a matched asset movement pair."""
+    database = rotkehlchen_api_server_with_exchanges.rest_api.rotkehlchen.data.db
+    history_events_db = DBHistoryEvents(database=database)
+    csv_dir = Path(tmpdir_factory.mktemp('test_csv_dir'))
+
+    with database.user_write() as write_cursor:
+        history_events_db.add_history_events(
+            write_cursor=write_cursor,
+            history=[
+                AssetMovement(
+                    identifier=(movement_id := 1),
+                    group_identifier='GROUP_MOVEMENT',
+                    timestamp=TimestampMS(1700000000000),
+                    location=Location.KRAKEN,
+                    event_subtype=HistoryEventSubType.SPEND,
+                    asset=A_ETH,
+                    amount=ONE,
+                ),
+                HistoryEvent(
+                    identifier=(onchain_id := 2),
+                    group_identifier='GROUP_MATCHED',
+                    sequence_index=0,
+                    timestamp=TimestampMS(1700000000000),
+                    location=Location.ETHEREUM,
+                    event_type=HistoryEventType.RECEIVE,
+                    event_subtype=HistoryEventSubType.NONE,
+                    asset=A_ETH,
+                    amount=ONE,
+                ),
+            ],
+        )
+        write_cursor.execute(
+            'INSERT OR IGNORE INTO history_events_mappings(parent_identifier, name, value) '
+            'VALUES(?, ?, ?)',
+            (
+                onchain_id,
+                HISTORY_MAPPING_KEY_STATE,
+                HistoryMappingState.MATCHED.serialize_for_db(),
+            ),
+        )
+        write_cursor.execute(
+            'INSERT INTO history_event_links(left_event_id, right_event_id, link_type) '
+            'VALUES(?, ?, ?)',
+            (movement_id, onchain_id, HistoryEventLinkType.ASSET_MOVEMENT_MATCH.serialize_for_db()),  # noqa: E501
+        )
+
+    response = requests.post(
+        api_url_for(rotkehlchen_api_server_with_exchanges, 'exporthistoryeventresource'),
+        json={
+            'directory_path': str(csv_dir),
+            'state_markers': [HistoryMappingState.MATCHED.serialize()],
+        },
+    )
+    assert_proper_response(response)
+
+    with (csv_dir / 'historyevents_until_20250430.csv').open(
+            newline='',
+            encoding='utf-8',
+    ) as csvfile:
+        assert {row['identifier'] for row in csv.DictReader(csvfile)} == {
+            str(movement_id),
+            str(onchain_id),
+        }
