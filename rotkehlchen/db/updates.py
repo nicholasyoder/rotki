@@ -77,7 +77,7 @@ class RotkiDataUpdater:
             UpdateType.COUNTERPARTY_ASSET_MAPPINGS: self.update_counterparty_asset_mappings,
         }  # If we ever change this also change tests/unit/test_data_updates::reset_update_type_mappings  # noqa: E501
         self.version = get_current_version().our_version
-        if __debug__:  # Use next higher version so updates intended for the next release are applied during release testing.  # noqa: E501
+        if __debug__ or self.version.is_devrelease:  # Use next higher version so updates intended for the next release are applied during release testing.  # noqa: E501
             if self.branch == 'bugfixes':
                 self.version = Version(f'{self.version.major}.{self.version.minor}.{self.version.micro + 1}')  # noqa: E501
             else:  # develop & master
