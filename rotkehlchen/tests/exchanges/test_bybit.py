@@ -348,3 +348,31 @@ def test_query_trades_range(bybit_exchange: Bybit) -> None:
     assert range_calls[0] == (oldest_plus_delta, oldest_plus_delta + DAY_IN_SECONDS * 7)
     assert range_calls[1][1] - range_calls[1][0] == DAY_IN_SECONDS * 7
     assert range_calls[-1][1] == end_ts
+
+
+def test_paginated_query_stops_without_cursor_on_full_page(bybit_exchange: Bybit) -> None:
+    """When nextPageCursor is empty we should stop even if page has `limit` entries."""
+    call_count = 0
+
+    def mock_fn(path: str, options: dict[str, Any]) -> dict[str, Any]:
+        nonlocal call_count
+        call_count += 1
+        if call_count > 1:
+            raise AssertionError('pagination should stop after first full page without cursor')
+
+        assert path == 'order/history'
+        assert options['limit'] == 50
+        return {
+            'nextPageCursor': '',
+            'category': 'spot',
+            'list': [{'orderId': str(i)} for i in range(50)],
+        }
+
+    with patch.object(bybit_exchange, '_api_query', side_effect=mock_fn):
+        result = bybit_exchange._paginated_api_query(
+            endpoint='order/history',
+            options={'limit': 50},
+        )
+
+    assert len(result) == 50
+    assert call_count == 1
