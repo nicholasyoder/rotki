@@ -73,6 +73,7 @@ from rotkehlchen.constants.misc import (
     HTTP_STATUS_INTERNAL_DB_ERROR,
 )
 from rotkehlchen.data_import.manager import DataImportSource
+from rotkehlchen.db.cache import IGNORED_CUSTOMIZED_EVENT_DUPLICATE_PREFIX
 from rotkehlchen.db.calendar import CalendarEntry, CalendarFilterQuery, ReminderEntry
 from rotkehlchen.db.constants import (
     HISTORY_MAPPING_KEY_STATE,
@@ -3634,6 +3635,17 @@ class RestAPI:
 
         return api_response(_wrap_in_ok_result(result=movement_group_ids))
 
+    def _get_ignored_ced_group_ids(self) -> list[str]:
+        """Return group identifiers that have been marked as ignored false positives."""
+        with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
+            return [
+                row[0]
+                for row in cursor.execute(
+                    'SELECT value FROM key_value_cache WHERE name LIKE ?',
+                    (f'{IGNORED_CUSTOMIZED_EVENT_DUPLICATE_PREFIX}%',),
+                )
+            ]
+
     @async_api_call()
     def get_customized_event_duplicates(self) -> dict[str, Any]:
         """Get customized event duplicate candidates grouped by fixability."""
@@ -3643,6 +3655,7 @@ class RestAPI:
         return _wrap_in_ok_result(result={
             'auto_fix_group_ids': auto_fix_group_ids,
             'manual_review_group_ids': manual_review_group_ids,
+            'ignored_group_ids': self._get_ignored_ced_group_ids(),
         })
 
     @async_api_call()
@@ -3680,6 +3693,39 @@ class RestAPI:
             'auto_fix_group_ids': auto_fix_group_ids,
             'manual_review_group_ids': manual_review_group_ids,
         })
+
+    @async_api_call()
+    def ignore_customized_event_duplicates(
+            self,
+            group_identifiers: list[str],
+    ) -> dict[str, Any]:
+        """Mark the given group identifiers as ignored false positives."""
+        with self.rotkehlchen.data.db.conn.write_ctx() as write_cursor:
+            write_cursor.executemany(
+                'INSERT OR IGNORE INTO key_value_cache(name, value) VALUES(?, ?)',
+                [
+                    (f'{IGNORED_CUSTOMIZED_EVENT_DUPLICATE_PREFIX}{gid}', gid)
+                    for gid in group_identifiers
+                ],
+            )
+        return _wrap_in_ok_result(result=self._get_ignored_ced_group_ids())
+
+    @async_api_call()
+    def unignore_customized_event_duplicates(
+            self,
+            group_identifiers: list[str],
+    ) -> dict[str, Any]:
+        """Remove the ignored false positive markers for the given group identifiers."""
+        with self.rotkehlchen.data.db.conn.write_ctx() as write_cursor:
+            placeholders = ','.join('?' for _ in group_identifiers)
+            write_cursor.execute(
+                f'DELETE FROM key_value_cache WHERE name IN ({placeholders})',
+                [
+                    f'{IGNORED_CUSTOMIZED_EVENT_DUPLICATE_PREFIX}{gid}'
+                    for gid in group_identifiers
+                ],
+            )
+        return _wrap_in_ok_result(result=self._get_ignored_ced_group_ids())
 
     def unlink_matched_asset_movements(
             self,

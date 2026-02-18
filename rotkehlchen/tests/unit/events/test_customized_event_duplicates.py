@@ -6,6 +6,7 @@ from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
 from rotkehlchen.constants.assets import A_1INCH, A_ETH
 from rotkehlchen.constants.misc import ONE
+from rotkehlchen.db.cache import IGNORED_CUSTOMIZED_EVENT_DUPLICATE_PREFIX
 from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HistoryMappingState
 from rotkehlchen.db.drivers.gevent import DBCursor
 from rotkehlchen.db.history_events import DBHistoryEvents
@@ -208,3 +209,45 @@ def test_customized_event_deposit(database: 'DBHandler') -> None:
     )
     assert event.group_identifier not in auto_fix_group_ids
     assert event.group_identifier not in manual_review_group_ids
+
+
+def test_ignored_groups_excluded_from_detection(database: 'DBHandler') -> None:
+    """Verify that groups marked as ignored in key_value_cache are excluded by the SQL query."""
+    with database.conn.write_ctx() as write_cursor:
+        group_id_1, _ = _insert_duplicate_group(
+            events_db=(events_db := DBHistoryEvents(database)),
+            write_cursor=write_cursor,
+            timestamp=(timestamp := TimestampMS(1710000000000)),
+        )
+        group_id_2, _ = _insert_duplicate_group(
+            events_db=events_db,
+            write_cursor=write_cursor,
+            timestamp=timestamp,
+        )
+
+    # both groups detected before ignoring
+    auto_fix, _, _ = find_customized_event_duplicate_groups(database=database)
+    assert group_id_1 in auto_fix
+    assert group_id_2 in auto_fix
+
+    # ignore group 1
+    with database.conn.write_ctx() as write_cursor:
+        write_cursor.execute(
+            'INSERT INTO key_value_cache(name, value) VALUES(?, ?)',
+            (f'{IGNORED_CUSTOMIZED_EVENT_DUPLICATE_PREFIX}{group_id_1}', group_id_1),
+        )
+
+    auto_fix, _, _ = find_customized_event_duplicate_groups(database=database)
+    assert group_id_1 not in auto_fix
+    assert group_id_2 in auto_fix
+
+    # un-ignore group 1
+    with database.conn.write_ctx() as write_cursor:
+        write_cursor.execute(
+            'DELETE FROM key_value_cache WHERE name=?',
+            (f'{IGNORED_CUSTOMIZED_EVENT_DUPLICATE_PREFIX}{group_id_1}',),
+        )
+
+    auto_fix, _, _ = find_customized_event_duplicate_groups(database=database)
+    assert group_id_1 in auto_fix
+    assert group_id_2 in auto_fix

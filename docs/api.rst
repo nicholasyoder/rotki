@@ -6589,6 +6589,9 @@ Customized history event duplicates
               ],
               "manual_review_group_ids": [
                   "0xa8e4c2f6b79a1b9d6288a763dc6243cbce1e2c35c8b65ec79a9d35a1f4ec6a20"
+              ],
+              "ignored_group_ids": [
+                  "0xc3d7e1a5b2f84096dab8e3c7f1a294d5e6b83c71f9a0d2e4b5c6d7e8f9a0b1c2"
               ]
           },
           "message": ""
@@ -6597,6 +6600,7 @@ Customized history event duplicates
    :reqquery bool[optional] async_query: Whether to execute as an async task.
    :resjson list result.auto_fix_group_ids: Group identifiers where a customized EVM/Solana event has a non-customized duplicate that only differs by sequence index.
    :resjson list result.manual_review_group_ids: Group identifiers where customized and non-customized EVM/Solana events share asset and direction but are not exact matches.
+   :resjson list result.ignored_group_ids: Group identifiers that have been marked as ignored false positives.
    :resjson str message: Error message if any errors occurred.
    :statuscode 200: Group identifiers returned successfully
    :statuscode 401: No user is currently logged in
@@ -6621,6 +6625,9 @@ Customized history event duplicates
           ]
       }
 
+   :reqquery bool[optional] async_query: Whether to execute as an async task.
+   :reqjson list[optional] group_identifiers: Optional list of group identifiers to auto-fix. If omitted, all auto-fixable groups are processed.
+
    **Example Response**:
 
    .. sourcecode:: http
@@ -6639,8 +6646,6 @@ Customized history event duplicates
           "message": ""
       }
 
-   :reqquery bool[optional] async_query: Whether to execute as an async task.
-   :reqjson list[optional] group_identifiers: Optional list of group identifiers to auto-fix. If omitted, all auto-fixable groups are processed.
    :resjson list result.removed_event_identifiers: Event identifiers removed by the auto-fix operation.
    :resjson list result.auto_fix_group_ids: Remaining auto-fixable group identifiers after removal.
    :resjson list result.manual_review_group_ids: Remaining manual review group identifiers after removal.
@@ -6648,6 +6653,92 @@ Customized history event duplicates
    :statuscode 200: Auto-fix operation completed successfully
    :statuscode 401: No user is currently logged in
    :statuscode 409: Auto-fix failed due to a deletion constraint
+   :statuscode 500: Internal rotki error
+
+.. http:put:: /api/(version)/history/events/duplicates/customized
+
+   Mark the given group identifiers as ignored false positives. Returns the current list of all ignored group identifiers.
+
+   Supports async execution via the `async_query` query parameter.
+
+   **Example Request**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      PUT /api/1/history/events/duplicates/customized HTTP/1.1
+      Host: localhost:5042
+      Content-Type: application/json;charset=UTF-8
+
+      {
+          "group_identifiers": [
+              "0x7f9b1d9b3d6c80b6f699a25f3e91c408155cbff965d0f3a0df4d3a4f8f4b73c7"
+          ]
+      }
+
+   :reqquery bool[optional] async_query: Whether to execute as an async task.
+   :reqjson list group_identifiers: List of group identifiers to mark as ignored false positives. Must contain at least one entry.
+
+   **Example Response**:
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+          "result": [
+              "0x7f9b1d9b3d6c80b6f699a25f3e91c408155cbff965d0f3a0df4d3a4f8f4b73c7"
+          ],
+          "message": ""
+      }
+
+   :resjson list result: All currently ignored group identifiers.
+   :resjson str message: Error message if any errors occurred.
+   :statuscode 200: Groups ignored successfully
+   :statuscode 400: Provided group identifiers are already ignored
+   :statuscode 401: No user is currently logged in
+   :statuscode 500: Internal rotki error
+
+.. http:delete:: /api/(version)/history/events/duplicates/customized
+
+   Remove the ignored false positive markers for the given group identifiers. Returns the current list of all ignored group identifiers.
+
+   Supports async execution via the `async_query` query parameter.
+
+   **Example Request**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      DELETE /api/1/history/events/duplicates/customized HTTP/1.1
+      Host: localhost:5042
+      Content-Type: application/json;charset=UTF-8
+
+      {
+          "group_identifiers": [
+              "0x7f9b1d9b3d6c80b6f699a25f3e91c408155cbff965d0f3a0df4d3a4f8f4b73c7"
+          ]
+      }
+
+   :reqquery bool[optional] async_query: Whether to execute as an async task.
+   :reqjson list group_identifiers: List of group identifiers to un-ignore. Must contain at least one entry.
+
+   **Example Response**:
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+          "result": [],
+          "message": ""
+      }
+
+   :resjson list result: All currently ignored group identifiers after removal.
+   :resjson str message: Error message if any errors occurred.
+   :statuscode 200: Groups un-ignored successfully
+   :statuscode 400: Provided group identifiers are not currently ignored
+   :statuscode 401: No user is currently logged in
    :statuscode 500: Internal rotki error
 
 Querying messages to show to the user

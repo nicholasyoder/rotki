@@ -55,6 +55,7 @@ from rotkehlchen.constants.assets import A_BCH, A_BTC, A_ETH, A_ETH2
 from rotkehlchen.constants.misc import ONE, VALID_LOGLEVELS, ZERO
 from rotkehlchen.constants.resolver import EVM_CHAIN_DIRECTIVE
 from rotkehlchen.data_import.manager import DataImportSource
+from rotkehlchen.db.cache import IGNORED_CUSTOMIZED_EVENT_DUPLICATE_PREFIX
 from rotkehlchen.db.calendar import CalendarEntry, CalendarFilterQuery, ReminderEntry
 from rotkehlchen.db.constants import (
     LINKABLE_ACCOUNTING_PROPERTIES,
@@ -4837,3 +4838,44 @@ class SchedulerSchema(Schema):
 
 class CustomizedEventDuplicatesFixSchema(AsyncQueryArgumentSchema):
     group_identifiers = fields.List(NonEmptyStringField(), load_default=None)
+
+
+class CustomizedEventDuplicatesIgnoreSchema(AsyncQueryArgumentSchema):
+    group_identifiers = fields.List(
+        cls_or_instance=NonEmptyStringField(),
+        required=True,
+        validate=validate.Length(min=1),
+    )
+
+    def __init__(self, db: 'DBHandler', action: Literal['ignore', 'unignore']) -> None:
+        super().__init__()
+        self.db = db
+        self.action = action
+
+    @validates_schema
+    def validate_schema(
+            self,
+            data: dict[str, Any],
+            **_kwargs: Any,
+    ) -> None:
+        prefix_len = len(IGNORED_CUSTOMIZED_EVENT_DUPLICATE_PREFIX)
+        with self.db.conn.read_ctx() as cursor:
+            ignored = {
+                row[0][prefix_len:]
+                for row in cursor.execute(
+                    'SELECT name FROM key_value_cache WHERE name LIKE ?',
+                    (f'{IGNORED_CUSTOMIZED_EVENT_DUPLICATE_PREFIX}%',),
+                )
+            }
+
+        given = set(data['group_identifiers'])
+        if self.action == 'ignore' and (already := given & ignored):
+            raise ValidationError(
+                message=f'Group identifiers {", ".join(sorted(already))} are already ignored',
+                field_name='group_identifiers',
+            )
+        if self.action == 'unignore' and (not_ignored := given - ignored):
+            raise ValidationError(
+                message=f'Group identifiers {", ".join(sorted(not_ignored))} are not ignored',
+                field_name='group_identifiers',
+            )
