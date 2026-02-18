@@ -64,7 +64,9 @@ if TYPE_CHECKING:
     from rotkehlchen.assets.asset import Asset
     from rotkehlchen.chain.ethereum.modules.eth2.eth2 import Eth2
     from rotkehlchen.db.constants import HistoryMappingState
+    from rotkehlchen.db.drivers.gevent import DBCursor
     from rotkehlchen.db.filtering import HistoryBaseEntryFilterQuery
+    from rotkehlchen.db.history_events import HistoryEventsWithCountResult
     from rotkehlchen.fval import FVal
     from rotkehlchen.history.events.structures.base import HistoryBaseEntry
     from rotkehlchen.rotkehlchen import Rotkehlchen
@@ -340,16 +342,6 @@ class HistoryService:
         )
 
         with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
-            events_result_info = dbevents.get_history_events_and_limit_info(
-                cursor=cursor,
-                filter_query=filter_query,
-                entries_limit=entries_limit,
-                aggregate_by_group_ids=aggregate_by_group_ids,
-                match_exact_events=True,
-            )
-            events_result = events_result_info.events
-            entries_found = events_result_info.entries_found
-            entries_with_limit = events_result_info.entries_with_limit
             entries_total = self.rotkehlchen.data.db.get_entries_count(
                 cursor=cursor,
                 entries_table='history_events',
@@ -361,14 +353,14 @@ class HistoryService:
             )
             hidden_event_ids = dbevents.get_hidden_event_ids(cursor)
             ignored_ids = self.rotkehlchen.data.db.get_ignored_action_ids(cursor=cursor)
-            processed_events_result, joined_group_ids, entries_found, entries_with_limit, entries_total, ignored_group_identifiers = dbevents.process_matched_asset_movements(  # noqa: E501
+            _, processed_events_result, joined_group_ids, entries_found, entries_with_limit, entries_total, ignored_group_identifiers = self._query_history_events_with_matched_processing(  # noqa: E501
                 cursor=cursor,
+                dbevents=dbevents,
+                filter_query=filter_query,
+                entries_limit=entries_limit,
                 aggregate_by_group_ids=aggregate_by_group_ids,
-                events_result=events_result,
-                entries_found=entries_found,
-                entries_with_limit=entries_with_limit,
+                match_exact_events=True,
                 entries_total=entries_total,
-                ignored_group_identifiers=set(events_result_info.ignored_group_identifiers),
             )
             group_has_ignored_assets = {
                 joined_group_ids.get(group_identifier, group_identifier)
@@ -465,16 +457,18 @@ class HistoryService:
             limit_type=UserLimitType.HISTORY_EVENTS,
         )
         with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
-            events_result = dbevents.get_history_events_and_limit_info(
+            processed_events_result: list[HistoryBaseEntry]
+            history_query_result = self._query_history_events_with_matched_processing(
                 cursor=cursor,
+                dbevents=dbevents,
                 filter_query=filter_query,
-                match_exact_events=match_exact_events,
                 entries_limit=entries_limit,
                 aggregate_by_group_ids=False,
+                match_exact_events=match_exact_events,
+                entries_total=0,
             )
-            history_events: list[HistoryBaseEntry] = events_result.events  # type: ignore[assignment]
-
-        if len(history_events) == 0:
+            processed_events_result = history_query_result[1]  # type: ignore[assignment]
+        if len(processed_events_result) == 0:
             return {
                 'result': None,
                 'message': 'No history processed in order to perform an export',
@@ -488,7 +482,7 @@ class HistoryService:
         serialized_history_events = []
         headers: dict[str, None] = {}
         query_data, unique_data = [], set()
-        for event in history_events:
+        for event in processed_events_result:
             if (entry := (event.asset, currency, ts_ms_to_sec(event.timestamp))) not in unique_data:  # noqa: E501
                 unique_data.add(entry)
                 query_data.append(entry)
@@ -512,7 +506,7 @@ class HistoryService:
         ).items():
             cached_db_prices[asset].update(timestamped_prices)
 
-        for event in history_events:
+        for event in processed_events_result:
             serialized_event = event.serialize_for_csv(
                 fiat_value=event.amount * cached_db_prices[event.asset][ts_ms_to_sec(event.timestamp)],  # noqa: E501
                 settings=settings,
@@ -654,6 +648,58 @@ class HistoryService:
             }
 
         return {'result': result, 'message': message, 'status_code': HTTPStatus.OK}
+
+    @staticmethod
+    def _query_history_events_with_matched_processing(
+            cursor: DBCursor,
+            dbevents: DBHistoryEvents,
+            filter_query: HistoryBaseEntryFilterQuery,
+            entries_limit: int | None,
+            aggregate_by_group_ids: bool,
+            match_exact_events: bool,
+            entries_total: int,
+    ) -> tuple[
+        HistoryEventsWithCountResult,
+        list[tuple[int, HistoryBaseEntry]] | list[HistoryBaseEntry],
+        dict[str, str],
+        int,
+        int,
+        int,
+        set[str],
+    ]:
+        """Fetch events and apply matched-asset-movement post-processing."""
+        events_result_info = dbevents.get_history_events_and_limit_info(
+            cursor=cursor,
+            filter_query=filter_query,
+            entries_limit=entries_limit,
+            aggregate_by_group_ids=aggregate_by_group_ids,
+            match_exact_events=match_exact_events,
+        )
+        (
+            processed_events_result,
+            joined_group_ids,
+            entries_found,
+            entries_with_limit,
+            entries_total,
+            ignored_group_identifiers,
+        ) = dbevents.process_matched_asset_movements(
+            cursor=cursor,
+            aggregate_by_group_ids=aggregate_by_group_ids,
+            events_result=events_result_info.events,
+            entries_found=events_result_info.entries_found,
+            entries_with_limit=events_result_info.entries_with_limit,
+            entries_total=entries_total,
+            ignored_group_identifiers=set(events_result_info.ignored_group_identifiers),
+        )
+        return (
+            events_result_info,
+            processed_events_result,
+            joined_group_ids,
+            entries_found,
+            entries_with_limit,
+            entries_total,
+            ignored_group_identifiers,
+        )
 
     @staticmethod
     def _serialize_and_group_history_events(
