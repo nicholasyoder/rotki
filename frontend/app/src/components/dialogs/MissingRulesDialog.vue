@@ -3,7 +3,7 @@ import type { HistoryEventEditData } from '@/modules/history/management/forms/fo
 import type { LocationAndTxRef } from '@/types/history/events';
 import type { AccountingRuleIdentifier } from '@/types/settings/accounting';
 import { isEventDecodable } from '@/modules/history/management/forms/form-guards';
-import { toLocationAndTxRef } from '@/utils/history';
+import { toLocationAndTxRef } from '@/utils/history/events';
 
 const modelValue = defineModel<HistoryEventEditData | undefined>({ required: true });
 
