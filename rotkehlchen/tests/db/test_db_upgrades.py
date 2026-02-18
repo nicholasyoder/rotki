@@ -55,6 +55,7 @@ from rotkehlchen.tests.utils.constants import A_LTC
 from rotkehlchen.tests.utils.database import (
     _use_prepared_db,
     column_exists,
+    index_exists,
     mock_db_schema_sanity_check,
     mock_dbhandler_sync_globaldb_assets,
     mock_dbhandler_update_owned_assets,
@@ -3898,5 +3899,19 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
             (11, 'TEST_EVENT_4', 1, 'USD', '200.00', 'trade', 'receive'),
             kraken_deposit,
         ])
+        # Check that the existing indexes on the history events table are still present after
+        # changing the table schema during the upgrade.
+        for index_name in (
+            'idx_history_events_entry_type',
+            'idx_history_events_timestamp',
+            'idx_history_events_location',
+            'idx_history_events_location_label',
+            'idx_history_events_asset',
+            'idx_history_events_type',
+            'idx_history_events_subtype',
+            'idx_history_events_ignored',
+            'idx_history_events_entry_type',
+        ):
+            assert index_exists(cursor=cursor, name=index_name)
 
     db.logout()
