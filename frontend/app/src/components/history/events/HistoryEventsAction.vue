@@ -22,7 +22,6 @@ import {
   isGroupEditableHistoryEvent,
 } from '@/modules/history/management/forms/form-guards';
 import { useConfirmStore } from '@/store/confirm';
-import { toLocationAndTxRef } from '@/utils/history';
 import {
   isEthBlockEvent,
   isEthBlockEventRef,
@@ -31,6 +30,7 @@ import {
   isOnlineHistoryEvent,
   isSolanaEvent,
   isSolanaSwapEvent,
+  toLocationAndTxRef,
 } from '@/utils/history/events';
 
 const props = defineProps<{
