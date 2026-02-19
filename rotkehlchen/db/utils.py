@@ -401,6 +401,10 @@ def update_table_schema(
 
     Returns True if the table existed and insertions were made and False otherwise
     """  # noqa: E501
+    indexes = write_cursor.execute(
+        "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL",
+        (table_name,),
+    ).fetchall()  # fetch existing indexes. `sql IS NOT NULL` excludes auto-created PK indexes
     new_table_name = f'{table_name}_new' if table_exists(write_cursor, table_name) else table_name
     select_insert_columns = '*' if insert_columns is None else insert_columns
     write_cursor.execute(f'CREATE TABLE IF NOT EXISTS {new_table_name} ({schema});')
@@ -409,6 +413,8 @@ def update_table_schema(
         write_cursor.execute(f'INSERT OR IGNORE INTO {new_table_name}{insert_order} SELECT {select_insert_columns} FROM {table_name}{insert_where}')  # noqa: E501
         write_cursor.execute(f'DROP TABLE {table_name}')
         write_cursor.execute(f'ALTER TABLE {new_table_name} RENAME TO {table_name}')
+        for index_sql in indexes:
+            write_cursor.execute(index_sql[0].replace('INSERT', 'INSERT OR IGNORE'))
         return True
 
     return False
