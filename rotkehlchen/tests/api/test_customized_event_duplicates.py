@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 import requests
 
 from rotkehlchen.chain.decoding.constants import CPT_GAS
+from rotkehlchen.chain.evm.decoding.merkl.constants import CPT_MERKL
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.constants.misc import ONE, ZERO
 from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HistoryMappingState
@@ -225,6 +226,57 @@ def test_fee_events_duplicate_detection(rotkehlchen_api_server: 'APIServer') -> 
     assert donate_event.group_identifier not in result['auto_fix_group_ids']  # gas + donate
     assert donate_event.group_identifier not in result['manual_review_group_ids']
     assert gas_event.group_identifier not in result['auto_fix_group_ids']
+
+
+def test_subtype_notes_and_counterparty_change_auto_fix(
+        rotkehlchen_api_server: 'APIServer',
+) -> None:
+    """Test that we still auto fix a duplicate even if its event subtype, notes, and counterparty
+    are edited in the customized event.
+    """
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+    with rotki.data.db.conn.write_ctx() as write_cursor:
+        DBHistoryEvents(rotki.data.db).add_history_events(
+            write_cursor=write_cursor,
+            history=[EvmEvent(  # fee event for tx1
+                tx_ref=(tx_hash_1 := make_evm_tx_hash()),
+                sequence_index=0,
+                timestamp=(timestamp := TimestampMS(1710000000000)),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=FVal('0.001'),
+            ), (customized_event := EvmEvent(  # customized donate for tx1
+                identifier=2,
+                tx_ref=tx_hash_1,
+                sequence_index=1,
+                timestamp=timestamp,
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.RECEIVE,
+                event_subtype=HistoryEventSubType.REWARD,
+                asset=A_ETH,
+                amount=FVal('0.001'),
+                notes='Claim reward',
+                counterparty=CPT_MERKL,
+            ))],
+        )
+        write_cursor.executemany(
+            'INSERT INTO history_events_mappings(parent_identifier, name, value) VALUES(?, ?, ?)',
+            [(
+                customized_event.identifier,
+                HISTORY_MAPPING_KEY_STATE,
+                HistoryMappingState.CUSTOMIZED.serialize_for_db(),
+            )],
+        )
+
+    result = assert_proper_response_with_result(
+        requests.get(api_url_for(rotkehlchen_api_server, 'customizedeventduplicatesresource')),
+        rotkehlchen_api_server,
+        async_query=False,
+    )
+    assert customized_event.group_identifier in result['auto_fix_group_ids']
+    assert len(result['manual_review_group_ids']) == 0
 
 
 def test_balance_tracking_direction_duplicate_detection(
