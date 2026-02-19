@@ -74,6 +74,7 @@ from rotkehlchen.api.v1.schemas import (
     CurrentAssetsPriceSchema,
     CustomAssetsQuerySchema,
     CustomizedEventDuplicatesFixSchema,
+    CustomizedEventDuplicatesIgnoreSchema,
     DataImportSchema,
     DeletePremiumDeviceSchema,
     DetectTokensSchema,
@@ -3783,6 +3784,18 @@ class CustomizedEventDuplicatesResource(BaseMethodView):
     get_schema = AsyncQueryArgumentSchema()
     post_schema = CustomizedEventDuplicatesFixSchema()
 
+    def make_put_schema(self) -> CustomizedEventDuplicatesIgnoreSchema:
+        return CustomizedEventDuplicatesIgnoreSchema(
+            db=self.rest_api.rotkehlchen.data.db,
+            action='ignore',
+        )
+
+    def make_delete_schema(self) -> CustomizedEventDuplicatesIgnoreSchema:
+        return CustomizedEventDuplicatesIgnoreSchema(
+            db=self.rest_api.rotkehlchen.data.db,
+            action='unignore',
+        )
+
     @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, async_query: bool) -> Response:
@@ -3792,6 +3805,22 @@ class CustomizedEventDuplicatesResource(BaseMethodView):
     @use_kwargs(post_schema, location='json_and_query')
     def post(self, group_identifiers: list[str] | None, async_query: bool) -> Response:
         return self.rest_api.fix_customized_event_duplicates(
+            async_query=async_query,
+            group_identifiers=group_identifiers,
+        )
+
+    @require_loggedin_user()
+    @resource_parser.use_kwargs(make_put_schema, location='json')
+    def put(self, group_identifiers: list[str], async_query: bool) -> Response:
+        return self.rest_api.ignore_customized_event_duplicates(
+            async_query=async_query,
+            group_identifiers=group_identifiers,
+        )
+
+    @require_loggedin_user()
+    @resource_parser.use_kwargs(make_delete_schema, location='json')
+    def delete(self, group_identifiers: list[str], async_query: bool) -> Response:
+        return self.rest_api.unignore_customized_event_duplicates(
             async_query=async_query,
             group_identifiers=group_identifiers,
         )

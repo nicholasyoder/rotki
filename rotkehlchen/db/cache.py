@@ -7,6 +7,7 @@ from rotkehlchen.types import BTCAddress, ChecksumEvmAddress, SolanaAddress, Tim
 from rotkehlchen.utils.mixins.enums import Enum
 
 ASSET_MOVEMENT_NO_MATCH_CACHE_VALUE: Final = -1
+IGNORED_CUSTOMIZED_EVENT_DUPLICATE_PREFIX: Final = 'ignored_ced_'
 
 
 class DBCacheStatic(Enum):

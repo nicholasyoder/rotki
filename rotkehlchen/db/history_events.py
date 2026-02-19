@@ -15,7 +15,7 @@ from rotkehlchen.chain.bitcoin.bch.constants import BCH_GROUP_IDENTIFIER_PREFIX
 from rotkehlchen.chain.bitcoin.btc.constants import BTC_GROUP_IDENTIFIER_PREFIX
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants import ZERO
-from rotkehlchen.db.cache import DBCacheDynamic
+from rotkehlchen.db.cache import IGNORED_CUSTOMIZED_EVENT_DUPLICATE_PREFIX, DBCacheDynamic
 from rotkehlchen.db.constants import (
     CHAIN_EVENT_FIELDS,
     CHAIN_EVENT_NULL_FIELDS,
@@ -197,18 +197,24 @@ class DBHistoryEvents:
 
         Returns the number of rows deleted.
         """
-        deleted_ids, timestamps = [], []
+        deleted_ids, timestamps, group_ids = [], [], set()
         if len(rows := write_cursor.execute(
-            f'DELETE FROM history_events {where_clause} RETURNING timestamp, identifier',
+            f'DELETE FROM history_events {where_clause} RETURNING timestamp, identifier, group_identifier',  # noqa: E501
             where_bindings,
         ).fetchall()) > 0:
             for row in rows:
                 timestamps.append((row[0],))
                 deleted_ids.append(str(row[1]))
+                group_ids.add(row[2])
             write_cursor.execute(
                 "DELETE FROM key_value_cache WHERE name LIKE 'customized_event_original_%' "
                 f"AND value IN ({','.join('?' * len(deleted_ids))})",
                 deleted_ids,
+            )
+            write_cursor.execute(
+                f"DELETE FROM key_value_cache WHERE name LIKE '{IGNORED_CUSTOMIZED_EVENT_DUPLICATE_PREFIX}%' "  # noqa: E501
+                f"AND value IN ({','.join('?' * len(group_ids))})",
+                list(group_ids),
             )
         return self._execute_and_track_modified(
             write_cursor=write_cursor,

@@ -13,7 +13,11 @@ from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.evm_swap import EvmSwapEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
-from rotkehlchen.tests.utils.api import api_url_for, assert_proper_response_with_result
+from rotkehlchen.tests.utils.api import (
+    api_url_for,
+    assert_error_response,
+    assert_proper_response_with_result,
+)
 from rotkehlchen.tests.utils.factories import make_evm_tx_hash
 from rotkehlchen.types import Location, TimestampMS
 
@@ -435,3 +439,87 @@ def test_amount_threshold_duplicate_detection(rotkehlchen_api_server: 'APIServer
     # tx2: 50% amount difference -> not flagged
     assert over_threshold_event.group_identifier not in result['auto_fix_group_ids']
     assert over_threshold_event.group_identifier not in result['manual_review_group_ids']
+
+
+def test_ignore_customized_event_duplicates(rotkehlchen_api_server: 'APIServer') -> None:
+    """Test ignoring, unignoring, and ignoring a nonexistent group."""
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+
+    with rotki.data.db.conn.write_ctx() as write_cursor:
+        auto_fix_events, _, manual_event = duplicated_events_setup(
+            events_db=DBHistoryEvents(rotki.data.db),
+            write_cursor=write_cursor,
+            auto_fix_groups=1,
+            include_manual_review=True,
+            timestamp=TimestampMS(1710000000000),
+        )
+
+    auto_fix_group = auto_fix_events[0].group_identifier
+    assert manual_event is not None
+    manual_group = manual_event.group_identifier
+
+    # verify both groups appear before ignoring
+    result = assert_proper_response_with_result(
+        response=requests.get(
+            api_url_for(rotkehlchen_api_server, 'customizedeventduplicatesresource'),
+        ),
+        rotkehlchen_api_server=rotkehlchen_api_server,
+        async_query=False,
+    )
+    assert auto_fix_group in result['auto_fix_group_ids']
+    assert manual_group in result['manual_review_group_ids']
+    assert result['ignored_group_ids'] == []
+
+    # ignore both groups
+    async_query = random.choice([True, False])
+    result = assert_proper_response_with_result(
+        response=requests.put(
+            api_url_for(rotkehlchen_api_server, 'customizedeventduplicatesresource'),
+            json={
+                'async_query': async_query,
+                'group_identifiers': [auto_fix_group, manual_group],
+            },
+        ),
+        rotkehlchen_api_server=rotkehlchen_api_server,
+        async_query=async_query,
+    )
+    assert set(result) == {auto_fix_group, manual_group}
+
+    # ignoring already-ignored groups returns an error
+    assert_error_response(
+        response=requests.put(
+            api_url_for(rotkehlchen_api_server, 'customizedeventduplicatesresource'),
+            json={
+                'async_query': False,
+                'group_identifiers': [auto_fix_group],
+            },
+        ),
+        contained_in_msg='already ignored',
+    )
+
+    # unignoring a group that is not ignored returns an error
+    assert_error_response(
+        response=requests.delete(
+            api_url_for(rotkehlchen_api_server, 'customizedeventduplicatesresource'),
+            json={
+                'async_query': False,
+                'group_identifiers': ['nonexistent_group_id'],
+            },
+        ),
+        contained_in_msg='not ignored',
+    )
+
+    # unignore the auto-fix group
+    async_query = random.choice([True, False])
+    result = assert_proper_response_with_result(
+        response=requests.delete(
+            api_url_for(rotkehlchen_api_server, 'customizedeventduplicatesresource'),
+            json={
+                'async_query': async_query,
+                'group_identifiers': [auto_fix_group],
+            },
+        ),
+        rotkehlchen_api_server=rotkehlchen_api_server,
+        async_query=async_query,
+    )
+    assert result == [manual_group]

@@ -15,7 +15,7 @@ from rotkehlchen.constants import HOUR_IN_SECONDS
 from rotkehlchen.constants.assets import A_DAI, A_GLM, A_MKR, A_REP, A_SAI
 from rotkehlchen.constants.resolver import SOLANA_CHAIN_DIRECTIVE, identifier_to_evm_chain
 from rotkehlchen.constants.timing import SAI_DAI_MIGRATION_TS
-from rotkehlchen.db.cache import DBCacheStatic
+from rotkehlchen.db.cache import IGNORED_CUSTOMIZED_EVENT_DUPLICATE_PREFIX, DBCacheStatic
 from rotkehlchen.db.constants import (
     CHAIN_EVENT_FIELDS,
     HISTORY_BASE_ENTRY_FIELDS,
@@ -237,7 +237,10 @@ def _load_customized_event_candidates(
         'WHERE he2.group_identifier=he.group_identifier '
         f'AND he2.entry_type IN ({entry_type_placeholders})) '
         f'AND he.entry_type IN ({entry_type_placeholders}) '
-        f'AND he.subtype != ?'
+        f'AND he.subtype != ? '
+        'AND NOT EXISTS ('
+        'SELECT 1 FROM key_value_cache kvc '
+        f"WHERE kvc.name = '{IGNORED_CUSTOMIZED_EVENT_DUPLICATE_PREFIX}' || he.group_identifier)"
     )
     bindings_base = (
         HISTORY_MAPPING_KEY_STATE,
