@@ -314,6 +314,9 @@ class DBCalendar:
             except sqlcipher.IntegrityError as e:  # pylint: disable=no-member
                 raise InputError(f'Could not update calendar entry due to {e}') from e
 
+            if write_cursor.rowcount == 0:
+                raise InputError(f'Tried to update a non existent calendar entry {calendar.identifier}')  # noqa: E501
+
         return calendar.identifier
 
     def create_reminder_entries(
@@ -352,6 +355,9 @@ class DBCalendar:
                 )
             except sqlcipher.IntegrityError as e:  # pylint: disable=no-member
                 raise InputError(f'Could not update reminder due to {e}') from e
+
+            if write_cursor.rowcount == 0:
+                raise InputError(f'Tried to update a non existent reminder {reminder.identifier}')
 
         return reminder.identifier
 

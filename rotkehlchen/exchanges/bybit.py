@@ -297,12 +297,15 @@ class Bybit(ExchangeInterface, SignatureGeneratorMixin):
         query_options = options.copy()
         while True:
             output = self._api_query(path=endpoint, options=query_options)
-            if (next_cursor := output.get('nextPageCursor')) is not None and len(next_cursor) != 0:
-                query_options['cursor'] = next_cursor
-
             result.extend(output[result_key])
-            if len(output[result_key]) < query_options.get(result_key, PAGINATION_LIMIT):
+            next_cursor = output.get('nextPageCursor')
+            if (
+                len(output[result_key]) < int(query_options.get('limit', PAGINATION_LIMIT)) or
+                not next_cursor
+            ):
                 break
+
+            query_options['cursor'] = next_cursor
 
         return result
 
