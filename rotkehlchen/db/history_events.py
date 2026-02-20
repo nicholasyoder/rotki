@@ -642,10 +642,16 @@ class DBHistoryEvents:
             write_cursor: 'DBCursor',
             location: BLOCKCHAIN_LOCATIONS_TYPE,
             address: str | None,
+            customized_handling: Literal['preserve_events', 'preserve_transactions'] = 'preserve_events',  # noqa: E501
     ) -> None:
         """Delete all uncustomized history events for the given location and optionally address.
         For EVM and Solana, only deletes events that also have a corresponding tx in the DB.
         Also avoids deleting any events that are matched with asset movements.
+
+        customized_handling controls how customized/matched events affect deletion:
+        - 'preserve_events': only the individual customized/matched events are kept.
+        - 'preserve_transactions': all events in a transaction are kept when any event
+          in that transaction is customized or matched.
         """
         events_to_keep_num = write_cursor.execute(
             'SELECT COUNT(*) FROM history_events_mappings WHERE name=? AND value IN (?, ?)',
@@ -672,7 +678,15 @@ class DBHistoryEvents:
         bindings: tuple = (location.serialize_for_db(),)
         filter_conditions = ''
         if events_to_keep_num != 0:
-            filter_conditions += ' AND identifier NOT IN (SELECT parent_identifier FROM history_events_mappings WHERE name=? AND value IN (?, ?))'  # noqa: E501
+            if customized_handling == 'preserve_transactions':
+                filter_conditions += (
+                    ' AND group_identifier NOT IN ('
+                    'SELECT H2.group_identifier FROM history_events H2 '
+                    'INNER JOIN history_events_mappings M ON H2.identifier = M.parent_identifier '
+                    'WHERE M.name=? AND M.value IN (?, ?))'
+                )
+            else:
+                filter_conditions += ' AND identifier NOT IN (SELECT parent_identifier FROM history_events_mappings WHERE name=? AND value IN (?, ?))'  # noqa: E501
             bindings += customized_bindings
         if address is not None:
             filter_conditions += ' AND location_label = ?'
@@ -693,38 +707,76 @@ class DBHistoryEvents:
         Handles different cases depending on the location:
         * Bitcoin - simply deletes all non-customized bitcoin events.
         * EVM and EVM-like - deletes non-customized events that also have a corresponding
-          transaction in the evm_transactions table.
-        * EVM - removes the TX_DECODED evm_tx_mappings to enable re-processing.
+          transaction in the evm_transactions table. If any event in a transaction is
+          customized, all events in that transaction are preserved.
+        * EVM - removes the TX_DECODED evm_tx_mappings to enable re-processing,
+          except for transactions containing customized events.
         """
         self.delete_location_events(
             write_cursor=write_cursor,
             location=location,
             address=None,
+            customized_handling='preserve_transactions',
         )
 
         # zksynclite's decode status is stored in zksynclite_transactions.is_decoded
         # and btc/bch don't have the individual txs or decoded status in the db
         if location.is_evm():  # so only delete mappings here for evm and solana locations
-            write_cursor.execute(
-                'DELETE from evm_tx_mappings WHERE tx_id IN (SELECT identifier FROM evm_transactions) AND value=?',  # noqa: E501
-                (TX_DECODED,),
-            )
+            query = 'DELETE from evm_tx_mappings WHERE tx_id IN (SELECT identifier FROM evm_transactions) AND value=?'  # noqa: E501
+            bindings: tuple = (TX_DECODED,)
+            if (write_cursor.execute(
+                'SELECT COUNT(*) FROM history_events_mappings WHERE name=? AND value IN (?, ?)',
+                (customized_bindings := (
+                    HISTORY_MAPPING_KEY_STATE,
+                    HistoryMappingState.CUSTOMIZED.serialize_for_db(),
+                    HistoryMappingState.MATCHED.serialize_for_db(),
+                )),
+            ).fetchone()[0]) != 0:
+                query += (
+                    ' AND tx_id NOT IN ('
+                    'SELECT DISTINCT T.identifier FROM evm_transactions T '
+                    'INNER JOIN chain_events_info C ON T.tx_hash = C.tx_ref '
+                    'INNER JOIN history_events_mappings M ON C.identifier = M.parent_identifier '
+                    'WHERE M.name=? AND M.value IN (?, ?))'
+                )
+                bindings += customized_bindings
+            write_cursor.execute(query, bindings)
         elif location == Location.SOLANA:
-            write_cursor.execute(
-                'DELETE from solana_tx_mappings WHERE tx_id IN (SELECT identifier FROM solana_transactions) AND value=?',  # noqa: E501
-                (TX_DECODED,),
-            )
+            query = 'DELETE from solana_tx_mappings WHERE tx_id IN (SELECT identifier FROM solana_transactions) AND value=?'  # noqa: E501
+            bindings = (TX_DECODED,)
+            if (write_cursor.execute(
+                'SELECT COUNT(*) FROM history_events_mappings WHERE name=? AND value IN (?, ?)',
+                (customized_bindings := (
+                    HISTORY_MAPPING_KEY_STATE,
+                    HistoryMappingState.CUSTOMIZED.serialize_for_db(),
+                    HistoryMappingState.MATCHED.serialize_for_db(),
+                )),
+            ).fetchone()[0]) != 0:
+                query += (
+                    ' AND tx_id NOT IN ('
+                    'SELECT DISTINCT T.identifier FROM solana_transactions T '
+                    'INNER JOIN chain_events_info C ON T.signature = C.tx_ref '
+                    'INNER JOIN history_events_mappings M ON C.identifier = M.parent_identifier '
+                    'WHERE M.name=? AND M.value IN (?, ?))'
+                )
+                bindings += customized_bindings
+            write_cursor.execute(query, bindings)
 
     def delete_events_by_tx_ref(
             self,
             write_cursor: 'DBCursor',
             tx_refs: Sequence[EVMTxHash | BTCTxId | Signature],
             location: BLOCKCHAIN_LOCATIONS_TYPE,
-            delete_customized: bool = False,
+            customized_handling: Literal['delete', 'preserve_events', 'preserve_transactions'] = 'preserve_events',  # noqa: E501
     ) -> None:
-        """Delete all relevant (by transaction hash) history events except those that
-        are customized. If delete_customized is True then delete those too.
+        """Delete all relevant (by transaction hash) history events.
         Only use with limited number of transactions!!!
+
+        customized_handling controls how customized events affect deletion:
+        - 'delete': delete all events including customized ones.
+        - 'preserve_events': keep only individual customized events, delete siblings.
+        - 'preserve_transactions': keep all events in a transaction when any event
+          in that transaction is customized.
 
         If you want to reset all decoded events better use the _reset_decoded_events
         code in v37 -> v38 upgrade as that is not limited to the number of transactions
@@ -747,14 +799,21 @@ class DBHistoryEvents:
                 bindings = list(tx_refs)  # type: ignore  # different type of elements in the list
 
         if (
-            delete_customized is False and
+            customized_handling != 'delete' and
             (length := len(customized_event_ids := self.get_event_mapping_states(
                 cursor=write_cursor,
                 location=location,
                 mapping_state=HistoryMappingState.CUSTOMIZED,
             ))) != 0
         ):
-            where_str += f' AND identifier NOT IN ({", ".join(["?"] * length)})'
+            if customized_handling == 'preserve_transactions':
+                where_str += (
+                    ' AND group_identifier NOT IN ('
+                    'SELECT group_identifier FROM history_events WHERE identifier IN ('
+                    + ', '.join(['?'] * length) + '))'
+                )
+            else:  # preserve_events
+                where_str += f' AND identifier NOT IN ({", ".join(["?"] * length)})'
             bindings.extend(customized_event_ids)  # type: ignore  # different type of elements in the list
 
         self.delete_events_and_track(

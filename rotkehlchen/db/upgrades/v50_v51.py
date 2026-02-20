@@ -382,8 +382,9 @@ def upgrade_v50_to_v51(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
 
     @progress_step(description='Resetting decoded events.')
     def _reset_decoded_events(write_cursor: 'DBCursor') -> None:
-        """Reset all decoded evm and solana events except for the customized ones
-        and those in zksync lite.
+        """Reset all decoded evm and solana events except those in zksync lite.
+        If any event in a transaction is customized, all events in that transaction
+        are preserved along with its decoded status.
         """
         if (
             write_cursor.execute('SELECT COUNT(*) FROM evm_transactions').fetchone()[0] > 0 or
@@ -397,21 +398,38 @@ def upgrade_v50_to_v51(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
                 "(SELECT signature FROM solana_transactions)) AND H.location != 'o')"  # location 'o' is zksync lite  # noqa: E501
             )
             bindings: tuple = ()
-            if write_cursor.execute(  # if we have any customized events
+            has_customized = write_cursor.execute(
                 'SELECT COUNT(*) FROM history_events_mappings WHERE name=? AND value=?',
-                    (customized_events_bindings := (HISTORY_MAPPING_KEY_STATE, HistoryMappingState.CUSTOMIZED.serialize_for_db())),  # noqa: E501
-            ).fetchone()[0] != 0:
-                querystr += ' AND identifier NOT IN (SELECT parent_identifier FROM history_events_mappings WHERE name=? AND value=?)'  # noqa: E501
+                (customized_events_bindings := (HISTORY_MAPPING_KEY_STATE, HistoryMappingState.CUSTOMIZED.serialize_for_db())),  # noqa: E501
+            ).fetchone()[0] != 0
+            if has_customized:
+                querystr += (
+                    ' AND group_identifier NOT IN ('
+                    'SELECT H2.group_identifier FROM history_events H2 '
+                    'INNER JOIN history_events_mappings M ON H2.identifier = M.parent_identifier '
+                    'WHERE M.name=? AND M.value=?)'
+                )
                 bindings = customized_events_bindings
 
             write_cursor.execute(querystr, bindings)
-            for table, tx_table in (
-                ('evm_tx_mappings', 'evm_transactions'),
-                ('solana_tx_mappings', 'solana_transactions'),
+            for table, tx_table, tx_id_col in (
+                ('evm_tx_mappings', 'evm_transactions', 'tx_hash'),
+                ('solana_tx_mappings', 'solana_transactions', 'signature'),
             ):
-                write_cursor.execute(
-                    f'DELETE FROM {table} WHERE tx_id IN (SELECT identifier FROM {tx_table}) AND value=?',  # noqa: E501
-                    (0,),  # decoded tx state
+                tx_querystr = (
+                    f'DELETE FROM {table} WHERE tx_id IN '
+                    f'(SELECT identifier FROM {tx_table}) AND value=?'
                 )
+                tx_bindings: tuple = (0,)  # decoded tx state
+                if has_customized:
+                    tx_querystr += (
+                        f' AND tx_id NOT IN ('
+                        f'SELECT DISTINCT T.identifier FROM {tx_table} T '
+                        f'INNER JOIN chain_events_info C ON T.{tx_id_col} = C.tx_ref '
+                        'INNER JOIN history_events_mappings M ON C.identifier = M.parent_identifier '  # noqa: E501
+                        'WHERE M.name=? AND M.value=?)'
+                    )
+                    tx_bindings += customized_events_bindings
+                write_cursor.execute(tx_querystr, tx_bindings)
 
     perform_userdb_upgrade_steps(db=db, progress_handler=progress_handler, should_vacuum=True)
