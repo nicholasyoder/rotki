@@ -328,7 +328,7 @@ class TransactionDecoder(ABC, Generic[T_Transaction, T_DecodingRules, T_DecoderI
                     write_cursor=write_cursor,
                     tx_refs=[tx_ref],
                     location=location,
-                    delete_customized=delete_customized,
+                    customized_handling='delete' if delete_customized else 'preserve_transactions',
                 )
                 write_cursor.execute(
                     f'DELETE from {self.tx_mappings_table} WHERE tx_id=? AND value IN (?, ?)',
