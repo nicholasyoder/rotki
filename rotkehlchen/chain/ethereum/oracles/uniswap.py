@@ -186,7 +186,10 @@ class UniswapOracle(HistoricalPriceOracleInterface, CacheableMixIn):
         if len(self.routing_assets) == 0:
             self.resolve_routing_assets()  # May include external remote calls to add any missing assets  # noqa: E501
 
-        routing_assets = self.routing_assets[from_asset.chain_id]
+        if (routing_assets := self.routing_assets.get(from_asset.chain_id)) is None:
+            log.error(f'No {self.name} routing assets found for chain {from_asset.chain_id}')
+            return []
+
         output: list[str] = []
         # If any of the assets is in the glue assets let's see if we find any path
         # (avoids iterating the list of glue assets)
