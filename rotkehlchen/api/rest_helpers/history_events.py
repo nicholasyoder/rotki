@@ -73,7 +73,11 @@ def edit_grouped_events_with_optional_fee(
         events_to_edit = events
 
     for event in events_to_edit:
-        events_db.edit_history_event(write_cursor=write_cursor, event=event)
+        events_db.edit_history_event(
+            write_cursor=write_cursor,
+            event=event,
+            mapping_state=HistoryMappingState.CUSTOMIZED,
+        )
 
 
 def edit_grouped_swap_events(
@@ -99,7 +103,11 @@ def edit_grouped_swap_events(
         if event.identifier is None:  # No existing identifier - this is a new event.
             new_events.append(event)
         else:  # Already has an identifier - edit existing event.
-            events_db.edit_history_event(write_cursor=write_cursor, event=event)
+            events_db.edit_history_event(
+                write_cursor=write_cursor,
+                event=event,
+                mapping_state=HistoryMappingState.CUSTOMIZED,
+            )
             edited_identifiers.append(event.identifier)
 
     if identifiers != edited_identifiers:  # There are identifiers with no corresponding events - these events need to be deleted.  # noqa: E501

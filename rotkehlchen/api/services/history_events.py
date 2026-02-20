@@ -105,6 +105,7 @@ class HistoryEventsService:
                     events_db.edit_history_event(
                         event=event,
                         write_cursor=write_cursor,
+                        mapping_state=HistoryMappingState.CUSTOMIZED,
                     )
         except InputError as e:
             return {

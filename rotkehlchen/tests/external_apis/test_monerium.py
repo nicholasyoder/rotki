@@ -12,6 +12,7 @@ from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
 from rotkehlchen.constants.assets import A_ETH_EURE
 from rotkehlchen.constants.misc import ONE
 from rotkehlchen.db.cache import DBCacheStatic
+from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HistoryMappingState
 from rotkehlchen.db.dbhandler import DBHandler
 from rotkehlchen.db.filtering import EvmEventFilterQuery, HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
@@ -86,6 +87,15 @@ def test_send_bank_transfer(database: DBHandler, monerium_credentials: Any) -> N
                 tx_hashes=[tx_hash],
             ),
         )
+        assert cursor.execute(
+            'SELECT COUNT(*) FROM history_events_mappings '
+            'WHERE parent_identifier = ? AND name = ? AND value = ?',
+            (
+                event.identifier,
+                HISTORY_MAPPING_KEY_STATE,
+                HistoryMappingState.CUSTOMIZED.serialize_for_db(),
+            ),
+        ).fetchone()[0] == 0
     assert new_events == [event]
 
 

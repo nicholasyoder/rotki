@@ -230,7 +230,11 @@ class Monerium:
                     event.event_type = new_type
                     event.event_subtype = new_subtype  # type: ignore  # both type/subtype are set
 
-                dbevents.edit_history_event(write_cursor=write_cursor, event=event)
+                dbevents.edit_history_event(
+                    write_cursor=write_cursor,
+                    event=event,
+                    mapping_state=None,
+                )
 
     def update_events(self, events: list['EvmEvent']) -> None:
         """Query and update the event txs individually.

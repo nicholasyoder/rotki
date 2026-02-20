@@ -442,13 +442,13 @@ class DBHistoryEvents:
             self,
             write_cursor: 'DBCursor',
             event: HistoryBaseEntry,
-            mapping_state: HistoryMappingState = HistoryMappingState.CUSTOMIZED,
+            mapping_state: HistoryMappingState | None,
             save_backup: bool = False,
     ) -> None:
         """
         Edit a history entry to the DB with information provided by the user.
         NOTE: It edits all the fields except the extra_data one.
-        Marks the event with the specified mapping state.
+        Marks the event with the specified mapping state if provided.
         Only tracks modification for balance cache invalidation if balance-affecting
         fields change (timestamp, asset, amount, type, subtype, location_label).
 
@@ -483,9 +483,9 @@ class DBHistoryEvents:
             else:  # all other data
                 write_cursor.execute(f'{updatestr} WHERE identifier=?', (*bindings, event.identifier))  # noqa: E501
 
-        # Mark as customized and store original position for duplicate prevention during redecode.
+        # Mark event state and store original position for duplicate prevention during redecode.
         # Only store original position on first customization (when INSERT succeeds).
-        if self.set_event_mapping_state(
+        if mapping_state is not None and self.set_event_mapping_state(
             write_cursor=write_cursor,
             event=event,
             mapping_state=mapping_state,

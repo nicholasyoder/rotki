@@ -938,13 +938,21 @@ def test_event_modification_tracks_earliest_timestamp(database: 'DBHandler') -> 
     ):
         eth_event.identifier = 1
         eth_event.notes = 'Updated notes'
-        db.edit_history_event(write_cursor=write_cursor, event=eth_event)
+        db.edit_history_event(
+            write_cursor=write_cursor,
+            event=eth_event,
+            mapping_state=HistoryMappingState.CUSTOMIZED,
+        )
         mock_mark.assert_not_called()
 
     # edit asset and should update cache
     with database.user_write() as write_cursor:
         eth_event.asset = A_DAI
-        db.edit_history_event(write_cursor=write_cursor, event=eth_event)
+        db.edit_history_event(
+            write_cursor=write_cursor,
+            event=eth_event,
+            mapping_state=HistoryMappingState.CUSTOMIZED,
+        )
 
     with database.conn.read_ctx() as cursor:
         assert int(cursor.execute(
