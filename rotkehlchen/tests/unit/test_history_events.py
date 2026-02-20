@@ -9,6 +9,7 @@ from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.constants.misc import ONE
 from rotkehlchen.db.cache import DBCacheDynamic
+from rotkehlchen.db.constants import HistoryMappingState
 from rotkehlchen.db.evmtx import DBEvmTx
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.history.events.structures.base import (
@@ -143,7 +144,11 @@ def test_edited_event_caches_original_position(database: 'DBHandler') -> None:
 
         # first edit stores original position with event identifier as value
         event.sequence_index = 5
-        events_db.edit_history_event(write_cursor=write_cursor, event=event)
+        events_db.edit_history_event(
+            write_cursor=write_cursor,
+            event=event,
+            mapping_state=HistoryMappingState.CUSTOMIZED,
+        )
         cache_entry = write_cursor.execute(
             'SELECT value FROM key_value_cache WHERE name = ?', (cache_key,),
         ).fetchone()
@@ -152,7 +157,11 @@ def test_edited_event_caches_original_position(database: 'DBHandler') -> None:
 
         # second edit does not create new cache entry for intermediate position
         event.sequence_index = 10
-        events_db.edit_history_event(write_cursor=write_cursor, event=event)
+        events_db.edit_history_event(
+            write_cursor=write_cursor,
+            event=event,
+            mapping_state=HistoryMappingState.CUSTOMIZED,
+        )
         assert write_cursor.execute(
             'SELECT 1 FROM key_value_cache WHERE name = ?',
             (DBCacheDynamic.CUSTOMIZED_EVENT_ORIGINAL_SEQ_IDX.get_db_key(
@@ -208,7 +217,11 @@ def test_non_onchain_edits_skip_cache(database: 'DBHandler') -> None:
         )) is not None
         event.identifier = event_id
         event.sequence_index = 5
-        events_db.edit_history_event(write_cursor=write_cursor, event=event)
+        events_db.edit_history_event(
+            write_cursor=write_cursor,
+            event=event,
+            mapping_state=HistoryMappingState.CUSTOMIZED,
+        )
 
         assert write_cursor.execute(
             'SELECT 1 FROM key_value_cache WHERE name = ?',
