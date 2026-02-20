@@ -8,6 +8,7 @@ import pytest
 import requests
 
 from rotkehlchen.api.server import APIServer
+from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
 from rotkehlchen.constants.assets import A_ETH_EURE
 from rotkehlchen.constants.misc import ONE
@@ -15,10 +16,12 @@ from rotkehlchen.db.cache import DBCacheStatic
 from rotkehlchen.db.dbhandler import DBHandler
 from rotkehlchen.db.filtering import EvmEventFilterQuery, HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
+from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.externalapis.monerium import MoneriumOAuthClient, init_monerium
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
+from rotkehlchen.tests.fixtures.messages import MockedWsMessage
 from rotkehlchen.tests.utils.api import api_url_for, assert_proper_response
 from rotkehlchen.tests.utils.premium import MockResponse
 from rotkehlchen.types import Location, TimestampMS, deserialize_evm_tx_hash
@@ -314,3 +317,79 @@ def test_concurrent_refresh_is_serialized(database: DBHandler, monerium_credenti
     assert len(refresh_calls) == 1
     assert client._credentials is not None
     assert client._credentials.expires_at > ts_now()
+
+
+@pytest.mark.parametrize('function_scope_initialize_mock_rotki_notifier', [True])
+def test_refresh_failure_notifies_reauthentication_needed(
+        database: DBHandler,
+        monerium_credentials: Any,  # pylint: disable=unused-argument
+) -> None:
+    """Ensure refresh-token failures notify the user to reauthenticate Monerium."""
+    with database.conn.read_ctx() as cursor:
+        cached_value = database.get_static_cache(
+            cursor=cursor,
+            name=DBCacheStatic.MONERIUM_OAUTH_CREDENTIALS,
+        )
+    assert cached_value is not None
+
+    credentials = json.loads(cached_value)
+    credentials['expires_at'] = ts_now() - 10
+    with database.user_write() as write_cursor:
+        database.set_static_cache(
+            write_cursor=write_cursor,
+            name=DBCacheStatic.MONERIUM_OAUTH_CREDENTIALS,
+            value=json.dumps(credentials),
+        )
+
+    client = MoneriumOAuthClient(database=database, session=requests.Session())
+    with (
+        patch.object(client.session, 'post', return_value=MockResponse(status_code=HTTPStatus.UNAUTHORIZED, text='{"error":"invalid_grant"}')),  # noqa: E501
+        pytest.raises(RemoteError),
+    ):
+        client.ensure_access_token()
+
+    assert database.msg_aggregator.rotki_notifier.pop_message() == MockedWsMessage(  # type: ignore[union-attr]
+        message_type=WSMessageType.MONERIUM_SESSIONKEY_EXPIRED,
+        data={'error': 'Please sign in with Monerium again to refresh your data'},
+    )
+
+
+@pytest.mark.parametrize('function_scope_initialize_mock_rotki_notifier', [True])
+def test_invalid_grant_refresh_clears_credentials(
+        database: DBHandler,
+        monerium_credentials: Any,  # pylint: disable=unused-argument
+) -> None:
+    """Ensure invalid_grant during refresh clears Monerium OAuth credentials."""
+    with database.conn.read_ctx() as cursor:
+        cached_value = database.get_static_cache(
+            cursor=cursor,
+            name=DBCacheStatic.MONERIUM_OAUTH_CREDENTIALS,
+        )
+    assert cached_value is not None
+
+    credentials = json.loads(cached_value)
+    credentials['expires_at'] = ts_now() - 10
+    with database.user_write() as write_cursor:
+        database.set_static_cache(
+            write_cursor=write_cursor,
+            name=DBCacheStatic.MONERIUM_OAUTH_CREDENTIALS,
+            value=json.dumps(credentials),
+        )
+
+    client = MoneriumOAuthClient(database=database, session=requests.Session())
+    with (
+        patch.object(client.session, 'post', return_value=MockResponse(status_code=HTTPStatus.BAD_REQUEST, text='{"error":"invalid_grant"}')),  # noqa: E501
+        pytest.raises(RemoteError),
+    ):
+        client.ensure_access_token()
+
+    with database.conn.read_ctx() as cursor:
+        assert database.get_static_cache(
+            cursor=cursor,
+            name=DBCacheStatic.MONERIUM_OAUTH_CREDENTIALS,
+        ) is None
+    assert client.is_authenticated() is False
+    assert database.msg_aggregator.rotki_notifier.pop_message() == MockedWsMessage(  # type: ignore[union-attr]
+        message_type=WSMessageType.MONERIUM_SESSIONKEY_EXPIRED,
+        data={'error': 'Please sign in with Monerium again to refresh your data'},
+    )
