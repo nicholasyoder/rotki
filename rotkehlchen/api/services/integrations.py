@@ -194,8 +194,9 @@ class IntegrationsService:
             refresh_token: str,
             expires_in: int,
     ) -> dict[str, Any]:
+        monerium = Monerium(self.rotkehlchen.data.db)
         try:
-            result = Monerium(self.rotkehlchen.data.db).oauth_client.complete_oauth(
+            result = monerium.oauth_client.complete_oauth(
                 access_token=access_token,
                 refresh_token=refresh_token,
                 expires_in=expires_in,
@@ -203,6 +204,7 @@ class IntegrationsService:
         except RemoteError as e:
             return {'result': None, 'message': str(e), 'status_code': HTTPStatus.BAD_REQUEST}
 
+        gevent.spawn(monerium.get_and_process_orders)
         return {'result': result, 'message': '', 'status_code': HTTPStatus.OK}
 
     def disconnect_monerium(self) -> dict[str, Any]:

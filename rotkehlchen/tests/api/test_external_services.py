@@ -1,5 +1,6 @@
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
+from unittest.mock import patch
 
 import pytest
 import requests
@@ -8,6 +9,7 @@ from rotkehlchen.chain.evm.types import EvmIndexer
 from rotkehlchen.tests.utils.api import (
     api_url_for,
     assert_error_response,
+    assert_proper_response,
     assert_proper_sync_response_with_result,
 )
 
@@ -234,6 +236,45 @@ def test_add_external_services_errors(rotkehlchen_api_server: 'APIServer') -> No
         contained_in_msg='"api_key": ["Not a valid string."',
         status_code=HTTPStatus.BAD_REQUEST,
     )
+
+
+@pytest.mark.parametrize('start_with_valid_premium', [True])
+def test_complete_monerium_oauth_triggers_background_refresh(
+        rotkehlchen_api_server: 'APIServer',
+        start_with_valid_premium: bool,  # pylint: disable=unused-argument
+) -> None:
+    with (
+        patch(
+            'rotkehlchen.externalapis.monerium.MoneriumOAuthClient.complete_oauth',
+            return_value={
+                'success': True,
+                'message': 'Successfully authenticated with Monerium',
+                'user_email': 'mock@monerium.com',
+            },
+        ) as complete_oauth_mock,
+        patch('rotkehlchen.api.services.integrations.gevent.spawn') as spawn_mock,
+    ):
+        response = requests.put(
+            api_url_for(rotkehlchen_api_server, 'moneriumoauthresource'),
+            json={
+                'access_token': 'mock-access-token',
+                'refresh_token': 'mock-refresh-token',
+                'expires_in': 3600,
+            },
+        )
+
+    assert_proper_response(response)
+    result = assert_proper_sync_response_with_result(response)
+    assert result['success'] is True
+    assert result['user_email'] == 'mock@monerium.com'
+    complete_oauth_mock.assert_called_once_with(
+        access_token='mock-access-token',
+        refresh_token='mock-refresh-token',
+        expires_in=3600,
+    )
+    spawn_mock.assert_called_once()
+    spawned_fn = spawn_mock.call_args.args[0]
+    assert spawned_fn.__name__ == 'get_and_process_orders'
 
 
 def test_remove_external_services_errors(rotkehlchen_api_server: 'APIServer') -> None:
