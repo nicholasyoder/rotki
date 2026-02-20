@@ -146,6 +146,7 @@ def test_decoders_initialization(ethereum_transaction_decoder: EthereumTransacti
         'ArbitrumOneBridge',
         'XdaiBridge',
         'Zerox',
+        'WooFi',
     }
 
     counterparty_ids = {counterparty.identifier for counterparty in ethereum_transaction_decoder.rules.all_counterparties}  # noqa: E501
@@ -260,6 +261,7 @@ def test_decoders_initialization(ethereum_transaction_decoder: EthereumTransacti
         'summer-fi',
         'rotki',
         'superfluid',
+        'woo-fi',
     }
 
 
