@@ -9,6 +9,7 @@ import requests
 from gevent.lock import Semaphore
 from oauthlib.oauth2 import WebApplicationClient
 
+from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
 from rotkehlchen.constants.timing import HOUR_IN_SECONDS
 from rotkehlchen.db.cache import DBCacheStatic
@@ -51,6 +52,7 @@ SUPPORTED_MONERIUM_CHAINS: Final = {
     'scroll': Location.SCROLL,
     'base': Location.BASE,
 }
+MONERIUM_REAUTHENTICATE_MESSAGE: Final = 'Please sign in with Monerium again to refresh your data'
 
 
 class Monerium:
@@ -505,15 +507,24 @@ class MoneriumOAuthClient:
                 timeout=CachedSettings().get_timeout_tuple(),
             )
         except requests.RequestException as exc:
+            self._notify_reauthentication_required()
             raise RemoteError(f'Failed to refresh Monerium access token: {exc!s}') from exc
 
         if response.status_code != 200:
+            if self._is_invalid_grant_refresh_response(response):
+                self.clear_credentials()
+            self._notify_reauthentication_required()
             raise RemoteError(
                 f'Failed to refresh Monerium access token: {response.status_code} {response.text}',
             )
 
-        token_response = self._oauth_client.parse_request_body_response(response.text)
+        try:
+            token_response = self._oauth_client.parse_request_body_response(response.text)
+        except ValueError as exc:
+            self._notify_reauthentication_required()
+            raise RemoteError('Monerium token refresh response was invalid') from exc
         if (access_token := token_response.get('access_token')) is None:
+            self._notify_reauthentication_required()
             raise RemoteError('Monerium token refresh did not return an access token')
 
         refresh_token = token_response.get('refresh_token', self._credentials.refresh_token)
@@ -529,3 +540,19 @@ class MoneriumOAuthClient:
 
         self._store_credentials(self._credentials)
         log.debug('Finished refresh of monerium ouath token')
+
+    def _notify_reauthentication_required(self) -> None:
+        self.database.msg_aggregator.add_message(
+            message_type=WSMessageType.MONERIUM_SESSIONKEY_EXPIRED,
+            data={'error': MONERIUM_REAUTHENTICATE_MESSAGE},
+        )
+
+    @staticmethod
+    def _is_invalid_grant_refresh_response(response: requests.Response) -> bool:
+        if response.status_code != 400:
+            return False
+
+        try:
+            return jsonloads_dict(response.text).get('error') == 'invalid_grant'
+        except JSONDecodeError:
+            return False

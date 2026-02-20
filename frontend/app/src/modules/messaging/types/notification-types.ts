@@ -27,6 +27,12 @@ export const MissingApiKey = z.object({
 
 export type MissingApiKey = z.infer<typeof MissingApiKey>;
 
+export const MoneriumSessionKeyExpiredData = z.object({
+  error: z.string(),
+});
+
+export type MoneriumSessionKeyExpiredData = z.infer<typeof MoneriumSessionKeyExpiredData>;
+
 export const SolanaTokensMigrationData = z.object({
   identifiers: z.array(z.string()),
 });

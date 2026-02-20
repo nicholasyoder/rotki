@@ -12,6 +12,7 @@ import {
   BinancePairsMissingData,
   GnosisPaySessionKeyExpiredData,
   MissingApiKey,
+  MoneriumSessionKeyExpiredData,
   SolanaTokensMigrationData,
   UnmatchedAssetMovementsData,
 } from './types/notification-types';
@@ -116,6 +117,11 @@ const GnosisPaySessionKeyExpiredMessage = z.object({
   type: z.literal(SocketMessageType.GNOSISPAY_SESSIONKEY_EXPIRED),
 });
 
+const MoneriumSessionKeyExpiredMessage = z.object({
+  data: MoneriumSessionKeyExpiredData,
+  type: z.literal(SocketMessageType.MONERIUM_SESSIONKEY_EXPIRED),
+});
+
 const SolanaTokensMigrationMessage = z.object({
   data: SolanaTokensMigrationData,
   type: z.literal(SocketMessageType.SOLANA_TOKENS_MIGRATION),
@@ -155,6 +161,7 @@ export const WebsocketMessage = z.discriminatedUnion('type', [
   ExchangeUnknownAssetMessage,
   ProgressUpdatesMessage,
   GnosisPaySessionKeyExpiredMessage,
+  MoneriumSessionKeyExpiredMessage,
   SolanaTokensMigrationMessage,
   BinancePairsMissingMessage,
   DatabaseUploadProgressMessage,

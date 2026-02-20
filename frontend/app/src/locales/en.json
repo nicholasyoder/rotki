@@ -4192,6 +4192,9 @@
         "title": "{service} API key for {location}"
       }
     },
+    "monerium_session_key_expired": {
+      "title": "Monerium session key expired"
+    },
     "new_detected_token": {
       "action": "See more",
       "message": "New token with identifier {identifier} was detected from event processing and queries.|{count} new tokens were detected from event processing and queries.",

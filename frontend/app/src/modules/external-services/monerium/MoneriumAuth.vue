@@ -10,6 +10,7 @@ import { logger } from '@/utils/logging';
 import { useMoneriumOAuth } from './use-monerium-auth';
 
 const { t } = useI18n({ useScope: 'global' });
+const name = 'monerium';
 
 const websiteUrl = import.meta.env.VITE_ROTKI_WEBSITE_URL as string | undefined;
 
@@ -36,7 +37,7 @@ function notifyOAuthError(error: any): void {
 }
 
 async function handleOAuthCallback(oAuthResult: OAuthResult): Promise<void> {
-  if (oAuthResult.service !== 'monerium')
+  if (oAuthResult.service !== name)
     return;
 
   try {
@@ -143,7 +144,7 @@ async function submitManualToken(): Promise<void> {
   await handleOAuthCallback({
     accessToken: get(manualAccessToken).trim(),
     refreshToken: get(manualRefreshToken).trim(),
-    service: 'monerium',
+    service: name,
     success: true,
   });
 }
@@ -165,6 +166,7 @@ onUnmounted(() => {
 
 <template>
   <ServiceKeyCard
+    :name="name"
     need-premium
     :key-set="authenticated"
     :title="t('external_services.monerium.title')"
