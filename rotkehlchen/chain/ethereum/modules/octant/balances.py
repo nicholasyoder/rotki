@@ -1,6 +1,6 @@
 import logging
 from collections import defaultdict
-from typing import TYPE_CHECKING, Final, cast
+from typing import TYPE_CHECKING, Final
 
 from rotkehlchen.accounting.structures.balance import Balance, BalanceSheet
 from rotkehlchen.assets.utils import asset_normalized_value
@@ -25,13 +25,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
-OCTANT_V2_ABI: Final = cast('ABI', [{
-    'inputs': [{'internalType': 'address', 'name': '', 'type': 'address'}],
-    'name': 'depositorTotalStaked',
-    'outputs': [{'internalType': 'uint256', 'name': '', 'type': 'uint256'}],
-    'stateMutability': 'view',
-    'type': 'function',
-}])
+OCTANT_V2_ABI: Final['ABI'] = [{'inputs': [{'name': '', 'type': 'address'}], 'name': 'depositorTotalStaked', 'outputs': [{'name': '', 'type': 'uint256'}], 'stateMutability': 'view', 'type': 'function'}]  # noqa: E501
 
 
 class OctantBalances(ProtocolWithBalance):

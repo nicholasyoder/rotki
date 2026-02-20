@@ -380,6 +380,55 @@ def upgrade_v50_to_v51(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
 
             write_cursor.execute(table_sql)
 
+    @progress_step(description='Clean duplicated internal tx rows with zero gas.')
+    def _cleanup_internal_txs_with_zero_gas(write_cursor: 'DBCursor') -> None:
+        """Remove internal tx rows with gas=0 when a non-zero gas duplicate exists.
+
+        Duplicate match criteria:
+        - same parent_tx
+        - same trace_id
+        - same from_address
+        - same to_address (null-safe equality)
+        - same value
+        - same gas_used
+        - gas differs only by being 0 vs non-zero
+        """
+        duplicate_zero_gas_rows_query = """
+            SELECT zero_gas.rowid, zero_gas.parent_tx
+            FROM evm_internal_transactions AS zero_gas
+            INNER JOIN evm_internal_transactions AS non_zero_gas
+                ON non_zero_gas.parent_tx = zero_gas.parent_tx
+                AND non_zero_gas.trace_id = zero_gas.trace_id
+                AND non_zero_gas.from_address = zero_gas.from_address
+                AND non_zero_gas.to_address IS zero_gas.to_address
+                AND non_zero_gas.value = zero_gas.value
+                AND non_zero_gas.gas_used = zero_gas.gas_used
+                AND non_zero_gas.gas != '0'
+            WHERE zero_gas.gas = '0'
+        """
+        affected_parent_hashes = [
+            f'0x{entry[0]}'
+            for entry in write_cursor.execute(
+                f"""
+                SELECT DISTINCT lower(hex(evm_transactions.tx_hash))
+                FROM ({duplicate_zero_gas_rows_query}) AS duplicates
+                JOIN evm_transactions
+                    ON evm_transactions.identifier = duplicates.parent_tx
+                ORDER BY evm_transactions.identifier
+                """,
+            ).fetchall()
+        ]
+        write_cursor.execute(
+            f"""
+            DELETE FROM evm_internal_transactions
+            WHERE rowid IN (SELECT rowid FROM ({duplicate_zero_gas_rows_query}))
+            """,
+        )
+        log.debug(
+            f'Removed {write_cursor.rowcount} duplicated internal tx rows with gas=0 '
+            f'in v50->v51 upgrade. Parent hashes: {affected_parent_hashes}',
+        )
+
     @progress_step(description='Resetting decoded events.')
     def _reset_decoded_events(write_cursor: 'DBCursor') -> None:
         """Reset all decoded evm and solana events except for the customized ones

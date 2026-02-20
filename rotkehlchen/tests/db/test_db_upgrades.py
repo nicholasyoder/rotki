@@ -3835,6 +3835,16 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
             (13, 'TEST_EVENT_5', 1, 'USD', '200.00', 'trade', 'receive'),
             kraken_deposit := (14, '10x8f91a9b98a856282cdad74d9b8a683504c13e3c9d810e4e22bd0ca2eb9d71800', 1, 'ETH', '100', 'deposit', 'deposit asset'),  # noqa: E501
         ])
+        assert len(duplicate_internal_txs := cursor.execute(
+            """
+            SELECT parent_tx
+            FROM evm_internal_transactions
+            GROUP BY parent_tx, trace_id, from_address, to_address, value, gas_used
+            HAVING SUM(CASE WHEN gas = '0' THEN 1 ELSE 0 END) > 0
+               AND SUM(CASE WHEN gas != '0' THEN 1 ELSE 0 END) > 0
+            """,
+        ).fetchall()) > 0
+        duplicate_internal_parents = [entry[0] for entry in duplicate_internal_txs]
 
     db_v50.logout()
     db = _init_db_with_target_version(
@@ -3913,5 +3923,25 @@ def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
             'idx_history_events_entry_type',
         ):
             assert index_exists(cursor=cursor, name=index_name)
+        assert cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM evm_internal_transactions AS zero_gas
+            WHERE zero_gas.parent_tx IN ({})
+              AND zero_gas.gas = '0'
+              AND EXISTS (
+                  SELECT 1
+                  FROM evm_internal_transactions AS non_zero_gas
+                  WHERE non_zero_gas.parent_tx = zero_gas.parent_tx
+                    AND non_zero_gas.trace_id = zero_gas.trace_id
+                    AND non_zero_gas.from_address = zero_gas.from_address
+                    AND non_zero_gas.to_address IS zero_gas.to_address
+                    AND non_zero_gas.value = zero_gas.value
+                    AND non_zero_gas.gas_used = zero_gas.gas_used
+                    AND non_zero_gas.gas != '0'
+              )
+            """.format(','.join('?' * len(duplicate_internal_parents))),
+            duplicate_internal_parents,
+        ).fetchone()[0] == 0
 
     db.logout()
