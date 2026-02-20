@@ -285,10 +285,10 @@ async fn retrieve_icon_bytes(path: PathBuf) -> Option<(Bytes, String)> {
 pub async fn get_asset_path(
     asset_id: &str,
     data_dir: &Path,
-    use_collection_icon: bool,
+    resolve_collection: bool,
     globaldb: &globaldb::GlobalDB,
 ) -> PathBuf {
-    let new_asset_id: String = if use_collection_icon {
+    let new_asset_id: String = if resolve_collection {
         match globaldb.get_collection_main_asset(asset_id).await {
             Err(e) => {
                 error!(

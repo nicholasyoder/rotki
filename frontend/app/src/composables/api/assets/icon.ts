@@ -19,7 +19,6 @@ export function useAssetIconApi(): UseAssetIconApiReturn {
   const assetImageUrl = (identifier: string, randomString?: string | number): string => {
     const url = new URL('/assets/icon', defaultApiUrls.colibriApiUrl);
     url.searchParams.set('asset_id', identifier);
-    url.searchParams.set('use_collection_icon', 'true');
 
     if (randomString)
       url.searchParams.set('t', String(randomString));
@@ -30,7 +29,6 @@ export function useAssetIconApi(): UseAssetIconApiReturn {
   const checkAsset = async (identifier: string, options: CheckAssetOptions): Promise<number> => {
     const params = new URLSearchParams();
     params.set('asset_id', identifier);
-    params.set('use_collection_icon', 'true');
     return api.headStatus(`/assets/icon?${params.toString()}`, {
       baseURL: defaultApiUrls.colibriApiUrl,
       signal: options.abortController?.signal,

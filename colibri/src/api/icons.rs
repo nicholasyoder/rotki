@@ -17,8 +17,6 @@ pub struct AssetIconRequest {
     asset_id: String,
     // hash used to inform the consumer if the file has changed locally or not
     match_header: Option<String>,
-    #[serde(default)]
-    use_collection_icon: bool, // default is false
 }
 
 /// Used when checking the state of an icon locally
@@ -28,8 +26,6 @@ pub struct AssetIconCheck {
     asset_id: String,
     // true if we should delete the local file and pull it again
     force_refresh: Option<bool>,
-    #[serde(default)]
-    use_collection_icon: bool,
 }
 
 /// The handler for the get icon endpoint
@@ -41,23 +37,50 @@ pub async fn get_icon(
     State(state): State<Arc<AppState>>,
     Query(payload): Query<AssetIconRequest>,
 ) -> impl IntoResponse {
-    let path = icons::get_asset_path(
+    // Always try the asset's own icon first
+    let own_path = icons::get_asset_path(
         &payload.asset_id,
         state.data_dir.as_path(),
-        payload.use_collection_icon,
+        false,
         state.globaldb.as_ref(),
     )
     .await;
 
-    match icons::get_icon(
+    let result = icons::get_icon(
         state.data_dir.clone(),
         &payload.asset_id,
-        payload.match_header,
-        path,
+        payload.match_header.clone(),
+        own_path.clone(),
         state.globaldb.as_ref(),
     )
-    .await
-    {
+    .await;
+
+    // If the asset's own icon was not found, fall back to the collection icon
+    let result = if matches!(result.0, StatusCode::NOT_FOUND) {
+        let collection_path = icons::get_asset_path(
+            &payload.asset_id,
+            state.data_dir.as_path(),
+            true,
+            state.globaldb.as_ref(),
+        )
+        .await;
+        if collection_path != own_path {
+            icons::get_icon(
+                state.data_dir.clone(),
+                &payload.asset_id,
+                payload.match_header,
+                collection_path,
+                state.globaldb.as_ref(),
+            )
+            .await
+        } else {
+            result
+        }
+    } else {
+        result
+    };
+
+    match result {
         (status, Some(headers), Some(bytes)) => (status, headers, bytes).into_response(),
         (status, Some(headers), None) => (status, headers).into_response(),
         (status, _, _) => status.into_response(),
@@ -79,63 +102,47 @@ pub async fn check_icon(
     State(state): State<Arc<AppState>>,
     Query(payload): Query<AssetIconCheck>,
 ) -> impl IntoResponse {
-    let path = icons::get_asset_path(
+    // Always check the asset's own icon first
+    let own_path = icons::get_asset_path(
         &payload.asset_id,
         state.data_dir.as_path(),
-        payload.use_collection_icon,
+        false,
         state.globaldb.as_ref(),
     )
     .await;
 
-    if let Some(found_path) = icons::find_icon(state.data_dir.as_path(), &path, &payload.asset_id).await
-    {
-        return match fs::metadata(found_path.clone()).await {
-            Ok(metadata) => {
-                if metadata.len() > 0 {
-                    handle_non_empty_icon(
-                        state,
-                        payload.asset_id,
-                        path,
-                        found_path,
-                        payload.force_refresh,
-                    )
-                    .await
-                    .into_response()
-                } else if let Some(underlying_id) =
-                    get_underlying_id(&state, &payload.asset_id).await
-                {
-                    let underlying_path = icons::get_asset_path(
-                        &underlying_id,
-                        state.data_dir.as_path(),
-                        false,
-                        state.globaldb.as_ref(),
-                    )
-                    .await;
-                    check_icon_for_asset_id(
-                        state,
-                        underlying_id,
-                        underlying_path,
-                        payload.force_refresh,
-                    )
-                    .await
-                    .into_response()
-                } else {
-                    handle_empty_icon(
-                        state,
-                        payload.asset_id,
-                        path,
-                        found_path,
-                        metadata,
-                    )
-                    .await
-                    .into_response()
-                }
-            }
-            Err(e) => {
-                error!("Failed to query icon for {} due to {}", payload.asset_id, e);
-                StatusCode::NOT_FOUND.into_response()
-            }
-        };
+    if let Some(found_path) = find_usable_icon(&state, &own_path, &payload.asset_id).await {
+        return handle_non_empty_icon(
+            state,
+            payload.asset_id,
+            own_path,
+            found_path,
+            payload.force_refresh,
+        )
+        .await
+        .into_response();
+    }
+
+    // Asset's own icon not usable, try the collection icon as fallback.
+    let collection_path = icons::get_asset_path(
+        &payload.asset_id,
+        state.data_dir.as_path(),
+        true,
+        state.globaldb.as_ref(),
+    )
+    .await;
+
+    if collection_path != own_path {
+        let status = check_icon_for_asset_id(
+            state.clone(),
+            payload.asset_id.clone(),
+            collection_path,
+            payload.force_refresh,
+        )
+        .await;
+        if status != StatusCode::NOT_FOUND {
+            return status.into_response();
+        }
     }
 
     if let Some(underlying_id) = get_underlying_id(&state, &payload.asset_id).await {
@@ -158,7 +165,7 @@ pub async fn check_icon(
 
     // There is no local reference to the file, query it. Ensure that if it is requested
     // again only one task handles it.
-    query_icon_from_payload(state, payload, path)
+    query_icon_from_payload(state, payload, own_path)
         .await
         .into_response()
 }
@@ -255,6 +262,17 @@ async fn handle_empty_icon(
     StatusCode::ACCEPTED
 }
 
+/// Finds a non-empty icon file at the given path.
+async fn find_usable_icon(
+    state: &AppState,
+    path: &std::path::Path,
+    asset_id: &str,
+) -> Option<std::path::PathBuf> {
+    let found = icons::find_icon(state.data_dir.as_path(), path, asset_id).await?;
+    let meta = fs::metadata(&found).await.ok()?;
+    if meta.len() > 0 { Some(found) } else { None }
+}
+
 async fn check_icon_for_asset_id(
     state: Arc<AppState>,
     asset_id: String,
@@ -292,5 +310,211 @@ async fn get_underlying_id(state: &Arc<AppState>, asset_id: &str) -> Option<Stri
             );
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::blockchain::EvmInquirerManager;
+    use crate::coingecko::Coingecko;
+    use crate::create_globaldb;
+    use crate::database::DBHandler;
+    use std::collections::HashSet;
+    use tokio::sync::{Mutex, RwLock};
+
+    /// XDAI belongs to the DAI collection, whose main asset is
+    /// eip155:1/erc20:0x6B175474E89094C44Da98b954EedeAC495271d0F.
+    /// This means own_path != collection_path, which is what we need for testing.
+    const TEST_ASSET: &str = "XDAI";
+    const OWN_ICON_FILENAME: &str = "XDAI_small.png";
+    const COLLECTION_ICON_FILENAME: &str =
+        "eip155%3A1%2Ferc20%3A0x6B175474E89094C44Da98b954EedeAC495271d0F_small.png";
+
+    async fn create_test_state() -> (Arc<AppState>, std::path::PathBuf) {
+        let globaldb = Arc::new(create_globaldb!().await.unwrap());
+        let data_dir = std::env::temp_dir().join(format!(
+            "icon_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(data_dir.join("images/assets/all"))
+            .await
+            .unwrap();
+
+        let coingecko = Arc::new(Coingecko::new(
+            globaldb.clone(),
+            "http://fake.coingecko.test".to_string(),
+        ));
+        let evm_manager = Arc::new(EvmInquirerManager::new(globaldb.clone()));
+        let state = Arc::new(AppState {
+            data_dir: data_dir.clone(),
+            globaldb,
+            coingecko,
+            userdb: Arc::new(RwLock::new(DBHandler::new())),
+            active_tasks: Arc::new(Mutex::new(HashSet::new())),
+            evm_manager,
+        });
+        (state, data_dir)
+    }
+
+    fn icons_dir(data_dir: &std::path::Path) -> std::path::PathBuf {
+        data_dir.join("images/assets/all")
+    }
+
+    /// Computes the MD5 hex string for given bytes, matching the hash
+    /// that `icons::get_icon` uses for its ETag-like match_header check.
+    fn md5_hash(data: &[u8]) -> String {
+        format!("{:x}", md5::compute(data))
+    }
+
+    // GET handler tests
+
+    #[tokio::test]
+    async fn test_get_own_present() {
+        let (state, data_dir) = create_test_state().await;
+        let own_data = b"own_icon_data";
+        fs::write(icons_dir(&data_dir).join(OWN_ICON_FILENAME), own_data)
+            .await
+            .unwrap();
+
+        let response = get_icon(
+            State(state),
+            Query(AssetIconRequest {
+                asset_id: TEST_ASSET.to_string(),
+                match_header: None,
+            }),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_both_missing() {
+        let (state, _data_dir) = create_test_state().await;
+
+        let response = get_icon(
+            State(state),
+            Query(AssetIconRequest {
+                asset_id: TEST_ASSET.to_string(),
+                match_header: None,
+            }),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_get_own_takes_priority() {
+        let (state, data_dir) = create_test_state().await;
+        let own_data = b"own_icon_data";
+        let collection_data = b"collection_icon_data";
+        fs::write(icons_dir(&data_dir).join(OWN_ICON_FILENAME), own_data)
+            .await
+            .unwrap();
+        fs::write(
+            icons_dir(&data_dir).join(COLLECTION_ICON_FILENAME),
+            collection_data,
+        )
+        .await
+        .unwrap();
+
+        // Pass the own icon's MD5 as match_header. If the own icon is served,
+        // the hash matches and we get NOT_MODIFIED, proving it took priority.
+        let response = get_icon(
+            State(state),
+            Query(AssetIconRequest {
+                asset_id: TEST_ASSET.to_string(),
+                match_header: Some(md5_hash(own_data)),
+            }),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_MODIFIED,
+            "Own icon should take priority over collection icon"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_falls_back_to_collection() {
+        let (state, data_dir) = create_test_state().await;
+        let collection_data = b"collection_icon_data";
+        fs::write(
+            icons_dir(&data_dir).join(COLLECTION_ICON_FILENAME),
+            collection_data,
+        )
+        .await
+        .unwrap();
+
+        // Pass the collection icon's MD5 as match_header. If the collection icon
+        // is served as fallback, the hash matches and we get NOT_MODIFIED.
+        let response = get_icon(
+            State(state),
+            Query(AssetIconRequest {
+                asset_id: TEST_ASSET.to_string(),
+                match_header: Some(md5_hash(collection_data)),
+            }),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+    }
+
+    // HEAD handler tests
+
+    #[tokio::test]
+    async fn test_check_own_present() {
+        let (state, data_dir) = create_test_state().await;
+        fs::write(
+            icons_dir(&data_dir).join(OWN_ICON_FILENAME),
+            b"own_icon_data",
+        )
+        .await
+        .unwrap();
+
+        let response = check_icon(
+            State(state),
+            Query(AssetIconCheck {
+                asset_id: TEST_ASSET.to_string(),
+                force_refresh: None,
+            }),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_check_falls_back_to_collection() {
+        let (state, data_dir) = create_test_state().await;
+        fs::write(
+            icons_dir(&data_dir).join(COLLECTION_ICON_FILENAME),
+            b"collection_icon_data",
+        )
+        .await
+        .unwrap();
+
+        let response = check_icon(
+            State(state),
+            Query(AssetIconCheck {
+                asset_id: TEST_ASSET.to_string(),
+                force_refresh: None,
+            }),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }
