@@ -1539,6 +1539,9 @@ def test_upgrade_v14_v15(
             ('eip155:1/erc20:0x000006c2A22ff4A44ff1f5d0F2ed65F781F55555', 1.0),  # 1 token, unchanged  # noqa: E501
             ('eip155:1/erc20:0x0012940cf77a3cB5BADE409B96A60E22506CF7d0', 1.0),  # 2 tokens, unchanged  # noqa: E501
         ]
+        assert cursor.execute(
+            "SELECT COUNT(*) FROM common_asset_details WHERE identifier = 'VELO'",
+        ).fetchone()[0] == 1
 
     with ExitStack() as stack:
         patch_for_globaldb_upgrade_to(stack, 15)
@@ -1575,6 +1578,86 @@ def test_upgrade_v14_v15(
             ('eip155:1/erc20:0x000006c2A22ff4A44ff1f5d0F2ed65F781F55555', 1.0),  # unchanged
             ('eip155:1/erc20:0x0012940cf77a3cB5BADE409B96A60E22506CF7d0', 1.0),  # unchanged
         ]
+        assert cursor.execute(
+            "SELECT COUNT(*) FROM common_asset_details WHERE identifier = 'VELO'",
+        ).fetchone()[0] == 0
+
+
+@pytest.mark.parametrize('globaldb_upgrades', [[]])
+@pytest.mark.parametrize('custom_globaldb', ['v14_global.db'])
+@pytest.mark.parametrize('target_globaldb_version', [14])
+@pytest.mark.parametrize('reload_user_assets', [False])
+@pytest.mark.parametrize('use_in_memory_globaldb', [False])
+def test_upgrade_v14_v15_post_asset_upgrade_velo_present(
+        globaldb: GlobalDBHandler,
+        messages_aggregator: MessagesAggregator,
+) -> None:
+    """Test that the velo asset is handled properly in the v14 to v15 upgrade if it was already
+    successfully added to the db by the asset upgrade.
+    """
+    assert globaldb.get_setting_value('version', 0) == 14
+    with globaldb.conn.write_ctx() as write_cursor:
+        write_cursor.execute("DELETE FROM common_asset_details WHERE identifier = 'VELO'")
+        write_cursor.execute("UPDATE settings SET value = 39 WHERE name = 'assets_version'")
+        write_cursor.execute("INSERT INTO assets(identifier, name, type) VALUES('VELO', 'Velo', 'O');")  # noqa: E501
+        write_cursor.execute(
+            "INSERT INTO common_asset_details(identifier, symbol, "
+            "coingecko, cryptocompare, forked, started, swapped_for) "
+            "VALUES('VELO', 'VELO', 'velo', 'VELO', NULL, 1601266688, NULL);",
+        )
+
+    with ExitStack() as stack:
+        patch_for_globaldb_upgrade_to(stack, 15)
+        maybe_upgrade_globaldb(
+            connection=globaldb.conn,
+            global_dir=globaldb._data_directory / GLOBALDIR_NAME,  # type: ignore
+            db_filename=GLOBALDB_NAME,
+            msg_aggregator=messages_aggregator,
+        )
+
+    assert globaldb.get_setting_value('version', 0) == 15
+    with globaldb.conn.read_ctx() as cursor:
+        assert cursor.execute(
+            "SELECT * FROM assets WHERE identifier = 'VELO'",
+        ).fetchone() == ('VELO', 'Velo', 'O')
+        assert cursor.execute(
+            "SELECT * FROM common_asset_details WHERE identifier = 'VELO'",
+        ).fetchone() == ('VELO', 'VELO', 'velo', 'VELO', None, 1601266688, None)
+
+
+@pytest.mark.parametrize('globaldb_upgrades', [[]])
+@pytest.mark.parametrize('custom_globaldb', ['v14_global.db'])
+@pytest.mark.parametrize('target_globaldb_version', [14])
+@pytest.mark.parametrize('reload_user_assets', [False])
+@pytest.mark.parametrize('use_in_memory_globaldb', [False])
+def test_upgrade_v14_v15_post_asset_upgrade_missing_velo(
+        globaldb: GlobalDBHandler,
+        messages_aggregator: MessagesAggregator,
+) -> None:
+    """Test that the velo asset is handled properly in the v14 to v15 upgrade if the v39 asset
+    upgrade has already run but failed to add the VELO asset due to the broken entry."""
+    assert globaldb.get_setting_value('version', 0) == 14
+    with globaldb.conn.write_ctx() as write_cursor:
+        write_cursor.execute("DELETE FROM common_asset_details WHERE identifier = 'VELO'")
+        write_cursor.execute("UPDATE settings SET value = 39 WHERE name = 'assets_version'")
+
+    with ExitStack() as stack:
+        patch_for_globaldb_upgrade_to(stack, 15)
+        maybe_upgrade_globaldb(
+            connection=globaldb.conn,
+            global_dir=globaldb._data_directory / GLOBALDIR_NAME,  # type: ignore
+            db_filename=GLOBALDB_NAME,
+            msg_aggregator=messages_aggregator,
+        )
+
+    assert globaldb.get_setting_value('version', 0) == 15
+    with globaldb.conn.read_ctx() as cursor:
+        assert cursor.execute(
+            "SELECT * FROM assets WHERE identifier = 'VELO'",
+        ).fetchone() == ('VELO', 'Velo', 'O')
+        assert cursor.execute(
+            "SELECT * FROM common_asset_details WHERE identifier = 'VELO'",
+        ).fetchone() == ('VELO', 'VELO', 'velo', 'VELO', None, 1601266688, None)
 
 
 @pytest.mark.parametrize('custom_globaldb', ['v2_global.db'])

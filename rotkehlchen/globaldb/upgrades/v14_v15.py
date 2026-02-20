@@ -85,4 +85,38 @@ def migrate_to_v15(connection: 'DBConnection', progress_handler: 'DBUpgradeProgr
             'ON underlying_tokens_list (parent_token_entry);',
         )
 
+    @progress_step('Fix broken VELO asset.')
+    def _fix_broken_velo_asset(write_cursor: 'DBCursor') -> None:
+        """There are cases where a broken VELO asset is present, with only an entry in the
+        common_asset_details table. This removes that entry if present, and adds the correct
+        asset if the asset update has already been applied (since in that case this asset failed
+        to be added during the update due to the broken entry).
+        """
+        is_in_details = write_cursor.execute(
+            "SELECT COUNT(*) FROM common_asset_details WHERE identifier = 'VELO'",
+        ).fetchone()[0] == 1
+        is_in_assets = write_cursor.execute(
+            "SELECT COUNT(*) FROM assets WHERE identifier = 'VELO'",
+        ).fetchone()[0] == 1
+        if is_in_details and is_in_assets:
+            return  # valid VELO asset is already present
+
+        if is_in_details and not is_in_assets:
+            write_cursor.execute(
+                'DELETE FROM common_asset_details WHERE identifier = ?',
+                ('VELO',),
+            )
+
+        if write_cursor.execute(
+            "SELECT value FROM settings WHERE name = 'assets_version'",
+        ).fetchone()[0] == '39':
+            # User has already applied the asset update, and it failed to add the asset, so
+            # we need to add it manually here now that the broken one is removed.
+            write_cursor.execute("INSERT INTO assets(identifier, name, type) VALUES('VELO', 'Velo', 'O');")  # noqa: E501
+            write_cursor.execute(
+                "INSERT INTO common_asset_details(identifier, symbol, "
+                "coingecko, cryptocompare, forked, started, swapped_for) "
+                "VALUES('VELO', 'VELO', 'velo', 'VELO', NULL, 1601266688, NULL);",
+            )
+
     perform_globaldb_upgrade_steps(connection, progress_handler)
